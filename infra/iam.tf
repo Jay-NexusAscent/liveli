@@ -55,7 +55,12 @@ locals {
   runtime_roles = [
     "roles/bigquery.jobUser",    # Submit queries
     "roles/bigquery.dataEditor", # Read/write workspace datasets
-    "roles/secretmanager.secretAccessor",
+    # The runtime CREATES connector secrets at connect time
+    # (storeConnectorSecret -> client.createSecret), ADDS versions when
+    # creds change, and ACCESSES payloads at sync time. secretAccessor
+    # alone only covers access; create requires admin (or a custom role
+    # bundling secrets.create + versions.add + versions.access).
+    "roles/secretmanager.admin",
     "roles/storage.objectUser",
     "roles/datastore.user",  # Firestore read/write
     "roles/aiplatform.user", # Vertex AI Claude calls
