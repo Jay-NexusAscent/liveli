@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { getVercelOidcToken } from "@vercel/oidc";
 
 /**
  * Make GCP credentials available before the first SDK call.
@@ -6,24 +7,28 @@ import { promises as fs } from "node:fs";
  *  - **Local dev** — no-op. The user runs `gcloud auth application-default
  *    login` once and ADC discovery finds the credentials automatically.
  *
- *  - **Vercel prod** — Workload Identity Federation. Vercel auto-injects
- *    `VERCEL_OIDC_TOKEN` on every function invocation. We:
- *      1. Write that token to /tmp/vercel-oidc-token (refreshed each call)
- *      2. Write an `external_account` credentials JSON to /tmp/gcp-wif-creds.json
- *         that references the token file via `credential_source.file`
- *      3. Set GOOGLE_APPLICATION_CREDENTIALS to that JSON path
+ *  - **Vercel prod** — Workload Identity Federation.
  *
- *    The Google Cloud SDKs (BigQuery, Firestore, Vertex AnthropicVertex)
- *    then discover the creds through ADC and exchange the OIDC token at
- *    GCP STS for short-lived access tokens that impersonate
+ *    The Vercel OIDC token is fetched via `@vercel/oidc`'s
+ *    `getVercelOidcToken()` — this transparently handles both delivery
+ *    mechanisms (env var on legacy runtimes, request-context headers
+ *    on Fluid Compute / modern Next.js App Router). Reading
+ *    `process.env.VERCEL_OIDC_TOKEN` directly is *unreliable* on
+ *    current Vercel — it's commonly undefined even when OIDC is
+ *    enabled. Always use the package.
+ *
+ *    On each invocation we:
+ *      1. Fetch the per-request OIDC token via getVercelOidcToken()
+ *      2. Write it to /tmp/vercel-oidc-token
+ *      3. On first call, write an external_account credentials JSON to
+ *         /tmp/gcp-wif-creds.json that references the token file via
+ *         credential_source.file
+ *      4. Set GOOGLE_APPLICATION_CREDENTIALS to that JSON path
+ *
+ *    Google Cloud SDKs (BigQuery, Firestore, Vertex AnthropicVertex)
+ *    discover the credentials through ADC and exchange the token at
+ *    GCP STS for a short-lived access token impersonating
  *    `liveli-runtime@`. Zero long-lived SA keys.
- *
- *  Required Vercel env vars (already set):
- *    GCP_WORKLOAD_IDENTITY_PROVIDER  — full provider resource path
- *    GCP_RUNTIME_SERVICE_ACCOUNT     — email of the SA to impersonate
- *
- *  Required Vercel project setting:
- *    Settings → Security → OIDC Federation: enabled
  */
 
 const TOKEN_FILE = "/tmp/vercel-oidc-token";
@@ -34,15 +39,23 @@ let credsWritten = false;
 export async function ensureGcpAuth(): Promise<void> {
   if (!process.env.VERCEL) return;
 
-  const token = process.env.VERCEL_OIDC_TOKEN;
-  if (!token) {
+  let token: string | undefined;
+  try {
+    token = await getVercelOidcToken();
+  } catch (err) {
     throw new Error(
-      "VERCEL_OIDC_TOKEN not present at runtime. Enable Function OIDC under " +
-        "Vercel Project Settings → Security."
+      `getVercelOidcToken() threw: ${err instanceof Error ? err.message : String(err)}. ` +
+        "Confirm Vercel Project Settings → Security → Function OIDC is enabled and the function was deployed after enabling it."
     );
   }
 
-  // Token rotates per invocation — always refresh
+  if (!token) {
+    throw new Error(
+      "getVercelOidcToken() returned empty. OIDC token not available in this runtime context."
+    );
+  }
+
+  // Refresh token file each invocation (token rotates per request).
   await fs.writeFile(TOKEN_FILE, token, { encoding: "utf-8", mode: 0o600 });
 
   if (credsWritten) return;
@@ -55,7 +68,6 @@ export async function ensureGcpAuth(): Promise<void> {
     );
   }
 
-  // Normalise audience to STS-expected `//iam.googleapis.com/...` form
   const normalisedAudience = audience.startsWith("//")
     ? audience
     : `//iam.googleapis.com/${audience.replace(/^\/+/, "")}`;
