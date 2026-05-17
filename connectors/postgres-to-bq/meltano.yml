@@ -1,0 +1,31 @@
+version: 1
+default_environment: dev
+project_id: liveli-postgres-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-postgres
+      variant: meltanolabs
+      pip_url: meltanolabs-tap-postgres
+      # Connection params come from env at runtime:
+      #   TAP_POSTGRES_HOST, TAP_POSTGRES_PORT, TAP_POSTGRES_USER,
+      #   TAP_POSTGRES_PASSWORD, TAP_POSTGRES_DATABASE
+      config:
+        ssl: true
+        ssl_mode: prefer
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git@v0.7.4
+      # Config comes from env at runtime:
+      #   TARGET_BIGQUERY_PROJECT, TARGET_BIGQUERY_DATASET,
+      #   TARGET_BIGQUERY_LOCATION
+      config:
+        method: storage_write_api
+        denormalized: true
+        upsert: true
