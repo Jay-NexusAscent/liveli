@@ -50,21 +50,32 @@ resource "google_iam_workload_identity_pool_provider" "vercel" {
   workload_identity_pool_provider_id = "vercel-provider"
   display_name                       = "Vercel OIDC"
 
+  # Vercel OIDC tokens (Team issuer mode) carry:
+  #   iss = https://oidc.vercel.com/{team-slug}
+  #   aud = https://vercel.com/{team-slug}
+  #   sub = owner:{team-slug}:project:{project}:environment:{env}
+  # There's no top-level `owner` claim — derived attributes must come from
+  # `aud` or by parsing `sub`.
   attribute_mapping = {
-    "google.subject"    = "assertion.sub"
-    "attribute.owner"   = "assertion.owner"
-    "attribute.project" = "assertion.project"
+    "google.subject" = "assertion.sub"
+    "attribute.aud"  = "assertion.aud"
   }
 
-  attribute_condition = "attribute.owner == \"${var.vercel_team_slug}\""
+  # Gate on the audience (team slug). Could tighten to a single project
+  # by checking `assertion.sub.startsWith("owner:...:project:liveli:")`.
+  attribute_condition = "attribute.aud == \"https://vercel.com/${var.vercel_team_slug}\""
 
   oidc {
     issuer_uri = "https://oidc.vercel.com/${var.vercel_team_slug}"
+    # GCP STS rejects tokens whose aud doesn't match either the provider's
+    # default audience (the full resource path) or one of these. Vercel's
+    # tokens have aud=https://vercel.com/{team-slug}, so we whitelist it.
+    allowed_audiences = ["https://vercel.com/${var.vercel_team_slug}"]
   }
 }
 
 resource "google_service_account_iam_member" "vercel_can_impersonate_runtime" {
   service_account_id = google_service_account.runtime.name
   role               = "roles/iam.workloadIdentityUser"
-  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.vercel.name}/attribute.owner/${var.vercel_team_slug}"
+  member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.vercel.name}/attribute.aud/https://vercel.com/${var.vercel_team_slug}"
 }
