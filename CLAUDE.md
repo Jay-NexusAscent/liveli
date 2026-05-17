@@ -49,7 +49,7 @@ When editing styles, use the design tokens (`bg-surface`, `text-text-secondary`,
 
 ## Linear
 
-Issue prefix is **`LIV`** (Liveli team in Linear). Commits and PR titles must reference issues by this prefix — e.g. `LIV-12: wire chat to vertex`. Linear's GitHub integration auto-links commits and PRs to the referenced issue.
+Issue prefix is **`LIVELI`** (Liveli team in Linear). Commits and PR titles must reference issues by this prefix — e.g. `LIVELI-12: wire chat to vertex`. Linear's GitHub integration auto-links commits and PRs to the referenced issue.
 
 ## Stage of build
 
