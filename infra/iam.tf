@@ -35,6 +35,10 @@ locals {
     "roles/iam.serviceAccountUser",
     "roles/iam.workloadIdentityPoolAdmin",
     "roles/serviceusage.serviceUsageAdmin",
+    # Needed for `google_project_iam_member` resources — they call
+    # projects.getIamPolicy at refresh time. Without it, terraform plan
+    # 403s on every IAM member read.
+    "roles/resourcemanager.projectIamAdmin",
   ]
 }
 

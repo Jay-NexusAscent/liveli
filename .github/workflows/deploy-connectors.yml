@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       connector:
-        description: "Specific connector to (re)build (leave blank to build all)"
+        description: "Specific connector to (re)build (leave blank to build all listed in matrix)"
         required: false
         type: string
 
@@ -27,15 +27,14 @@ jobs:
 
     strategy:
       fail-fast: false
+      # Only postgres-to-bq is in the active build matrix — its
+      # `meltanolabs` tap-postgres variant is confirmed in Meltano Hub.
+      # The other 6 connector image dirs exist on disk but each needs
+      # its tap variant verified against hub.meltano.com before adding
+      # back here. Track in Linear LIVELI-43.
       matrix:
         connector:
           - postgres-to-bq
-          - mysql-to-bq
-          - stripe-to-bq
-          - shopify-to-bq
-          - hubspot-to-bq
-          - google-ads-to-bq
-          - facebook-ads-to-bq
 
     env:
       REGION: europe-west4
@@ -45,8 +44,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # When workflow_dispatch is fired with a specific connector input,
-      # skip matrix entries that don't match.
       - name: Skip if a specific connector was requested and this isn't it
         if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.connector != '' && github.event.inputs.connector != matrix.connector }}
         run: |

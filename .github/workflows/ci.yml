@@ -36,7 +36,13 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm build
         env:
-          # Build needs Clerk publishable key. Real value lives in repo secret.
-          # For PRs from forks (no secret access), a dummy key keeps the build green.
+          # Clerk keys — real values in repo secrets, dummies for PR-from-fork.
           NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || 'pk_test_dummy' }}
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY || 'sk_test_dummy' }}
+          # Next.js page-data collection imports API route modules, which
+          # import lib/gcp.ts. requireEnv() throws at module load without
+          # these. Dummy values are fine — no GCP calls happen during build.
+          GCP_PROJECT_ID: liveli-496609
+          GCP_REGION: europe-west4
+          VERTEX_AI_REGION: us-central1
+          VERTEX_AI_MODEL: claude-opus-4-7
