@@ -64,7 +64,14 @@ locals {
     "roles/storage.objectUser",
     "roles/datastore.user",  # Firestore read/write
     "roles/aiplatform.user", # Vertex AI Claude calls
-    "roles/run.invoker",     # Trigger connector jobs
+    # run.developer (NOT run.invoker). The runtime calls JobsClient.runJob
+    # with `overrides` to inject per-invocation env (workspace, connector,
+    # source creds, target BQ dataset). That triggers a separate IAM
+    # permission, run.jobs.runWithOverrides, which run.invoker does NOT
+    # grant — only run.developer (or admin) does. Also forward-compatible
+    # with the per-tenant Jobs migration (LIVELI-49) where the runtime
+    # needs to CREATE Jobs at connect time, which also requires developer.
+    "roles/run.developer",
   ]
 }
 
