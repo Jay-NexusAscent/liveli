@@ -20,6 +20,9 @@ importers:
       '@google-cloud/firestore':
         specifier: ^7.11.0
         version: 7.11.6
+      '@google-cloud/run':
+        specifier: ^3.2.1
+        version: 3.2.1
       '@google-cloud/secret-manager':
         specifier: ^6.0.0
         version: 6.1.2
@@ -281,6 +284,10 @@ packages:
 
   '@google-cloud/promisify@5.0.0':
     resolution: {integrity: sha512-N8qS6dlORGHwk7WjGXKOSsLjIjNINCPicsOX6gyyLiYk7mq3MtII96NZ9N2ahwA2vnkLmZODOIH9rlNniYWvCQ==}
+    engines: {node: '>=18'}
+
+  '@google-cloud/run@3.2.1':
+    resolution: {integrity: sha512-k+zEjPuH0crTBlp1+GCyzVzKgsBitBoIg5x+GUFLU8Lo1IwoQOg3ikO8SkeJnNfrH5TQERP64SRZlAC0mKVWLQ==}
     engines: {node: '>=18'}
 
   '@google-cloud/secret-manager@6.1.2':
@@ -2880,6 +2887,12 @@ snapshots:
   '@google-cloud/promisify@4.1.0': {}
 
   '@google-cloud/promisify@5.0.0': {}
+
+  '@google-cloud/run@3.2.1':
+    dependencies:
+      google-gax: 5.0.6
+    transitivePeerDependencies:
+      - supports-color
 
   '@google-cloud/secret-manager@6.1.2':
     dependencies:
