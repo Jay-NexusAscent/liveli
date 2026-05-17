@@ -7,19 +7,14 @@ environments:
 
 plugins:
   extractors:
-    - name: tap-meta-ads
-      variant: meltanolabs
-      pip_url: meltanolabs-tap-meta-ads
-      # Required env (Meta Marketing API):
-      #   TAP_META_ADS_ACCESS_TOKEN   (long-lived Meta access token)
-      #   TAP_META_ADS_ACCOUNT_IDS    (comma-separated act_xxxxxx)
+    - name: tap-facebook
+      variant: meltano
+      pip_url: git+https://github.com/MeltanoLabs/tap-meta.git
+      # Required env (Meta Marketing API v18+):
+      #   TAP_FACEBOOK_ACCESS_TOKEN  (long-lived Meta access token)
+      #   TAP_FACEBOOK_ACCOUNT_ID    (single act_xxxxxx — multiple as separate connectors)
       config:
         start_date: "2024-01-01T00:00:00Z"
-      select:
-        - ads.*
-        - adsets.*
-        - campaigns.*
-        - ads_insights.*
 
   loaders:
     - name: target-bigquery

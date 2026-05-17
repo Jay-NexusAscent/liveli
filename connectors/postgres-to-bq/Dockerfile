@@ -1,13 +1,10 @@
 FROM meltano/meltano:v3.7.1
-
 WORKDIR /project
-
-# Install the tap + target plugins ahead of time so each Cloud Run Job
-# cold start doesn't repeat the pip install.
 COPY meltano.yml ./
-RUN meltano install
-
+# Meltano 3.x doesn't bundle the plugin hub registry — fetch the plugin
+# definitions, then install. Without this, every `meltano install` fails
+# with "Extractor 'tap-X' is not known to Meltano".
+RUN meltano lock --update --all && meltano install
 COPY entrypoint.sh ./
 RUN chmod +x entrypoint.sh
-
 ENTRYPOINT ["./entrypoint.sh"]

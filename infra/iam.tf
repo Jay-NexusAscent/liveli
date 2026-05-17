@@ -30,7 +30,7 @@ locals {
     "roles/secretmanager.admin",
     "roles/run.admin",
     "roles/artifactregistry.admin",
-    "roles/datastore.owner",      # Firestore
+    "roles/datastore.owner", # Firestore
     "roles/iam.serviceAccountAdmin",
     "roles/iam.serviceAccountUser",
     "roles/iam.workloadIdentityPoolAdmin",
@@ -49,13 +49,13 @@ resource "google_project_iam_member" "ci" {
 # Narrow — only what the app needs at request time.
 locals {
   runtime_roles = [
-    "roles/bigquery.jobUser",          # Submit queries
-    "roles/bigquery.dataEditor",       # Read/write workspace datasets
+    "roles/bigquery.jobUser",    # Submit queries
+    "roles/bigquery.dataEditor", # Read/write workspace datasets
     "roles/secretmanager.secretAccessor",
     "roles/storage.objectUser",
-    "roles/datastore.user",            # Firestore read/write
-    "roles/aiplatform.user",           # Vertex AI Claude calls
-    "roles/run.invoker",               # Trigger connector jobs
+    "roles/datastore.user",  # Firestore read/write
+    "roles/aiplatform.user", # Vertex AI Claude calls
+    "roles/run.invoker",     # Trigger connector jobs
   ]
 }
 
