@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ConnectIcon, DatabaseIcon, ArrowRightIcon, SparkleIcon } from "@/components/icons";
 import { cn } from "@/lib/utils";
+import { PostgresWizard } from "@/components/connections/postgres-wizard";
 
 interface ConnectorRecord {
   id: string;
@@ -10,36 +11,33 @@ interface ConnectorRecord {
   type: string;
   status: string;
   tables?: string[];
+  lastError?: string;
 }
 
-type Availability = "wizard-ready" | "image-ready" | "coming-soon";
+type ConnectAction = "postgres" | null;
 
 const popularSources: Array<{
   name: string;
   desc: string;
   tag: string;
-  availability: Availability;
+  action: ConnectAction;
 }> = [
-  { name: "PostgreSQL", desc: "Replicate tables from any Postgres database", tag: "Database", availability: "image-ready" },
-  { name: "MySQL", desc: "Replicate tables from any MySQL database", tag: "Database", availability: "image-ready" },
-  { name: "BigQuery", desc: "Query datasets directly without ingestion", tag: "Warehouse", availability: "coming-soon" },
-  { name: "Stripe", desc: "Charges, subscriptions, customers, refunds", tag: "Payments", availability: "image-ready" },
-  { name: "Shopify", desc: "Orders, products, customers, inventory", tag: "E-commerce", availability: "image-ready" },
-  { name: "HubSpot", desc: "Contacts, deals, companies, engagements", tag: "CRM", availability: "image-ready" },
-  { name: "Google Ads", desc: "Campaign performance and spend", tag: "Marketing", availability: "image-ready" },
-  { name: "Meta Ads", desc: "Facebook + Instagram ad performance", tag: "Marketing", availability: "image-ready" },
+  { name: "PostgreSQL", desc: "Replicate tables from any Postgres database", tag: "Database", action: "postgres" },
+  { name: "MySQL", desc: "Replicate tables from any MySQL database", tag: "Database", action: null },
+  { name: "BigQuery", desc: "Query datasets directly without ingestion", tag: "Warehouse", action: null },
+  { name: "Stripe", desc: "Charges, subscriptions, customers, refunds", tag: "Payments", action: null },
+  { name: "Shopify", desc: "Orders, products, customers, inventory", tag: "E-commerce", action: null },
+  { name: "HubSpot", desc: "Contacts, deals, companies, engagements", tag: "CRM", action: null },
+  { name: "Google Ads", desc: "Campaign performance and spend", tag: "Marketing", action: null },
+  { name: "Meta Ads", desc: "Facebook + Instagram ad performance", tag: "Marketing", action: null },
 ];
-
-function badgeFor(a: Availability) {
-  if (a === "wizard-ready")
-    return { label: "Connect", classes: "bg-[color:var(--status-success)]/15 text-[color:var(--status-success)]" };
-  return { label: "Coming soon", classes: "bg-hover text-text-tertiary" };
-}
 
 export default function ConnectionsPage() {
   const [connectors, setConnectors] = useState<ConnectorRecord[]>([]);
   const [seeding, setSeeding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pgOpen, setPgOpen] = useState(false);
+  const [syncingId, setSyncingId] = useState<string | null>(null);
 
   const refresh = async () => {
     try {
@@ -49,12 +47,14 @@ export default function ConnectionsPage() {
         setConnectors(data.items ?? []);
       }
     } catch {
-      // ignore — connector listing may be unauthenticated path
+      // ignore
     }
   };
 
   useEffect(() => {
     refresh();
+    const id = setInterval(refresh, 5000);
+    return () => clearInterval(id);
   }, []);
 
   const seedDemo = async () => {
@@ -62,9 +62,13 @@ export default function ConnectionsPage() {
     setError(null);
     try {
       const res = await fetch("/api/connections/seed-demo", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error ?? `HTTP ${res.status}`);
+        throw new Error(
+          data.errorMessage
+            ? `${data.error}\n${data.errorMessage}`
+            : data.error ?? `HTTP ${res.status}`
+        );
       }
       await refresh();
     } catch (err) {
@@ -74,14 +78,29 @@ export default function ConnectionsPage() {
     }
   };
 
+  const triggerSync = async (connectorId: string) => {
+    setSyncingId(connectorId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/connections/${connectorId}/sync`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSyncingId(null);
+    }
+  };
+
   const hasDemoConnector = connectors.some((c) => c.type === "demo");
 
   return (
     <div className="container-page py-8">
       <header className="mb-8">
-        <h1 className="text-[28px] font-semibold tracking-tight text-text-primary font-heading">
-          Connections
-        </h1>
+        <h1 className="text-[28px] font-semibold tracking-tight text-text-primary font-heading">Connections</h1>
         <p className="mt-1 text-[14px] text-text-secondary">
           Wire up the systems that power your business. Liveli runs the ingestion, manages
           the warehouse, and keeps your data fresh.
@@ -95,12 +114,9 @@ export default function ConnectionsPage() {
               <SparkleIcon className="text-accent" />
             </div>
             <div>
-              <h2 className="text-[15px] font-medium text-text-primary">
-                Try with sample data
-              </h2>
+              <h2 className="text-[15px] font-medium text-text-primary">Try with sample data</h2>
               <p className="mt-1 text-[13px] text-text-secondary">
-                Instantly load the TheLook E-commerce dataset (users, products, orders,
-                order_items, distribution_centers) so you can start chatting with the
+                Instantly load the TheLook E-commerce dataset so you can start chatting with the
                 agent right away.
               </p>
             </div>
@@ -121,7 +137,7 @@ export default function ConnectionsPage() {
       )}
 
       {error && (
-        <div className="mb-6 rounded-md border border-[color:var(--status-error)]/30 bg-[color:var(--status-error)]/10 px-4 py-2 text-[13px] text-[color:var(--status-error)]">
+        <div className="mb-6 whitespace-pre-wrap rounded-md border border-[color:var(--status-error)]/30 bg-[color:var(--status-error)]/10 px-4 py-2 text-[12px] text-[color:var(--status-error)]">
           {error}
         </div>
       )}
@@ -137,12 +153,9 @@ export default function ConnectionsPage() {
                 <ConnectIcon className="text-accent" />
               </div>
               <div>
-                <p className="text-[15px] font-medium text-text-primary">
-                  No sources connected yet
-                </p>
+                <p className="text-[15px] font-medium text-text-primary">No sources connected yet</p>
                 <p className="mt-0.5 text-[13px] text-text-secondary">
-                  Click &ldquo;Load sample data&rdquo; above to get started instantly, or pick a
-                  source below.
+                  Connect Postgres below, or click &ldquo;Load sample data&rdquo; above.
                 </p>
               </div>
             </div>
@@ -152,23 +165,37 @@ export default function ConnectionsPage() {
             {connectors.map((c) => (
               <div key={c.id} className="card-elevated p-5">
                 <div className="flex items-start justify-between gap-3">
-                  <div>
+                  <div className="min-w-0 flex-1">
                     <div className="text-[15px] font-medium text-text-primary">{c.name}</div>
                     <div className="mt-0.5 text-[12px] text-text-secondary">
-                      {c.tables?.length ?? 0} table{(c.tables?.length ?? 0) === 1 ? "" : "s"}
-                      {c.tables && c.tables.length > 0 && ` · ${c.tables.join(", ")}`}
+                      {c.type === "demo" ? (
+                        <>{c.tables?.length ?? 0} tables · {c.tables?.join(", ") ?? ""}</>
+                      ) : (
+                        <>type: {c.type}</>
+                      )}
                     </div>
-                  </div>
-                  <span
-                    className={cn(
-                      "rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider",
-                      c.status === "synced"
-                        ? "bg-[color:var(--status-success)]/15 text-[color:var(--status-success)]"
-                        : "bg-accent-subtle text-accent"
+                    {c.lastError && (
+                      <div className="mt-2 truncate text-[11px] text-[color:var(--status-error)]">
+                        {c.lastError}
+                      </div>
                     )}
-                  >
-                    {c.status}
-                  </span>
+                  </div>
+                  <div className="flex flex-col items-end gap-2">
+                    <StatusBadge status={c.status} />
+                    {c.type !== "demo" && (
+                      <button
+                        type="button"
+                        onClick={() => triggerSync(c.id)}
+                        disabled={syncingId === c.id || c.status === "syncing"}
+                        className={cn(
+                          "rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text-primary",
+                          (syncingId === c.id || c.status === "syncing") && "opacity-60"
+                        )}
+                      >
+                        {syncingId === c.id || c.status === "syncing" ? "Syncing…" : "Sync now"}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
@@ -177,27 +204,26 @@ export default function ConnectionsPage() {
       </section>
 
       <section>
-        <div className="mb-4 flex items-center justify-between gap-3">
-          <h2 className="text-[13px] font-medium uppercase tracking-wider text-text-tertiary">
-            Popular sources
-          </h2>
-        </div>
+        <h2 className="mb-4 text-[13px] font-medium uppercase tracking-wider text-text-tertiary">
+          Popular sources
+        </h2>
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {popularSources.map((s) => {
-            const b = badgeFor(s.availability);
-            const interactive = s.availability !== "coming-soon";
+            const interactive = s.action === "postgres";
             return (
-              <div
+              <button
                 key={s.name}
+                type="button"
+                onClick={() => {
+                  if (s.action === "postgres") setPgOpen(true);
+                }}
+                disabled={!interactive}
                 className={cn(
-                  "card group relative flex flex-col items-start p-5 text-left",
-                  interactive ? "cursor-not-allowed opacity-90" : "cursor-not-allowed opacity-60"
+                  "card group relative flex flex-col items-start p-5 text-left transition-all",
+                  interactive
+                    ? "cursor-pointer hover:-translate-y-0.5"
+                    : "cursor-not-allowed opacity-50"
                 )}
-                title={
-                  s.availability === "image-ready"
-                    ? "Cloud Run Job + Meltano image are deployed. Connect wizard coming soon."
-                    : "Coming soon"
-                }
               >
                 <div className="mb-3 flex w-full items-center justify-between">
                   <div className="flex h-9 w-9 items-center justify-center rounded-md bg-accent-subtle text-accent">
@@ -207,29 +233,43 @@ export default function ConnectionsPage() {
                     {s.tag}
                   </span>
                 </div>
-                <h3 className="mb-1 text-[15px] font-semibold text-text-primary font-heading">
-                  {s.name}
-                </h3>
+                <h3 className="mb-1 text-[15px] font-semibold text-text-primary font-heading">{s.name}</h3>
                 <p className="text-[13px] leading-relaxed text-text-secondary">{s.desc}</p>
-                <div className="mt-4 w-full">
-                  <span
-                    className={cn(
-                      "inline-block rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider",
-                      b.classes
-                    )}
-                  >
-                    {b.label}
-                  </span>
+                <div className="mt-4 inline-flex items-center gap-1 text-[11px] font-medium">
+                  {interactive ? (
+                    <span className="text-accent">Connect →</span>
+                  ) : (
+                    <span className="text-text-tertiary">Coming soon</span>
+                  )}
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
-        <p className="mt-6 text-center text-[12px] text-text-tertiary">
-          600+ sources available via Meltano. Connect wizards roll out per source — Postgres
-          is next.
-        </p>
       </section>
+
+      <PostgresWizard
+        open={pgOpen}
+        onClose={() => setPgOpen(false)}
+        onConnected={() => {
+          refresh();
+        }}
+      />
     </div>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const map: Record<string, { label: string; classes: string }> = {
+    synced: { label: "Synced", classes: "bg-[color:var(--status-success)]/15 text-[color:var(--status-success)]" },
+    syncing: { label: "Syncing", classes: "bg-accent-muted text-accent" },
+    configured: { label: "Configured", classes: "bg-hover text-text-secondary" },
+    error: { label: "Error", classes: "bg-[color:var(--status-error)]/15 text-[color:var(--status-error)]" },
+  };
+  const v = map[status] ?? { label: status, classes: "bg-hover text-text-secondary" };
+  return (
+    <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider", v.classes)}>
+      {v.label}
+    </span>
   );
 }
