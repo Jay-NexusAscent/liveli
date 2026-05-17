@@ -5,7 +5,11 @@ let _sm: SecretManagerServiceClient | null = null;
 
 function sm(): SecretManagerServiceClient {
   if (_sm) return _sm;
-  _sm = new SecretManagerServiceClient();
+  // fallback:'rest' — same Vercel/serverless gRPC issue as Firestore.
+  // SecretManagerServiceClient defaults to gRPC over HTTP/2; Vercel can't
+  // establish the channel, every call fails with the empty-field gax error.
+  // Forcing HTTPS/JSON fallback transport.
+  _sm = new SecretManagerServiceClient({ fallback: "rest" });
   return _sm;
 }
 

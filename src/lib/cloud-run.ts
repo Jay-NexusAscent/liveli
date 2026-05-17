@@ -8,14 +8,17 @@ let _execs: ExecutionsClient | null = null;
 async function jobsClient(): Promise<JobsClient> {
   await ensureGcpAuth();
   if (_jobs) return _jobs;
-  _jobs = new JobsClient();
+  // fallback:'rest' — same Vercel/serverless gRPC issue as Firestore +
+  // Secret Manager. JobsClient defaults to gRPC; serverless can't
+  // establish the channel.
+  _jobs = new JobsClient({ fallback: "rest" });
   return _jobs;
 }
 
 async function execsClient(): Promise<ExecutionsClient> {
   await ensureGcpAuth();
   if (_execs) return _execs;
-  _execs = new ExecutionsClient();
+  _execs = new ExecutionsClient({ fallback: "rest" });
   return _execs;
 }
 
