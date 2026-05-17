@@ -1,0 +1,87 @@
+import { ConnectIcon, ChatIcon, DashboardIcon, SparkleIcon, DatabaseIcon } from "@/components/icons";
+
+const features = [
+  {
+    icon: ConnectIcon,
+    title: "Connect anything",
+    body:
+      "Postgres, MySQL, Stripe, HubSpot, Salesforce, Google Ads, Shopify — 600+ sources powered by the open-source Meltano connector ecosystem. One click, one form, your data is live.",
+  },
+  {
+    icon: ChatIcon,
+    title: "Ask, don't query",
+    body:
+      "Type a question in plain English. The agent reads your schemas, writes the SQL, runs it on the warehouse, and explains the answer with a chart. No more BI bottlenecks.",
+  },
+  {
+    icon: DashboardIcon,
+    title: "Dashboards that build themselves",
+    body:
+      "Save any chart from a chat into a dashboard. Or describe the dashboard you want — \"weekly revenue by region, with last-quarter comparison\" — and Liveli builds it.",
+  },
+];
+
+const steps = [
+  { icon: DatabaseIcon, title: "Connect", body: "Pick a source, paste credentials, watch your tables sync." },
+  { icon: SparkleIcon, title: "Ask", body: "Open the chat. Ask anything about your data, get a chart back." },
+  { icon: DashboardIcon, title: "Share", body: "Pin charts to a dashboard. Invite your team. Done." },
+];
+
+export function MarketingFeatures() {
+  return (
+    <>
+      <section id="features" className="container-page py-24">
+        <div className="mx-auto mb-14 max-w-2xl text-center">
+          <span className="mb-3 inline-block rounded-full bg-accent-subtle px-3 py-1 text-[12px] font-medium uppercase tracking-wider text-accent">
+            What you get
+          </span>
+          <h2 className="text-[36px] font-semibold leading-tight tracking-tight font-heading">
+            One product, the whole data stack.
+          </h2>
+          <p className="mt-4 text-[16px] text-text-secondary">
+            Most teams cobble together a warehouse, an ingestion tool, a BI dashboard, and a
+            data analyst. Liveli is all of that in one tab.
+          </p>
+        </div>
+
+        <div className="grid gap-5 md:grid-cols-3">
+          {features.map((f) => (
+            <div key={f.title} className="card flex flex-col p-7">
+              <div className="mb-5 flex h-10 w-10 items-center justify-center rounded-lg bg-accent-muted text-accent">
+                <f.icon className="text-accent" />
+              </div>
+              <h3 className="mb-2 text-[18px] font-semibold tracking-tight text-text-primary font-heading">{f.title}</h3>
+              <p className="text-[14px] leading-relaxed text-text-secondary">{f.body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section id="how-it-works" className="container-page py-24">
+        <div className="mx-auto mb-14 max-w-2xl text-center">
+          <span className="mb-3 inline-block rounded-full bg-accent-subtle px-3 py-1 text-[12px] font-medium uppercase tracking-wider text-accent">
+            How it works
+          </span>
+          <h2 className="text-[36px] font-semibold leading-tight tracking-tight font-heading">
+            From zero to dashboard in three steps.
+          </h2>
+        </div>
+
+        <ol className="grid gap-5 md:grid-cols-3">
+          {steps.map((s, i) => (
+            <li key={s.title} className="card-elevated p-7">
+              <div className="mb-5 flex items-center justify-between">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent-muted text-accent">
+                  <s.icon className="text-accent" />
+                </div>
+                <span className="text-[13px] font-mono text-text-tertiary tabular-nums">0{i + 1}</span>
+              </div>
+              <h3 className="mb-2 text-[18px] font-semibold tracking-tight text-text-primary font-heading">{s.title}</h3>
+              <p className="text-[14px] leading-relaxed text-text-secondary">{s.body}</p>
+            </li>
+          ))}
+        </ol>
+      </section>
+    </>
+  );
+}
