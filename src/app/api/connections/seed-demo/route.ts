@@ -73,13 +73,15 @@ export async function POST() {
     }
 
     step.current = "firestore connector record";
+    // Spread DEMO_TABLES so Firestore receives a mutable array (it's
+    // declared readonly via `as const` which has bitten us before).
     await connectors(orgId).doc("thelook-demo").set(
       {
         type: "demo",
         name: "TheLook E-commerce (Sample)",
         sourceProject: PUBLIC_PROJECT,
         sourceDataset: PUBLIC_DATASET,
-        tables: DEMO_TABLES,
+        tables: [...DEMO_TABLES],
         status: "synced",
         syncedAt: FieldValue.serverTimestamp(),
         seededBy: userId,
@@ -93,16 +95,27 @@ export async function POST() {
       tables: DEMO_TABLES,
     });
   } catch (err) {
-    const e = err as { code?: number | string; message?: string; errors?: unknown; stack?: string; name?: string };
+    // Capture every readable property — google-gax errors have
+    // non-standard shapes. Walk own-property names so we don't miss
+    // non-enumerable fields.
+    const props: Record<string, unknown> = {};
+    if (err && typeof err === "object") {
+      for (const key of Object.getOwnPropertyNames(err)) {
+        try {
+          const v = (err as Record<string, unknown>)[key];
+          props[key] = typeof v === "function" ? "[function]" : v;
+        } catch {
+          props[key] = "[unreadable]";
+        }
+      }
+    }
     const body = {
       error: `seed-demo failed at step "${step.current}"`,
-      errorMessage: e.message ?? String(err),
-      errorName: e.name,
-      errorCode: e.code,
-      errorDetails: e.errors,
-      stack: e.stack?.split("\n").slice(0, 8).join("\n"),
+      errorType: (err as { constructor?: { name?: string } })?.constructor?.name ?? typeof err,
+      errorString: String(err),
+      errorProps: props,
     };
-    console.error("[seed-demo]", JSON.stringify(body));
+    console.error("[seed-demo]", JSON.stringify(body).slice(0, 2000));
     return Response.json(body, { status: 500 });
   }
 }

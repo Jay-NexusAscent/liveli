@@ -6,10 +6,16 @@ let _db: Firestore | null = null;
 
 export function db(): Firestore {
   if (_db) return _db;
-  _db = new Firestore({
+  // Only set databaseId if it's NOT the default. Passing "(default)" with
+  // literal parens through env-var stringification has caused gRPC channels
+  // to reject with empty error fields in past Firestore SDK versions.
+  const settings: ConstructorParameters<typeof Firestore>[0] = {
     projectId: gcp.projectId,
-    databaseId: gcp.firestoreDatabase,
-  });
+  };
+  if (gcp.firestoreDatabase && gcp.firestoreDatabase !== "(default)") {
+    settings.databaseId = gcp.firestoreDatabase;
+  }
+  _db = new Firestore(settings);
   return _db;
 }
 
