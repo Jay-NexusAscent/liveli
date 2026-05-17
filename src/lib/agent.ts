@@ -1,5 +1,5 @@
 import { FieldValue } from "@google-cloud/firestore";
-import { vertex, MODEL } from "@/lib/vertex";
+import { vertexReady, MODEL } from "@/lib/vertex";
 import { ensureGcpAuth } from "@/lib/gcp-auth";
 import { anthropicToolSpecs, executeTool, type AgentContext } from "@/lib/tools";
 import { dbReady, chats, messages } from "@/lib/firestore";
@@ -116,8 +116,9 @@ export async function* runAgentTurn(input: AgentTurnInput): AsyncGenerator<ChatS
   while (turn < MAX_TURNS) {
     turn++;
 
-    type StreamParams = Parameters<ReturnType<typeof vertex>["messages"]["stream"]>[0];
-    const stream = vertex().messages.stream({
+    const client = await vertexReady();
+    type StreamParams = Parameters<typeof client.messages.stream>[0];
+    const stream = client.messages.stream({
       model: MODEL,
       max_tokens: 4096,
       system: SYSTEM_PROMPT,
