@@ -2,11 +2,17 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import { listTablesTool } from "./list-tables";
 import { runSqlTool } from "./run-sql";
 import { makeChartTool } from "./make-chart";
+import { makeDashboardTool } from "./make-dashboard";
 import type { AgentContext, ToolDefinition, ToolResult } from "./types";
 
 export type { AgentContext, ToolDefinition, ToolResult };
 
-export const tools: ToolDefinition[] = [listTablesTool, runSqlTool, makeChartTool];
+export const tools: ToolDefinition[] = [
+  listTablesTool,
+  runSqlTool,
+  makeChartTool,
+  makeDashboardTool,
+];
 
 const byName = new Map(tools.map((t) => [t.name, t]));
 

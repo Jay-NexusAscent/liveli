@@ -1,12 +1,28 @@
 import { BigQuery } from "@google-cloud/bigquery";
 import { gcp } from "@/lib/gcp";
+import { ensureGcpAuth } from "@/lib/gcp-auth";
 
 let _bq: BigQuery | null = null;
 
+/**
+ * Workspace BigQuery datasets are in **US** multi-region for the demo so
+ * federated views over `bigquery-public-data.*` (which lives in US) work
+ * without cross-region copy. The agent-metadata dataset declared in
+ * Terraform stays in EU because that's app-managed metadata, not customer
+ * data. When per-workspace region selection lands (data-residency feature
+ * in Linear), this becomes per-workspace config.
+ */
+export const WORKSPACE_BQ_LOCATION = "US";
+
 export function bq(): BigQuery {
   if (_bq) return _bq;
-  _bq = new BigQuery({ projectId: gcp.projectId, location: gcp.bqLocation });
+  _bq = new BigQuery({ projectId: gcp.projectId, location: WORKSPACE_BQ_LOCATION });
   return _bq;
+}
+
+export async function bqReady() {
+  await ensureGcpAuth();
+  return bq();
 }
 
 /**
@@ -43,13 +59,13 @@ export async function safeQuery(
   const maxBytesBilled = opts.maxBytesBilled ?? 10 * 1024 * 1024 * 1024; // 10 GB
   const maxRows = opts.maxRows ?? 1000;
 
-  const client = bq();
+  const client = await bqReady();
   const datasetId = workspaceDatasetId(orgId);
 
   // Dry-run cost estimate.
   const [dry] = await client.createQueryJob({
     query: sql,
-    location: gcp.bqLocation,
+    location: WORKSPACE_BQ_LOCATION,
     defaultDataset: { datasetId, projectId: gcp.projectId },
     dryRun: true,
   });
@@ -63,17 +79,17 @@ export async function safeQuery(
   // Real run.
   const [job] = await client.createQueryJob({
     query: sql,
-    location: gcp.bqLocation,
+    location: WORKSPACE_BQ_LOCATION,
     defaultDataset: { datasetId, projectId: gcp.projectId },
     maximumBytesBilled: String(maxBytesBilled),
   });
   const [rows] = await job.getQueryResults({ maxResults: maxRows });
-  const [{ statistics }] = (await job.get()).map((j) => j.metadata);
+  const [meta] = await job.getMetadata();
 
   return {
     rows: rows as Record<string, unknown>[],
     rowCount: rows.length,
-    bytesScanned: Number(statistics?.totalBytesProcessed ?? 0),
+    bytesScanned: Number(meta.statistics?.totalBytesProcessed ?? 0),
     truncated: rows.length >= maxRows,
   };
 }
@@ -83,8 +99,12 @@ export async function safeQuery(
  * column types. Used by the agent's list_tables tool.
  */
 export async function listWorkspaceTables(orgId: string) {
+  const client = await bqReady();
   const datasetId = workspaceDatasetId(orgId);
-  const [tables] = await bq().dataset(datasetId).getTables();
+  const [exists] = await client.dataset(datasetId).exists();
+  if (!exists) return [];
+
+  const [tables] = await client.dataset(datasetId).getTables();
   return Promise.all(
     tables.map(async (t) => {
       const [meta] = await t.getMetadata();

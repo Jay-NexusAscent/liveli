@@ -1,5 +1,6 @@
 import { Firestore } from "@google-cloud/firestore";
 import { gcp } from "@/lib/gcp";
+import { ensureGcpAuth } from "@/lib/gcp-auth";
 
 let _db: Firestore | null = null;
 
@@ -10,6 +11,11 @@ export function db(): Firestore {
     databaseId: gcp.firestoreDatabase,
   });
   return _db;
+}
+
+export async function dbReady(): Promise<Firestore> {
+  await ensureGcpAuth();
+  return db();
 }
 
 // ── Collection layout ────────────────────────────────────────────
