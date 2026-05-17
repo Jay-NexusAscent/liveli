@@ -42,8 +42,3 @@ For the app subdomain locally, hit `http://app.localhost:3000` — the middlewar
 ## Deployment
 
 Pushes to `main` deploy to Vercel automatically. Vercel project is linked to this repo; domains `liveli.co.uk`, `www.liveli.co.uk`, and `app.liveli.co.uk` point at the same deployment.
-
-## Related repos
-
-- [`liveli-web`](https://github.com/HiggzBugson/liveli-web) — legacy static marketing site (being replaced by this repo)
-- `liveli-portal` — voice-agent product portal (separate product, shared brand)

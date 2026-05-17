@@ -4,9 +4,7 @@ Guidance for Claude Code working in this repository.
 
 ## What this is
 
-**Liveli** — an AI data-analytics product. Users connect data sources (Meltano), Liveli ingests into BigQuery, and an AI agent (Claude via Vertex AI) answers natural-language questions and builds dashboards.
-
-Not to be confused with **Liveli Ltd** the voice-agent product in `liveli-portal`. Same brand, separate product, no shared code.
+**Liveli** — an AI data-analytics product. Users connect data sources (Meltano, 600+ taps), Liveli ingests into BigQuery, and an AI agent (Claude via Vertex AI) answers natural-language questions and builds dashboards.
 
 ## Architecture
 

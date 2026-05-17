@@ -39,9 +39,6 @@ export function MarketingNav() {
           <Link href="/#how-it-works" className="text-[14px] text-text-secondary transition-colors hover:text-text-primary">
             How it works
           </Link>
-          <Link href="https://liveli.co.uk" className="text-[14px] text-text-secondary transition-colors hover:text-text-primary">
-            Voice agents
-          </Link>
         </div>
 
         <div className="flex items-center gap-3">

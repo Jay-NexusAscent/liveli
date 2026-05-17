@@ -12,13 +12,10 @@ export function MarketingFooter() {
         </div>
 
         <div className="flex items-center gap-6 text-[13px] text-text-tertiary">
-          <Link href="https://liveli.co.uk" className="transition-colors hover:text-text-primary">
-            Voice agents
-          </Link>
           <Link href="/sign-in" className="transition-colors hover:text-text-primary">
             Sign in
           </Link>
-          <span>© {new Date().getFullYear()} Liveli Ltd</span>
+          <span>© {new Date().getFullYear()} Liveli</span>
         </div>
       </div>
     </footer>
