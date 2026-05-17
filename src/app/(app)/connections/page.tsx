@@ -32,9 +32,7 @@ const popularSources: Array<{
 
 function badgeFor(a: Availability) {
   if (a === "wizard-ready")
-    return { label: "Available", classes: "bg-[color:var(--status-success)]/15 text-[color:var(--status-success)]" };
-  if (a === "image-ready")
-    return { label: "Image ready · Wizard soon", classes: "bg-accent-subtle text-accent" };
+    return { label: "Connect", classes: "bg-[color:var(--status-success)]/15 text-[color:var(--status-success)]" };
   return { label: "Coming soon", classes: "bg-hover text-text-tertiary" };
 }
 
@@ -183,9 +181,6 @@ export default function ConnectionsPage() {
           <h2 className="text-[13px] font-medium uppercase tracking-wider text-text-tertiary">
             Popular sources
           </h2>
-          <span className="text-[11px] text-text-tertiary">
-            7 connector images ready in Artifact Registry
-          </span>
         </div>
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {popularSources.map((s) => {
