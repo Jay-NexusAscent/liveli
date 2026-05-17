@@ -13,7 +13,18 @@ interface ConnectorRecord {
   status: string;
   tables?: string[];
   lastError?: string;
+  syncFrequency?: "5m" | "15m" | "30m" | "1h" | "6h" | "12h" | "24h";
 }
+
+const SYNC_FREQUENCY_LABELS: Record<NonNullable<ConnectorRecord["syncFrequency"]>, string> = {
+  "5m": "every 5 min",
+  "15m": "every 15 min",
+  "30m": "every 30 min",
+  "1h": "hourly",
+  "6h": "every 6h",
+  "12h": "every 12h",
+  "24h": "daily",
+};
 
 type ConnectAction = "postgres" | null;
 
@@ -179,51 +190,60 @@ export default function ConnectionsPage() {
             </div>
           </div>
         ) : (
-          <div className="grid gap-3 md:grid-cols-2">
+          <div
+            className="grid gap-3"
+            style={{ gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))" }}
+          >
             {connectors.map((c) => (
-              <div key={c.id} className="card-elevated p-5">
+              <div key={c.id} className="card-elevated flex flex-col gap-3 p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
-                    <div className="text-[15px] font-medium text-text-primary">{c.name}</div>
-                    <div className="mt-0.5 text-[12px] text-text-secondary">
-                      {c.type === "demo" ? (
-                        <>{c.tables?.length ?? 0} tables · {c.tables?.join(", ") ?? ""}</>
-                      ) : (
-                        <>type: {c.type}</>
+                    <div className="text-[14px] font-medium text-text-primary">{c.name}</div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-text-secondary">
+                      <span>{c.type === "demo" ? `${c.tables?.length ?? 0} tables` : c.type}</span>
+                      {c.syncFrequency && (
+                        <>
+                          <span className="text-text-tertiary">·</span>
+                          <span>syncs {SYNC_FREQUENCY_LABELS[c.syncFrequency]}</span>
+                        </>
                       )}
                     </div>
+                    {c.type === "demo" && c.tables && c.tables.length > 0 && (
+                      <div className="mt-1 truncate text-[11px] text-text-tertiary">
+                        {c.tables.join(", ")}
+                      </div>
+                    )}
                     {c.lastError && (
-                      <div className="mt-2 truncate text-[11px] text-[color:var(--status-error)]">
+                      <div className="mt-2 line-clamp-2 text-[11px] text-[color:var(--status-error)]">
                         {c.lastError}
                       </div>
                     )}
                   </div>
-                  <div className="flex flex-col items-end gap-2">
-                    <StatusBadge status={c.status} />
-                    <div className="flex items-center gap-1.5">
-                      {c.type !== "demo" && (
-                        <button
-                          type="button"
-                          onClick={() => triggerSync(c.id)}
-                          disabled={syncingId === c.id || c.status === "syncing"}
-                          className={cn(
-                            "rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text-primary",
-                            (syncingId === c.id || c.status === "syncing") && "opacity-60"
-                          )}
-                        >
-                          {syncingId === c.id || c.status === "syncing" ? "Syncing…" : "Sync now"}
-                        </button>
+                  <StatusBadge status={c.status} />
+                </div>
+
+                <div className="flex items-center justify-end gap-1.5 border-t border-border pt-2">
+                  {c.type !== "demo" && (
+                    <button
+                      type="button"
+                      onClick={() => triggerSync(c.id)}
+                      disabled={syncingId === c.id || c.status === "syncing"}
+                      className={cn(
+                        "rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text-primary",
+                        (syncingId === c.id || c.status === "syncing") && "opacity-60"
                       )}
-                      <button
-                        type="button"
-                        onClick={() => setPendingDelete(c)}
-                        className="rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:border-[color:var(--status-error)]/40 hover:bg-[color:var(--status-error)]/10 hover:text-[color:var(--status-error)]"
-                        title="Delete connector"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
+                    >
+                      {syncingId === c.id || c.status === "syncing" ? "Syncing…" : "Sync now"}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setPendingDelete(c)}
+                    className="rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:border-[color:var(--status-error)]/40 hover:bg-[color:var(--status-error)]/10 hover:text-[color:var(--status-error)]"
+                    title="Delete connector"
+                  >
+                    Delete
+                  </button>
                 </div>
               </div>
             ))}

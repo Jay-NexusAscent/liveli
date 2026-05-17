@@ -10,6 +10,18 @@ interface PostgresWizardProps {
   onConnected: () => void;
 }
 
+type SyncFrequency = "5m" | "15m" | "30m" | "1h" | "6h" | "12h" | "24h";
+
+const SYNC_FREQUENCIES: Array<{ value: SyncFrequency; label: string }> = [
+  { value: "5m", label: "Every 5 minutes" },
+  { value: "15m", label: "Every 15 minutes" },
+  { value: "30m", label: "Every 30 minutes" },
+  { value: "1h", label: "Every hour" },
+  { value: "6h", label: "Every 6 hours" },
+  { value: "12h", label: "Every 12 hours" },
+  { value: "24h", label: "Once a day" },
+];
+
 interface FormState {
   name: string;
   host: string;
@@ -19,6 +31,7 @@ interface FormState {
   password: string;
   ssl: boolean;
   schemas: string;
+  syncFrequency: SyncFrequency;
 }
 
 const initialForm: FormState = {
@@ -30,6 +43,7 @@ const initialForm: FormState = {
   password: "",
   ssl: true,
   schemas: "public",
+  syncFrequency: "1h",
 };
 
 export function PostgresWizard({ open, onClose, onConnected }: PostgresWizardProps) {
@@ -176,6 +190,23 @@ export function PostgresWizard({ open, onClose, onConnected }: PostgresWizardPro
             />
           </Field>
         </div>
+
+        <Field
+          label="Sync frequency"
+          hint="How often Liveli will pull fresh data from this source. Defaults to hourly."
+        >
+          <select
+            value={form.syncFrequency}
+            onChange={(e) => update("syncFrequency", e.target.value as SyncFrequency)}
+            className={inputClass}
+          >
+            {SYNC_FREQUENCIES.map((f) => (
+              <option key={f.value} value={f.value}>
+                {f.label}
+              </option>
+            ))}
+          </select>
+        </Field>
 
         <Field label="Schemas (comma-separated)" hint="Defaults to `public`. Leave as-is for most setups.">
           <input

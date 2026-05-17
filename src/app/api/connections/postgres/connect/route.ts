@@ -18,6 +18,7 @@ const Body = z.object({
   password: z.string().min(1).max(512),
   ssl: z.boolean().default(true),
   schemas: z.string().optional().describe("Comma-separated schemas to sync (default: public)"),
+  syncFrequency: z.enum(["5m", "15m", "30m", "1h", "6h", "12h", "24h"]).default("1h"),
 });
 
 export async function POST(req: Request) {
@@ -78,12 +79,16 @@ export async function POST(req: Request) {
       user: body.user,
       ssl: body.ssl,
       schemas: body.schemas ?? "public",
+      syncFrequency: body.syncFrequency,
       secretRef,
       createdBy: userId,
       createdAt: FieldValue.serverTimestamp(),
       bqProject: gcp.projectId,
       bqDataset: datasetId,
     });
+    // Note: actual scheduled execution via Cloud Scheduler is tracked
+    // as LIVELI-50. For now the preference is stored; only manual
+    // "Sync now" + the initial sync (autoSync=true) actually fire.
 
     return Response.json({
       ok: true,
