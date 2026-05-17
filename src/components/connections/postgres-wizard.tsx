@@ -41,6 +41,30 @@ export function PostgresWizard({ open, onClose, onConnected }: PostgresWizardPro
   const update = <K extends keyof FormState>(k: K, v: FormState[K]) =>
     setForm((s) => ({ ...s, [k]: v }));
 
+  // Read the response body safely — handle empty bodies, non-JSON,
+  // and structured server error envelopes uniformly.
+  const readResponse = async (res: Response) => {
+    const text = await res.text();
+    let data: Record<string, unknown> = {};
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = { errorMessage: text };
+      }
+    } else {
+      data = { errorMessage: `Empty response body (HTTP ${res.status})` };
+    }
+    return data;
+  };
+
+  const formatError = (data: Record<string, unknown>, fallbackStatus: number): string => {
+    const err = data.error as string | undefined;
+    const msg = data.errorMessage as string | undefined;
+    if (err && msg && err !== msg) return `${err}\n${msg}`;
+    return err ?? msg ?? `HTTP ${fallbackStatus}`;
+  };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -54,17 +78,19 @@ export function PostgresWizard({ open, onClose, onConnected }: PostgresWizardPro
           port: Number(form.port),
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      const data = await readResponse(res);
+      if (!res.ok) {
+        throw new Error(formatError(data, res.status));
+      }
 
-      if (autoSync) {
-        const syncRes = await fetch(`/api/connections/${data.connectorId}/sync`, {
+      const connectorId = data.connectorId as string | undefined;
+      if (autoSync && connectorId) {
+        const syncRes = await fetch(`/api/connections/${connectorId}/sync`, {
           method: "POST",
         });
-        const syncData = await syncRes.json().catch(() => ({}));
+        const syncData = await readResponse(syncRes);
         if (!syncRes.ok) {
-          // Connector saved but sync failed — still let user close, surface the message
-          setError(`Saved, but sync failed to start: ${syncData.error ?? syncRes.status}`);
+          setError(`Saved, but sync failed to start:\n${formatError(syncData, syncRes.status)}`);
           setSubmitting(false);
           onConnected();
           return;

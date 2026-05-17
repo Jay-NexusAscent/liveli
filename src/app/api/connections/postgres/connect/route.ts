@@ -36,52 +36,85 @@ export async function POST(req: Request) {
     );
   }
 
-  await dbReady();
+  const step = { current: "init" };
+  try {
+    step.current = "dbReady (WIF auth)";
+    await dbReady();
 
-  // 1. Create the connector doc in Firestore (so we have an ID for the secret name)
-  const connectorRef = connectors(orgId).doc();
-  const connectorId = connectorRef.id;
+    step.current = "create connector doc ref";
+    const connectorRef = connectors(orgId).doc();
+    const connectorId = connectorRef.id;
 
-  // 2. Ensure workspace BQ dataset exists (US for compatibility with public data)
-  const client = await bqReady();
-  const datasetId = workspaceDatasetId(orgId);
-  const [exists] = await client.dataset(datasetId).exists();
-  if (!exists) {
-    await client.dataset(datasetId).create({ location: WORKSPACE_BQ_LOCATION });
+    step.current = "bqReady (WIF auth)";
+    const client = await bqReady();
+    const datasetId = workspaceDatasetId(orgId);
+
+    step.current = `dataset.exists (${datasetId})`;
+    const [exists] = await client.dataset(datasetId).exists();
+    if (!exists) {
+      step.current = `dataset.create (${datasetId}, location=${WORKSPACE_BQ_LOCATION})`;
+      await client.dataset(datasetId).create({ location: WORKSPACE_BQ_LOCATION });
+    }
+
+    step.current = "storeConnectorSecret (Secret Manager)";
+    const secretRef = await storeConnectorSecret(orgId, connectorId, {
+      host: body.host,
+      port: String(body.port),
+      database: body.database,
+      user: body.user,
+      password: body.password,
+      ssl: body.ssl ? "true" : "false",
+      schemas: body.schemas ?? "public",
+    });
+
+    step.current = "firestore connector record";
+    await connectorRef.set({
+      type: "postgres",
+      name: body.name,
+      status: "configured",
+      host: body.host,
+      port: body.port,
+      database: body.database,
+      user: body.user,
+      ssl: body.ssl,
+      schemas: body.schemas ?? "public",
+      secretRef,
+      createdBy: userId,
+      createdAt: FieldValue.serverTimestamp(),
+      bqProject: gcp.projectId,
+      bqDataset: datasetId,
+    });
+
+    return Response.json({
+      ok: true,
+      connectorId,
+      message: "Connector saved. Click Sync to start the first import.",
+    });
+  } catch (err) {
+    // Capture every readable property — google-gax / SDK errors often
+    // have non-standard shapes that don't expose `.message`.
+    const props: Record<string, unknown> = {};
+    if (err && typeof err === "object") {
+      for (const key of Object.getOwnPropertyNames(err)) {
+        try {
+          const v = (err as Record<string, unknown>)[key];
+          props[key] = typeof v === "function" ? "[function]" : v;
+        } catch {
+          props[key] = "[unreadable]";
+        }
+      }
+    }
+    const responseBody = {
+      error: `postgres/connect failed at step "${step.current}"`,
+      errorType:
+        (err as { constructor?: { name?: string } })?.constructor?.name ??
+        typeof err,
+      errorString: String(err),
+      errorMessage:
+        (err as { message?: string })?.message ?? String(err),
+      errorProps: props,
+    };
+    console.error("[postgres/connect]", JSON.stringify(responseBody).slice(0, 2000));
+    return Response.json(responseBody, { status: 500 });
   }
-
-  // 3. Store the connector credentials in Secret Manager
-  const secretRef = await storeConnectorSecret(orgId, connectorId, {
-    host: body.host,
-    port: String(body.port),
-    database: body.database,
-    user: body.user,
-    password: body.password,
-    ssl: body.ssl ? "true" : "false",
-    schemas: body.schemas ?? "public",
-  });
-
-  // 4. Record the connector in Firestore
-  await connectorRef.set({
-    type: "postgres",
-    name: body.name,
-    status: "configured", // -> "syncing" once sync starts -> "synced" on success
-    host: body.host,
-    port: body.port,
-    database: body.database,
-    user: body.user,
-    ssl: body.ssl,
-    schemas: body.schemas ?? "public",
-    secretRef,
-    createdBy: userId,
-    createdAt: FieldValue.serverTimestamp(),
-    bqProject: gcp.projectId,
-    bqDataset: datasetId,
-  });
-
-  return Response.json({
-    ok: true,
-    connectorId,
-    message: "Connector saved. Click Sync to start the first import.",
-  });
 }
