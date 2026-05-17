@@ -30,15 +30,15 @@ const steps = [
 export function MarketingFeatures() {
   return (
     <>
-      <section id="features" className="container-page py-24">
-        <div className="mx-auto mb-14 max-w-2xl text-center">
-          <span className="mb-3 inline-block rounded-full bg-accent-subtle px-3 py-1 text-[12px] font-medium uppercase tracking-wider text-accent">
+      <section id="features" className="container-page py-28 sm:py-32">
+        <div className="mx-auto mb-16 max-w-2xl text-center">
+          <span className="mb-4 inline-block rounded-full bg-accent-subtle px-3 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-accent">
             What you get
           </span>
-          <h2 className="text-[36px] font-semibold leading-tight tracking-tight font-heading">
+          <h2 className="text-[36px] font-semibold leading-[1.1] tracking-[-0.02em] text-text-primary font-heading sm:text-[44px]">
             One product, the whole data stack.
           </h2>
-          <p className="mt-4 text-[16px] text-text-secondary">
+          <p className="mt-5 text-[16px] leading-[1.6] text-text-secondary sm:text-[17px]">
             Most teams cobble together a warehouse, an ingestion tool, a BI dashboard, and a
             data analyst. Liveli is all of that in one tab.
           </p>
@@ -58,12 +58,12 @@ export function MarketingFeatures() {
         </div>
       </section>
 
-      <section id="how-it-works" className="container-page py-24">
-        <div className="mx-auto mb-14 max-w-2xl text-center">
-          <span className="mb-3 inline-block rounded-full bg-accent-subtle px-3 py-1 text-[12px] font-medium uppercase tracking-wider text-accent">
+      <section id="how-it-works" className="container-page py-28 sm:py-32">
+        <div className="mx-auto mb-16 max-w-2xl text-center">
+          <span className="mb-4 inline-block rounded-full bg-accent-subtle px-3 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-accent">
             How it works
           </span>
-          <h2 className="text-[36px] font-semibold leading-tight tracking-tight font-heading">
+          <h2 className="text-[36px] font-semibold leading-[1.1] tracking-[-0.02em] text-text-primary font-heading sm:text-[44px]">
             From zero to dashboard in three steps.
           </h2>
         </div>

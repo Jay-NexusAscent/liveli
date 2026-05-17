@@ -42,7 +42,7 @@
 
   /* Layout */
   --sidebar-width: 240px;
-  --container: 1200px;
+  --container: 1320px;
 
   /* Radii */
   --radius-sm: 6px;
@@ -218,32 +218,52 @@ h1, h2, h3, h4, h5, h6, .font-heading {
 
 [data-theme="light"] .bg-radial-glow::before { opacity: 0.35; }
 
-/* ---- Hero ECG line --------------------------------------------
-   Solid, faint, slow gradual opacity pulse. Matches the existing
-   Liveli brand on liveli.co.uk. */
-
-@keyframes ecg-pulse {
-  0%, 100% { opacity: 0.10; }
-  50%      { opacity: 0.28; }
-}
+/* ---- Hero ECG ---------------------------------------------------
+   Two paths: a static faint base line and a brighter pulse segment
+   that travels across the path every 9s. Reads as "alive" — matches
+   the heartbeat-monitor brand metaphor. */
 
 .hero-ecg path {
-  stroke: var(--accent);
-  stroke-width: 1;
   fill: none;
   stroke-linecap: round;
   stroke-linejoin: round;
-  opacity: 0.18;
-  animation: ecg-pulse 7s ease-in-out infinite;
 }
 
-[data-theme="light"] .hero-ecg path {
+.hero-ecg .ecg-base {
+  stroke: var(--accent);
+  stroke-width: 1;
+  opacity: 0.14;
+}
+
+[data-theme="light"] .hero-ecg .ecg-base {
   stroke-width: 1.25;
   opacity: 0.22;
 }
 
+.hero-ecg .ecg-pulse {
+  stroke: var(--accent);
+  stroke-width: 1.75;
+  opacity: 0.55;
+  /* path length ≈ 4400 path units; one visible 140px segment then a
+     huge gap so only one pulse is ever on-screen at a time */
+  stroke-dasharray: 140 5000;
+  animation: ecg-travel 9s linear infinite;
+}
+
+[data-theme="light"] .hero-ecg .ecg-pulse {
+  opacity: 0.7;
+}
+
+@keyframes ecg-travel {
+  from { stroke-dashoffset: 5140; }
+  to   { stroke-dashoffset: 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .hero-ecg path { animation: none; opacity: 0.16; }
+  .hero-ecg .ecg-pulse {
+    animation: none;
+    opacity: 0;
+  }
 }
 
 /* ---- Container ------------------------------------------------ */
