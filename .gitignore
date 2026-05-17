@@ -21,12 +21,13 @@ next-env.d.ts
 
 # terraform
 infra/.terraform/
-infra/.terraform.lock.hcl
 infra/*.tfstate
 infra/*.tfstate.*
+infra/tfplan
 infra/*.tfplan
 infra/.terraform.tfvars
 infra/terraform.tfvars
+# .terraform.lock.hcl IS committed — pins provider versions for reproducible CI
 
 # misc
 .DS_Store
