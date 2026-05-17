@@ -119,6 +119,15 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Smooth theme transitions on the root + body — keeps the bg/text crossfade pleasant
+   without overriding element-level Tailwind transitions (like hover states). */
+html,
+body {
+  transition:
+    background-color 220ms ease,
+    color 180ms ease;
+}
+
 h1, h2, h3, h4, h5, h6, .font-heading {
   font-family: var(--font-space-grotesk), var(--font-dm-sans), system-ui, sans-serif;
   letter-spacing: -0.01em;

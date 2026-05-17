@@ -60,7 +60,7 @@ export function MarketingHero() {
 
 function StatCard({ label, value, tag }: { label: string; value: string; tag: string }) {
   return (
-    <div className="card p-5">
+    <div className="card p-5 transition-transform duration-300 hover:-translate-y-0.5">
       <div className="flex items-baseline justify-between">
         <span className="text-[28px] font-semibold text-accent tabular-nums">{value}</span>
         <span className="text-[11px] font-medium uppercase tracking-wider text-text-tertiary">{tag}</span>
