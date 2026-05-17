@@ -6,11 +6,15 @@ let _db: Firestore | null = null;
 
 export function db(): Firestore {
   if (_db) return _db;
-  // Only set databaseId if it's NOT the default. Passing "(default)" with
-  // literal parens through env-var stringification has caused gRPC channels
-  // to reject with empty error fields in past Firestore SDK versions.
+  // preferRest:true — CRITICAL for Vercel/serverless. The Firestore SDK
+  // defaults to gRPC over HTTP/2, which Vercel's serverless runtime can't
+  // reliably establish. Failed channels surface as a google-gax error with
+  // every field undefined ('Error: undefined undefined: undefined'). REST
+  // transport (HTTPS/JSON) works everywhere serverless runs. BQ wasn't
+  // affected because @google-cloud/bigquery uses REST by default.
   const settings: ConstructorParameters<typeof Firestore>[0] = {
     projectId: gcp.projectId,
+    preferRest: true,
   };
   if (gcp.firestoreDatabase && gcp.firestoreDatabase !== "(default)") {
     settings.databaseId = gcp.firestoreDatabase;
