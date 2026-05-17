@@ -73,3 +73,22 @@ export async function readConnectorSecret(
   if (!data) throw new Error(`Empty secret ${name}`);
   return JSON.parse(data);
 }
+
+/**
+ * Delete the connector secret entirely (all versions). Idempotent —
+ * NotFound is treated as success so deletes are safe to retry.
+ */
+export async function deleteConnectorSecret(
+  orgId: string,
+  connectorId: string
+): Promise<void> {
+  const name = connectorSecretName(orgId, connectorId);
+  try {
+    await sm().deleteSecret({
+      name: `projects/${gcp.projectId}/secrets/${name}`,
+    });
+  } catch (err) {
+    const code = (err as { code?: number }).code;
+    if (code !== 5) throw err; // 5 = NOT_FOUND, treat as already-deleted
+  }
+}

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ConnectIcon, DatabaseIcon, ArrowRightIcon, SparkleIcon } from "@/components/icons";
 import { cn } from "@/lib/utils";
 import { PostgresWizard } from "@/components/connections/postgres-wizard";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 
 interface ConnectorRecord {
   id: string;
@@ -38,6 +39,7 @@ export default function ConnectionsPage() {
   const [error, setError] = useState<string | null>(null);
   const [pgOpen, setPgOpen] = useState(false);
   const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<ConnectorRecord | null>(null);
 
   const refresh = async () => {
     try {
@@ -93,6 +95,22 @@ export default function ConnectionsPage() {
     } finally {
       setSyncingId(null);
     }
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    setError(null);
+    const res = await fetch(`/api/connections/${pendingDelete.id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(
+        data.errorMessage
+          ? `${data.error ?? "Delete failed"}\n${data.errorMessage}`
+          : data.error ?? `HTTP ${res.status}`
+      );
+    }
+    setPendingDelete(null);
+    await refresh();
   };
 
   const hasDemoConnector = connectors.some((c) => c.type === "demo");
@@ -182,19 +200,29 @@ export default function ConnectionsPage() {
                   </div>
                   <div className="flex flex-col items-end gap-2">
                     <StatusBadge status={c.status} />
-                    {c.type !== "demo" && (
+                    <div className="flex items-center gap-1.5">
+                      {c.type !== "demo" && (
+                        <button
+                          type="button"
+                          onClick={() => triggerSync(c.id)}
+                          disabled={syncingId === c.id || c.status === "syncing"}
+                          className={cn(
+                            "rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text-primary",
+                            (syncingId === c.id || c.status === "syncing") && "opacity-60"
+                          )}
+                        >
+                          {syncingId === c.id || c.status === "syncing" ? "Syncing…" : "Sync now"}
+                        </button>
+                      )}
                       <button
                         type="button"
-                        onClick={() => triggerSync(c.id)}
-                        disabled={syncingId === c.id || c.status === "syncing"}
-                        className={cn(
-                          "rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text-primary",
-                          (syncingId === c.id || c.status === "syncing") && "opacity-60"
-                        )}
+                        onClick={() => setPendingDelete(c)}
+                        className="rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:border-[color:var(--status-error)]/40 hover:bg-[color:var(--status-error)]/10 hover:text-[color:var(--status-error)]"
+                        title="Delete connector"
                       >
-                        {syncingId === c.id || c.status === "syncing" ? "Syncing…" : "Sync now"}
+                        Delete
                       </button>
-                    )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -254,6 +282,41 @@ export default function ConnectionsPage() {
         onConnected={() => {
           refresh();
         }}
+      />
+
+      <ConfirmModal
+        open={pendingDelete !== null}
+        title="Delete connector?"
+        destructive
+        confirmLabel="Delete connector"
+        cancelLabel="Cancel"
+        message={
+          pendingDelete ? (
+            <>
+              <p>
+                You&apos;re about to delete{" "}
+                <span className="font-medium text-text-primary">
+                  {pendingDelete.name}
+                </span>
+                . This will:
+              </p>
+              <ul className="mt-3 ml-5 list-disc space-y-1 text-[13px]">
+                <li>Revoke and delete the stored credentials from Secret Manager.</li>
+                <li>Stop any future syncs for this source.</li>
+                <li>
+                  <span className="font-medium text-text-primary">
+                    Keep your already-synced tables
+                  </span>{" "}
+                  in BigQuery — they remain queryable by the agent. Drop the workspace
+                  dataset manually if you want to wipe the data too.
+                </li>
+              </ul>
+              <p className="mt-3 text-[12px] text-text-tertiary">This action cannot be undone.</p>
+            </>
+          ) : null
+        }
+        onConfirm={confirmDelete}
+        onCancel={() => setPendingDelete(null)}
       />
     </div>
   );
