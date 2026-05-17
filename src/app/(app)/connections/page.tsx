@@ -12,14 +12,31 @@ interface ConnectorRecord {
   tables?: string[];
 }
 
-const popularSources = [
-  { name: "PostgreSQL", desc: "Replicate tables from any Postgres database", tag: "Database" },
-  { name: "BigQuery", desc: "Query datasets directly without ingestion", tag: "Warehouse" },
-  { name: "Stripe", desc: "Charges, subscriptions, customers, refunds", tag: "Payments" },
-  { name: "HubSpot", desc: "Contacts, deals, companies, engagements", tag: "CRM" },
-  { name: "Google Ads", desc: "Campaign performance and spend", tag: "Marketing" },
-  { name: "Shopify", desc: "Orders, products, customers", tag: "E-commerce" },
+type Availability = "wizard-ready" | "image-ready" | "coming-soon";
+
+const popularSources: Array<{
+  name: string;
+  desc: string;
+  tag: string;
+  availability: Availability;
+}> = [
+  { name: "PostgreSQL", desc: "Replicate tables from any Postgres database", tag: "Database", availability: "image-ready" },
+  { name: "MySQL", desc: "Replicate tables from any MySQL database", tag: "Database", availability: "image-ready" },
+  { name: "BigQuery", desc: "Query datasets directly without ingestion", tag: "Warehouse", availability: "coming-soon" },
+  { name: "Stripe", desc: "Charges, subscriptions, customers, refunds", tag: "Payments", availability: "image-ready" },
+  { name: "Shopify", desc: "Orders, products, customers, inventory", tag: "E-commerce", availability: "image-ready" },
+  { name: "HubSpot", desc: "Contacts, deals, companies, engagements", tag: "CRM", availability: "image-ready" },
+  { name: "Google Ads", desc: "Campaign performance and spend", tag: "Marketing", availability: "image-ready" },
+  { name: "Meta Ads", desc: "Facebook + Instagram ad performance", tag: "Marketing", availability: "image-ready" },
 ];
+
+function badgeFor(a: Availability) {
+  if (a === "wizard-ready")
+    return { label: "Available", classes: "bg-[color:var(--status-success)]/15 text-[color:var(--status-success)]" };
+  if (a === "image-ready")
+    return { label: "Image ready · Wizard soon", classes: "bg-accent-subtle text-accent" };
+  return { label: "Coming soon", classes: "bg-hover text-text-tertiary" };
+}
 
 export default function ConnectionsPage() {
   const [connectors, setConnectors] = useState<ConnectorRecord[]>([]);
@@ -34,7 +51,7 @@ export default function ConnectionsPage() {
         setConnectors(data.items ?? []);
       }
     } catch {
-      // ignore — endpoint may not exist yet
+      // ignore — connector listing may be unauthenticated path
     }
   };
 
@@ -73,7 +90,6 @@ export default function ConnectionsPage() {
         </p>
       </header>
 
-      {/* Try sample data callout */}
       {!hasDemoConnector && (
         <section className="card-elevated mb-10 flex flex-col items-start gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-4">
@@ -112,7 +128,6 @@ export default function ConnectionsPage() {
         </div>
       )}
 
-      {/* Existing connectors */}
       <section className="mb-12">
         <h2 className="mb-4 text-[13px] font-medium uppercase tracking-wider text-text-tertiary">
           Your sources
@@ -164,36 +179,60 @@ export default function ConnectionsPage() {
       </section>
 
       <section>
-        <h2 className="mb-4 text-[13px] font-medium uppercase tracking-wider text-text-tertiary">
-          Popular sources
-        </h2>
-        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-          {popularSources.map((s) => (
-            <button
-              key={s.name}
-              type="button"
-              disabled
-              className="card group flex cursor-not-allowed flex-col items-start p-5 text-left opacity-60"
-            >
-              <div className="mb-3 flex w-full items-center justify-between">
-                <div className="flex h-9 w-9 items-center justify-center rounded-md bg-accent-subtle text-accent">
-                  <DatabaseIcon className="text-accent" />
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 className="text-[13px] font-medium uppercase tracking-wider text-text-tertiary">
+            Popular sources
+          </h2>
+          <span className="text-[11px] text-text-tertiary">
+            7 connector images ready in Artifact Registry
+          </span>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {popularSources.map((s) => {
+            const b = badgeFor(s.availability);
+            const interactive = s.availability !== "coming-soon";
+            return (
+              <div
+                key={s.name}
+                className={cn(
+                  "card group relative flex flex-col items-start p-5 text-left",
+                  interactive ? "cursor-not-allowed opacity-90" : "cursor-not-allowed opacity-60"
+                )}
+                title={
+                  s.availability === "image-ready"
+                    ? "Cloud Run Job + Meltano image are deployed. Connect wizard coming soon."
+                    : "Coming soon"
+                }
+              >
+                <div className="mb-3 flex w-full items-center justify-between">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-md bg-accent-subtle text-accent">
+                    <DatabaseIcon className="text-accent" />
+                  </div>
+                  <span className="text-[10px] font-medium uppercase tracking-wider text-text-tertiary">
+                    {s.tag}
+                  </span>
                 </div>
-                <span className="text-[10px] font-medium uppercase tracking-wider text-text-tertiary">
-                  {s.tag}
-                </span>
+                <h3 className="mb-1 text-[15px] font-semibold text-text-primary font-heading">
+                  {s.name}
+                </h3>
+                <p className="text-[13px] leading-relaxed text-text-secondary">{s.desc}</p>
+                <div className="mt-4 w-full">
+                  <span
+                    className={cn(
+                      "inline-block rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider",
+                      b.classes
+                    )}
+                  >
+                    {b.label}
+                  </span>
+                </div>
               </div>
-              <h3 className="mb-1 text-[15px] font-semibold text-text-primary font-heading">
-                {s.name}
-              </h3>
-              <p className="text-[13px] leading-relaxed text-text-secondary">{s.desc}</p>
-              <div className="mt-4 text-[11px] text-text-tertiary">Coming soon</div>
-            </button>
-          ))}
+            );
+          })}
         </div>
         <p className="mt-6 text-center text-[12px] text-text-tertiary">
-          600+ sources available via Meltano. First real connector (Postgres) is being
-          wired — see the backlog.
+          600+ sources available via Meltano. Connect wizards roll out per source — Postgres
+          is next.
         </p>
       </section>
     </div>
