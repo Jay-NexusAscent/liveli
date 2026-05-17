@@ -1,23 +1,40 @@
-# Connector job template. The actual image is published by the
-# deploy-connectors GitHub Actions workflow whenever connectors/** changes.
-# At first apply the placeholder image is `hello-world` — replace by running
-# the workflow once.
+# One Cloud Run Job per connector type. Each runs the corresponding
+# Meltano image from Artifact Registry. Per-invocation env (WORKSPACE_ID,
+# CONNECTOR_ID, source credentials, target BQ project + dataset) is
+# injected at run time by the app's /api/connections/{id}/sync route via
+# `gcloud run jobs execute --update-env-vars`.
+#
+# Images are placeholders until the deploy-connectors workflow runs;
+# Terraform ignores the image field via lifecycle so workflow updates
+# don't drift.
 
-resource "google_cloud_run_v2_job" "connector_postgres_to_bq" {
-  name     = "connector-postgres-to-bq"
+locals {
+  connector_types = [
+    "postgres-to-bq",
+    "mysql-to-bq",
+    "stripe-to-bq",
+    "shopify-to-bq",
+    "hubspot-to-bq",
+    "google-ads-to-bq",
+    "facebook-ads-to-bq",
+  ]
+}
+
+resource "google_cloud_run_v2_job" "connector" {
+  for_each = toset(local.connector_types)
+
+  name     = "connector-${each.key}"
   location = var.gcp_region
   project  = var.project_id
 
   template {
     template {
       service_account = google_service_account.connector.email
-
-      max_retries = 1
-      timeout     = "1800s" # 30 minutes max per run
+      max_retries     = 1
+      timeout         = "1800s" # 30 minutes max per run
 
       containers {
-        # Placeholder. The GitHub Actions workflow replaces this with
-        # europe-west4-docker.pkg.dev/liveli-496609/liveli-connectors/postgres-to-bq:<sha>
+        # Placeholder — replaced by deploy-connectors workflow.
         image = "us-docker.pkg.dev/cloudrun/container/hello"
 
         resources {
@@ -26,9 +43,6 @@ resource "google_cloud_run_v2_job" "connector_postgres_to_bq" {
             memory = "4Gi"
           }
         }
-
-        # Real env is injected per-invocation by the app, including
-        # WORKSPACE_ID, CONNECTOR_ID, and a Secret Manager reference.
       }
     }
   }
@@ -40,7 +54,6 @@ resource "google_cloud_run_v2_job" "connector_postgres_to_bq" {
     google_artifact_registry_repository.connectors,
   ]
 
-  # Image is managed by CI/CD, not Terraform.
   lifecycle {
     ignore_changes = [template[0].template[0].containers[0].image]
   }

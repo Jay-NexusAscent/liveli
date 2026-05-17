@@ -1,0 +1,31 @@
+version: 1
+default_environment: prod
+project_id: liveli-stripe-to-bq
+
+environments:
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-stripe
+      variant: hotgluexyz
+      pip_url: git+https://github.com/hotgluexyz/tap-stripe.git
+      # Required env: TAP_STRIPE_CLIENT_SECRET (sk_live_... or sk_test_...)
+      # Optional:     TAP_STRIPE_START_DATE (ISO8601, default 1y ago)
+      config: {}
+      select:
+        - charges.*
+        - customers.*
+        - subscriptions.*
+        - invoices.*
+        - payouts.*
+        - refunds.*
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git@v0.7.4
+      config:
+        method: storage_write_api
+        denormalized: true
+        upsert: true

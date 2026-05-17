@@ -1,0 +1,26 @@
+version: 1
+default_environment: prod
+project_id: liveli-mysql-to-bq
+
+environments:
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-mysql
+      variant: meltanolabs
+      pip_url: meltanolabs-tap-mysql
+      # Connection params from env at runtime:
+      #   TAP_MYSQL_HOST, TAP_MYSQL_PORT, TAP_MYSQL_USER,
+      #   TAP_MYSQL_PASSWORD, TAP_MYSQL_DATABASE
+      config:
+        ssl: false
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git@v0.7.4
+      config:
+        method: storage_write_api
+        denormalized: true
+        upsert: true

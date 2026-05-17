@@ -5,6 +5,11 @@ on:
     branches: [main]
     paths: ["connectors/**", ".github/workflows/deploy-connectors.yml"]
   workflow_dispatch:
+    inputs:
+      connector:
+        description: "Specific connector to (re)build (leave blank to build all)"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -15,20 +20,38 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  postgres-to-bq:
-    name: postgres-to-bq
+  build:
+    name: ${{ matrix.connector }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        connector:
+          - postgres-to-bq
+          - mysql-to-bq
+          - stripe-to-bq
+          - shopify-to-bq
+          - hubspot-to-bq
+          - google-ads-to-bq
+          - facebook-ads-to-bq
 
     env:
       REGION: europe-west4
       PROJECT_ID: liveli-496609
       REPO: liveli-connectors
-      IMAGE: postgres-to-bq
-      JOB_NAME: connector-postgres-to-bq
 
     steps:
       - uses: actions/checkout@v4
+
+      # When workflow_dispatch is fired with a specific connector input,
+      # skip matrix entries that don't match.
+      - name: Skip if a specific connector was requested and this isn't it
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.connector != '' && github.event.inputs.connector != matrix.connector }}
+        run: |
+          echo "Skipping ${{ matrix.connector }} — workflow dispatched for ${{ github.event.inputs.connector }}"
+          exit 0
 
       - uses: google-github-actions/auth@v2
         with:
@@ -41,20 +64,24 @@ jobs:
         run: gcloud auth configure-docker $REGION-docker.pkg.dev --quiet
 
       - name: Build image
-        working-directory: connectors/postgres-to-bq
+        id: build
+        working-directory: connectors/${{ matrix.connector }}
         run: |
-          IMAGE_URI="$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/$IMAGE:${GITHUB_SHA::12}"
-          docker build -t "$IMAGE_URI" -t "$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/$IMAGE:latest" .
+          IMAGE_URI="$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/${{ matrix.connector }}:${GITHUB_SHA::12}"
+          docker build \
+            -t "$IMAGE_URI" \
+            -t "$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/${{ matrix.connector }}:latest" \
+            .
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
       - name: Push image
         run: |
           docker push "$IMAGE_URI"
-          docker push "$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/$IMAGE:latest"
+          docker push "$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/${{ matrix.connector }}:latest"
 
-      - name: Update Cloud Run Job to point at new image
+      - name: Update Cloud Run Job image
         run: |
-          gcloud run jobs update "$JOB_NAME" \
+          gcloud run jobs update "connector-${{ matrix.connector }}" \
             --image "$IMAGE_URI" \
             --region "$REGION" \
             --project "$PROJECT_ID"

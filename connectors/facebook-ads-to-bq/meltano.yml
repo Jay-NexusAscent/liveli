@@ -1,0 +1,31 @@
+version: 1
+default_environment: prod
+project_id: liveli-facebook-ads-to-bq
+
+environments:
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-meta-ads
+      variant: meltanolabs
+      pip_url: meltanolabs-tap-meta-ads
+      # Required env (Meta Marketing API):
+      #   TAP_META_ADS_ACCESS_TOKEN   (long-lived Meta access token)
+      #   TAP_META_ADS_ACCOUNT_IDS    (comma-separated act_xxxxxx)
+      config:
+        start_date: "2024-01-01T00:00:00Z"
+      select:
+        - ads.*
+        - adsets.*
+        - campaigns.*
+        - ads_insights.*
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git@v0.7.4
+      config:
+        method: storage_write_api
+        denormalized: true
+        upsert: true
