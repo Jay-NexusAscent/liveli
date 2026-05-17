@@ -18,7 +18,13 @@ Guidance for Claude Code working in this repository.
 - `src/app/(auth)/*` — Clerk sign-in/up
 - `src/app/(app)/*` — authenticated, sidebar layout, three tabs: Chat / Connections / Dashboards
 
-**GCP project:** `liveli-496609`, region `europe-west4` (Vertex AI, Cloud Run, Artifact Registry, Secret Manager). BigQuery and GCS use `EU` multi-region. Firestore uses `eur3` multi-region.
+**GCP project:** `liveli-496609`. Regions split:
+- **Vertex AI** → `us-central1` (only region with the full latest Claude family — Opus 4.7, Sonnet 4.6, Haiku 4.5; EU regions trail by 6-9 months)
+- **Cloud Run / Artifact Registry / Secret Manager** → `europe-west4`
+- **BigQuery / GCS** → `EU` multi-region
+- **Firestore** → `eur3` multi-region
+
+The agent call is the only cross-Atlantic hop. All customer data lives in EU; only the inference round-trip leaves. If a future enterprise customer needs EU-only inference, fall back to `europe-west1` + Sonnet 4.5.
 
 **Auth identity (local):** `james@nexusascent.co.uk`.
 

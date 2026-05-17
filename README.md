@@ -21,7 +21,7 @@ One Next.js app, two domains, host-based routing via [middleware.ts](middleware.
 | Warehouse | BigQuery (`EU` multi-region) |
 | Connectors | Meltano on Cloud Run Jobs |
 | Secrets | Google Secret Manager |
-| Agent | Claude (via Vertex AI in `europe-west4`) |
+| Agent | Claude Opus 4.7 (via Vertex AI in `us-central1`) |
 | Charts | Apache ECharts |
 | Object storage | GCS (`EU` multi-region) |
 | Infra-as-code | Terraform (see `infra/`) |
