@@ -39,6 +39,15 @@ export function streamResponse(
         await producer(push);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        // Surface the full error to Vercel runtime logs — without this,
+        // a Vertex / Firestore / BigQuery failure inside the stream
+        // shows up as a silent "thinking… forever" on the client and
+        // there's no way to diagnose it after the fact.
+        console.error("[chat-stream] producer threw", {
+          message,
+          name: err instanceof Error ? err.name : typeof err,
+          stack: err instanceof Error ? err.stack : undefined,
+        });
         push({ type: "error", error: message });
       } finally {
         push({ type: "done" });

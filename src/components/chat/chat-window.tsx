@@ -338,6 +338,23 @@ function applyEvent(
     return;
   }
 
+  if (event.type === "error" && event.error) {
+    const text = `\n\n_Error: ${event.error}_`;
+    setMessages((msgs) =>
+      msgs.map((m) => {
+        if (m.id !== assistantId) return m;
+        const last = m.blocks[m.blocks.length - 1];
+        if (last?.type === "text") {
+          const updated = [...m.blocks];
+          updated[updated.length - 1] = { type: "text", text: last.text + text };
+          return { ...m, blocks: updated };
+        }
+        return { ...m, blocks: [...m.blocks, { type: "text", text }] };
+      })
+    );
+    return;
+  }
+
   if (event.type === "chart" && event.id && event.title && event.spec) {
     const id = event.id;
     const title = event.title;
