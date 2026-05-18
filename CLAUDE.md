@@ -19,12 +19,14 @@ Guidance for Claude Code working in this repository.
 - `src/app/(app)/*` — authenticated, sidebar layout, three tabs: Chat / Connections / Dashboards
 
 **GCP project:** `liveli-496609`. Regions split:
-- **Vertex AI** → `us-central1` (only region with the full latest Claude family — Opus 4.7, Sonnet 4.6, Haiku 4.5; EU regions trail by 6-9 months)
+- **Vertex AI** → `global` endpoint by default (dynamic routing, no premium). Use `eu` multi-region for EU-residency tier (10% premium), or `europe-west1` for provisioned throughput. Older Vertex docs referred to `us-central1` as the only region with Opus 4.7 — that's outdated; `global`/`us`/`eu` all serve the current Claude family (Opus 4.7, Sonnet 4.6, Haiku 4.5).
 - **Cloud Run / Artifact Registry / Secret Manager** → `europe-west4`
-- **BigQuery / GCS** → `EU` multi-region
+- **BigQuery / GCS** → `EU` multi-region (workspace datasets currently US — being migrated, see LIVELI-46)
 - **Firestore** → `eur3` multi-region
 
-The agent call is the only cross-Atlantic hop. All customer data lives in EU; only the inference round-trip leaves. If a future enterprise customer needs EU-only inference, fall back to `europe-west1` + Sonnet 4.5.
+For EU-residency workspaces, pin Vertex region to `eu` so inference also stays in EU. Otherwise the `global` endpoint dynamically routes for best availability.
+
+**One-time Vertex AI setup** (already done for `liveli-496609`): each Claude model must be enabled in Vertex AI Model Garden per project — open the model card and click "Enable". Without this you get a 404 "Publisher Model not found or your project does not have access".
 
 **Auth identity (local):** `james@nexusascent.co.uk`.
 

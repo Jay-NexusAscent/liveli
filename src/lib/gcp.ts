@@ -9,7 +9,14 @@ export const gcp = {
   region: process.env.GCP_REGION ?? "europe-west4",
   bqLocation: process.env.GCP_BQ_LOCATION ?? "EU",
   firestoreDatabase: process.env.GCP_FIRESTORE_DATABASE ?? "(default)",
-  vertexRegion: process.env.VERTEX_AI_REGION ?? "us-central1",
+  // Vertex AI endpoint type. For Claude Opus 4.7 / Sonnet 4.6 / Haiku
+  // 4.5 the supported endpoints are "global" (recommended, default
+  // pricing), "us" or "eu" (multi-region with 10% premium, useful for
+  // data-residency tiers), or specific regions like "us-east1" /
+  // "europe-west1" for provisioned throughput. The old "us-central1"
+  // regional endpoint does NOT serve Opus 4.7.
+  // Ref: https://platform.claude.com/docs/en/build-with-claude/claude-on-vertex-ai
+  vertexRegion: process.env.VERTEX_AI_REGION ?? "global",
   vertexModel: process.env.VERTEX_AI_MODEL ?? "claude-opus-4-7",
 } as const;
 
