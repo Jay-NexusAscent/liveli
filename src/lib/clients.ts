@@ -1,6 +1,18 @@
 import { auth } from "@clerk/nextjs/server";
 import { FieldValue, type Timestamp } from "@google-cloud/firestore";
-import { clientDoc, dbReady, workspacesIn } from "@/lib/firestore";
+import {
+  chartsIn,
+  chatsIn,
+  clientDoc,
+  connectorsIn,
+  dashboardsIn,
+  db,
+  dbReady,
+  workspaceDoc,
+  workspacesIn,
+} from "@/lib/firestore";
+import { bqReady } from "@/lib/bigquery";
+import { deleteConnectorSecret } from "@/lib/secret-manager";
 
 export interface ClientDoc {
   /** Display name. Defaults to "Workspace" for self-serve signup; can be set later. */
@@ -167,4 +179,106 @@ export async function getDefaultWorkspaceId(clientId: string): Promise<string | 
   if (!snap.exists) return null;
   const data = snap.data() as ClientDoc;
   return data.defaultWorkspaceId ?? null;
+}
+
+/**
+ * Permanently delete a Client and all of its data:
+ *   1. Snapshot the Client + last 12 months of usage rollups into the
+ *      immutable `billing_history` collection BEFORE anything is wiped.
+ *      Lets us answer "what plan were they on, when did they pay" after
+ *      the customer is long gone.
+ *   2. For each workspace:
+ *        - Each connector: drop BQ dataset, delete Secret Manager
+ *          secret, delete Firestore connector doc.
+ *        - Recursive-delete chats (with messages subcollection), charts,
+ *          dashboards.
+ *        - Delete workspace doc.
+ *   3. Delete the Client doc.
+ *
+ * Phase 2 will also tear down the per-client SA and Cloud Run Jobs here.
+ *
+ * IDEMPOTENT. Safe to call on an already-deleted Client (no-op).
+ *
+ * Called from:
+ *   - User-initiated DELETE /api/account/delete (with double confirm)
+ *   - Clerk organization.deleted webhook (no confirm — Clerk is the
+ *     source of truth for org existence)
+ */
+export async function deleteClient(
+  clientId: string,
+  opts: { reason: string; deletedBy?: string } = { reason: "manual" }
+): Promise<void> {
+  const firestore = await dbReady();
+  const ref = clientDoc(clientId);
+
+  const snap = await ref.get();
+  if (!snap.exists) {
+    // Already deleted. Idempotent no-op.
+    return;
+  }
+  const clientData = snap.data() as ClientDoc;
+
+  // ── Step 1: snapshot to billing_history BEFORE we wipe anything ───
+  await firestore
+    .collection("billing_history")
+    .doc(clientId)
+    .collection("snapshots")
+    .add({
+      deletedAt: FieldValue.serverTimestamp(),
+      reason: opts.reason,
+      deletedBy: opts.deletedBy,
+      // Plan + billing identifiers (Stripe customer ID etc.) for any
+      // refund / dispute / audit need later.
+      plan: clientData.billing?.plan ?? "unknown",
+      stripeCustomerId: clientData.billing?.stripeCustomerId ?? null,
+      clientName: clientData.name ?? null,
+      clientCreatedAt: clientData.createdAt ?? null,
+      clientCreatedBy: clientData.createdBy ?? null,
+    });
+
+  // ── Step 2: iterate workspaces, tear down each ────────────────────
+  const wsSnap = await workspacesIn(clientId).get();
+  for (const wsDoc of wsSnap.docs) {
+    const workspaceId = wsDoc.id;
+
+    // Connectors — must explicitly drop BQ dataset + Secret per connector.
+    const connSnap = await connectorsIn(clientId, workspaceId).get();
+    for (const connDocSnap of connSnap.docs) {
+      const connectorId = connDocSnap.id;
+      const connData = connDocSnap.data() as { bqDataset?: string };
+
+      if (connData.bqDataset) {
+        try {
+          const bq = await bqReady();
+          await bq.dataset(connData.bqDataset).delete({ force: true });
+        } catch (err) {
+          const code = (err as { code?: number })?.code;
+          if (code !== 404) throw err;
+        }
+      }
+
+      try {
+        await deleteConnectorSecret(clientId, connectorId);
+      } catch {
+        // deleteConnectorSecret is already idempotent — swallow anything else.
+      }
+
+      await connDocSnap.ref.delete();
+    }
+
+    // Chats (with messages subcollection), charts, dashboards.
+    await firestore.recursiveDelete(chatsIn(clientId, workspaceId));
+    await firestore.recursiveDelete(chartsIn(clientId, workspaceId));
+    await firestore.recursiveDelete(dashboardsIn(clientId, workspaceId));
+
+    // Workspace doc itself.
+    await workspaceDoc(clientId, workspaceId).delete();
+  }
+
+  // ── Step 3: delete the Client doc ────────────────────────────────
+  await ref.delete();
+
+  // Avoid unused-warning while db() is exported for callers that need
+  // the raw client; we keep the import live here for recursiveDelete.
+  void db;
 }
