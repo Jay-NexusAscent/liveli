@@ -1,10 +1,15 @@
-import { auth } from "@clerk/nextjs/server";
 import { FieldValue } from "@google-cloud/firestore";
 import { z } from "zod";
-import { dbReady, connectors } from "@/lib/firestore";
+import { requireWorkspaceContext, UnauthorizedError } from "@/lib/clients";
+import { dbReady, connectorsIn, workspaceDoc } from "@/lib/firestore";
 import { storeConnectorSecret } from "@/lib/secret-manager";
-import { workspaceDatasetId, bqReady, WORKSPACE_BQ_LOCATION } from "@/lib/bigquery";
+import {
+  bqReady,
+  connectorDatasetId,
+  DEFAULT_BQ_LOCATION,
+} from "@/lib/bigquery";
 import { gcp } from "@/lib/gcp";
+import { logUsageEvent } from "@/lib/usage";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -22,9 +27,14 @@ const Body = z.object({
 });
 
 export async function POST(req: Request) {
-  const { userId, orgId } = await auth();
-  if (!userId || !orgId) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  let ctx;
+  try {
+    ctx = await requireWorkspaceContext();
+  } catch (err) {
+    if (err instanceof UnauthorizedError) {
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    throw err;
   }
 
   let body: z.infer<typeof Body>;
@@ -39,26 +49,39 @@ export async function POST(req: Request) {
 
   const step = { current: "init" };
   try {
-    step.current = "dbReady (WIF auth)";
+    step.current = "dbReady";
     await dbReady();
 
     step.current = "create connector doc ref";
-    const connectorRef = connectors(orgId).doc();
+    const connectorRef = connectorsIn(ctx.clientId, ctx.workspaceId).doc();
     const connectorId = connectorRef.id;
 
-    step.current = "bqReady (WIF auth)";
-    const client = await bqReady();
-    const datasetId = workspaceDatasetId(orgId);
+    // Resolve the workspace's BQ location — set at workspace creation,
+    // immutable afterwards. Defaults to EU if (somehow) missing.
+    step.current = "load workspace location";
+    const wsSnap = await workspaceDoc(ctx.clientId, ctx.workspaceId).get();
+    const wsData = wsSnap.data() as { bqLocation?: "EU" | "US" } | undefined;
+    const bqLocation = wsData?.bqLocation ?? DEFAULT_BQ_LOCATION;
 
-    step.current = `dataset.exists (${datasetId})`;
-    const [exists] = await client.dataset(datasetId).exists();
-    if (!exists) {
-      step.current = `dataset.create (${datasetId}, location=${WORKSPACE_BQ_LOCATION})`;
-      await client.dataset(datasetId).create({ location: WORKSPACE_BQ_LOCATION });
-    }
+    step.current = "bqReady";
+    const bq = await bqReady();
+    const datasetId = connectorDatasetId(ctx.clientId, ctx.workspaceId, connectorId);
 
-    step.current = "storeConnectorSecret (Secret Manager)";
-    const secretRef = await storeConnectorSecret(orgId, connectorId, {
+    // Brand-new dataset per connector. Labels enable Cloud Billing Export
+    // attribution downstream.
+    step.current = `dataset.create (${datasetId}, location=${bqLocation})`;
+    await bq.dataset(datasetId).create({
+      location: bqLocation,
+      labels: {
+        customer: ctx.clientId.replace(/[^a-zA-Z0-9_]/g, "_").toLowerCase(),
+        workspace: ctx.workspaceId.toLowerCase(),
+        connector: connectorId.toLowerCase(),
+        type: "postgres",
+      },
+    });
+
+    step.current = "storeConnectorSecret";
+    const secretRef = await storeConnectorSecret(ctx.clientId, connectorId, {
       host: body.host,
       port: String(body.port),
       database: body.database,
@@ -81,14 +104,21 @@ export async function POST(req: Request) {
       schemas: body.schemas ?? "public",
       syncFrequency: body.syncFrequency,
       secretRef,
-      createdBy: userId,
+      createdBy: ctx.userId,
       createdAt: FieldValue.serverTimestamp(),
       bqProject: gcp.projectId,
       bqDataset: datasetId,
+      bqLocation,
     });
-    // Note: actual scheduled execution via Cloud Scheduler is tracked
-    // as LIVELI-50. For now the preference is stored; only manual
-    // "Sync now" + the initial sync (autoSync=true) actually fire.
+
+    logUsageEvent({
+      clientId: ctx.clientId,
+      workspaceId: ctx.workspaceId,
+      userId: ctx.userId,
+      eventType: "connector.create",
+      resource: connectorId,
+      labels: { type: "postgres", syncFrequency: body.syncFrequency },
+    });
 
     return Response.json({
       ok: true,
@@ -96,8 +126,6 @@ export async function POST(req: Request) {
       message: "Connector saved. Click Sync to start the first import.",
     });
   } catch (err) {
-    // Capture every readable property — google-gax / SDK errors often
-    // have non-standard shapes that don't expose `.message`.
     const props: Record<string, unknown> = {};
     if (err && typeof err === "object") {
       for (const key of Object.getOwnPropertyNames(err)) {

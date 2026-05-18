@@ -13,9 +13,17 @@ import { z } from "zod";
  */
 
 export interface AgentContext {
-  orgId: string;
+  /** Clerk Org ID (= our Client ID). All tenant-scoped reads must use this. */
+  clientId: string;
+  /** The user's currently-selected workspace within the Client. */
+  workspaceId: string;
   userId: string;
   chatId: string;
+  /**
+   * @deprecated alias for clientId — kept while old callsites are migrated.
+   * Remove after all references are updated.
+   */
+  orgId: string;
 }
 
 export interface ToolResult {

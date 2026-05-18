@@ -167,8 +167,7 @@ export function ChatWindow() {
             </button>
           </form>
           <p className="mt-2 text-center text-[11px] text-text-tertiary">
-            Connect a source on the Connections tab if you haven&apos;t already. Try
-            &ldquo;Try sample data&rdquo; for instant TheLook e-commerce.
+            Connect a source on the Connections tab if you haven&apos;t already.
           </p>
         </div>
       </div>

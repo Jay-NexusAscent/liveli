@@ -28,38 +28,101 @@ export async function dbReady(): Promise<Firestore> {
   return db();
 }
 
-// ── Collection layout ────────────────────────────────────────────
+// ── Collection layout (post-Phase-1 migration) ──────────────────────
 //
-//   workspaces/{orgId}                       — mirror of Clerk org metadata
-//     connectors/{connectorId}               — connector type, status, BQ dataset ref
-//     chats/{chatId}                         — chat session metadata
-//       messages/{messageId}                 — chat turn (user, assistant, tool_use, tool_result)
-//     charts/{chartId}                       — saved chart spec
-//     dashboards/{dashboardId}               — dashboard layout referencing charts
+//   clients/{clerkOrgId}                  — Client (Clerk Org IS the Client)
+//     ├── name, defaultWorkspaceId, serviceAccountEmail, billing.*
+//     └── workspaces/{workspaceId}        — Workspace (sub-unit of Client)
+//           ├── name, bqLocation, isDefault
+//           ├── connectors/{connectorId}
+//           ├── chats/{chatId}
+//           │     └── messages/{messageId}
+//           ├── charts/{chartId}
+//           └── dashboards/{dashboardId}
 //
-// Every read MUST be prefixed by `workspaces/{orgId}` to enforce multi-tenancy.
-// `requireWorkspace()` extracts orgId from Clerk and asserts it.
+//   users/{clerkUserId}                   — global user record (mirrors Clerk)
+//
+// Tenancy enforcement: every Firestore read MUST be prefixed by
+// clientDoc(clientId). Use `requireWorkspaceContext()` in route handlers
+// (see lib/clients.ts) to extract clientId + workspaceId from Clerk auth.
+//
+// The OLD layout below — top-level `workspaces` collection keyed by
+// orgId — conflated Client and Workspace into a single concept and is
+// being phased out. New code MUST use the new helpers.
 
+// ── New helpers (use these in new code) ─────────────────────────────
+
+export function clients() {
+  return db().collection("clients");
+}
+
+export function clientDoc(clientId: string) {
+  return clients().doc(clientId);
+}
+
+export function workspacesIn(clientId: string) {
+  return clientDoc(clientId).collection("workspaces");
+}
+
+export function workspaceDoc(clientId: string, workspaceId: string) {
+  return workspacesIn(clientId).doc(workspaceId);
+}
+
+export function connectorsIn(clientId: string, workspaceId: string) {
+  return workspaceDoc(clientId, workspaceId).collection("connectors");
+}
+
+export function chatsIn(clientId: string, workspaceId: string) {
+  return workspaceDoc(clientId, workspaceId).collection("chats");
+}
+
+export function messagesIn(clientId: string, workspaceId: string, chatId: string) {
+  return chatsIn(clientId, workspaceId).doc(chatId).collection("messages");
+}
+
+export function chartsIn(clientId: string, workspaceId: string) {
+  return workspaceDoc(clientId, workspaceId).collection("charts");
+}
+
+export function dashboardsIn(clientId: string, workspaceId: string) {
+  return workspaceDoc(clientId, workspaceId).collection("dashboards");
+}
+
+export function userDoc(userId: string) {
+  return db().collection("users").doc(userId);
+}
+
+// ── DEPRECATED: pre-Client-layer flat layout ────────────────────────
+// Use the new clients()/workspacesIn()/connectorsIn() helpers instead.
+// Retained while callsites are migrated commit-by-commit. Will be
+// removed when no callsites remain.
+
+/** @deprecated Use clientDoc(clientId) + workspacesIn(clientId) instead. */
 export function workspace(orgId: string) {
   return db().collection("workspaces").doc(orgId);
 }
 
+/** @deprecated Use connectorsIn(clientId, workspaceId) instead. */
 export function connectors(orgId: string) {
   return workspace(orgId).collection("connectors");
 }
 
+/** @deprecated Use chatsIn(clientId, workspaceId) instead. */
 export function chats(orgId: string) {
   return workspace(orgId).collection("chats");
 }
 
+/** @deprecated Use messagesIn(clientId, workspaceId, chatId) instead. */
 export function messages(orgId: string, chatId: string) {
   return chats(orgId).doc(chatId).collection("messages");
 }
 
+/** @deprecated Use chartsIn(clientId, workspaceId) instead. */
 export function charts(orgId: string) {
   return workspace(orgId).collection("charts");
 }
 
+/** @deprecated Use dashboardsIn(clientId, workspaceId) instead. */
 export function dashboards(orgId: string) {
   return workspace(orgId).collection("dashboards");
 }

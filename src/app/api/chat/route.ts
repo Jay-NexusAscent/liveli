@@ -1,6 +1,6 @@
-import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 import { runAgentTurn } from "@/lib/agent";
+import { requireWorkspaceContext, UnauthorizedError } from "@/lib/clients";
 import { streamResponse } from "@/lib/streaming";
 
 export const runtime = "nodejs";
@@ -12,9 +12,14 @@ const Body = z.object({
 });
 
 export async function POST(req: Request) {
-  const { userId, orgId } = await auth();
-  if (!userId || !orgId) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  let ctx;
+  try {
+    ctx = await requireWorkspaceContext();
+  } catch (err) {
+    if (err instanceof UnauthorizedError) {
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    throw err;
   }
 
   let body: z.infer<typeof Body>;
@@ -29,8 +34,9 @@ export async function POST(req: Request) {
 
   return streamResponse(async (push) => {
     for await (const event of runAgentTurn({
-      orgId,
-      userId,
+      clientId: ctx.clientId,
+      workspaceId: ctx.workspaceId,
+      userId: ctx.userId,
       chatId: body.chatId,
       userMessage: body.message,
     })) {

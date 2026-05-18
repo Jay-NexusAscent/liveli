@@ -7,7 +7,7 @@ const Input = z.object({
     .string()
     .min(1)
     .describe(
-      "BigQuery Standard SQL. Tables are unqualified (the workspace dataset is the default). Read-only — SELECTs only."
+      "BigQuery Standard SQL. Tables MUST be fully qualified as `dataset.table` — call list_tables first to discover the dataset name for each connector. Read-only — SELECTs only."
     ),
   maxRows: z
     .number()
@@ -23,14 +23,21 @@ const READ_ONLY = /^\s*(SELECT|WITH)\b/i;
 export const runSqlTool: ToolDefinition = {
   name: "run_sql",
   description:
-    "Execute a read-only SQL query against the user's workspace warehouse and return the result rows. Safety: queries are dry-run first; anything over 10 GB scan is rejected.",
+    "Execute a read-only SQL query against the user's workspace warehouse and return the result rows. Tables are spread across one dataset per connector — fully-qualify them with `dataset.table` (which you get from list_tables). Safety: queries are dry-run first; anything over 10 GB scan is rejected.",
   inputSchema: Input,
   handler: async (raw, ctx) => {
     const { sql, maxRows = 100 } = Input.parse(raw);
     if (!READ_ONLY.test(sql)) {
       throw new Error("Only SELECT and WITH queries are allowed.");
     }
-    const result = await safeQuery(ctx.orgId, sql, { maxRows });
+    const result = await safeQuery(sql, {
+      maxRows,
+      context: {
+        clientId: ctx.clientId,
+        workspaceId: ctx.workspaceId,
+        userId: ctx.userId,
+      },
+    });
     return {
       content: {
         rows: result.rows,

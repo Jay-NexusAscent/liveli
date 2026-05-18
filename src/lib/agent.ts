@@ -2,10 +2,11 @@ import { FieldValue } from "@google-cloud/firestore";
 import { vertexReady, MODEL } from "@/lib/vertex";
 import { ensureGcpAuth } from "@/lib/gcp-auth";
 import { anthropicToolSpecs, executeTool, type AgentContext } from "@/lib/tools";
-import { dbReady, chats, messages } from "@/lib/firestore";
+import { dbReady, chatsIn, messagesIn } from "@/lib/firestore";
+import { logAgentMessage } from "@/lib/usage";
 import type { ChatStreamEvent } from "@/lib/streaming";
 
-const SYSTEM_PROMPT = `You are **Liveli**, an AI data analyst inside a B2B SaaS product. The user has connected a data warehouse and asks questions in plain English. You help by:
+const SYSTEM_PROMPT = `You are **Liveli**, an AI data analyst inside a B2B SaaS product. The user has connected one or more data sources to a managed BigQuery warehouse. You help by:
 
 1. Inspecting the warehouse schema (always call \`list_tables\` first if you don't know what tables exist).
 2. Writing read-only BigQuery Standard SQL to answer the question (call \`run_sql\`).
@@ -15,7 +16,9 @@ const SYSTEM_PROMPT = `You are **Liveli**, an AI data analyst inside a B2B SaaS 
 
 Rules:
 - ALWAYS call \`list_tables\` before writing SQL if you haven't seen the schema this turn.
-- Use **unqualified** table names in SQL — the workspace dataset is the default. Don't qualify tables with project or dataset.
+- Each connector has its own BigQuery dataset (named like \`c_<id>__w_<id>__d_<connectorId>\`). The \`list_tables\` response gives you a \`dataset\` field per table — use it to **fully qualify** every table in your SQL: \`SELECT * FROM \\\`dataset.table\\\`\`.
+- Wrap fully-qualified names in backticks because dataset names contain underscores BigQuery's parser can be picky about.
+- If the user asks about "their data" without specifying a source, query across all relevant connectors' datasets (UNION ALL where the schema matches, or describe what each source has).
 - READ-ONLY queries only: SELECT and WITH allowed. Never DDL, UPDATE, DELETE, INSERT, MERGE.
 - Keep queries efficient: aggregate, filter, LIMIT. The dataset has a 10 GB scan cap.
 - For charts: pick the right type (bar for ranking, line for time series, pie for share-of-total, scatter for correlation). Always set a title.
@@ -29,7 +32,8 @@ Current date: ${new Date().toISOString().split("T")[0]}.`;
 const MAX_TURNS = 8;
 
 export interface AgentTurnInput {
-  orgId: string;
+  clientId: string;
+  workspaceId: string;
   userId: string;
   chatId?: string;
   userMessage: string;
@@ -45,10 +49,9 @@ export async function* runAgentTurn(input: AgentTurnInput): AsyncGenerator<ChatS
   await ensureGcpAuth();
 
   // ── Open or create the chat ────────────────────────────────────
-  const db = await dbReady();
-  const chatRef = input.chatId
-    ? chats(input.orgId).doc(input.chatId)
-    : chats(input.orgId).doc();
+  await dbReady();
+  const chatsCol = chatsIn(input.clientId, input.workspaceId);
+  const chatRef = input.chatId ? chatsCol.doc(input.chatId) : chatsCol.doc();
 
   const isNewChat = !input.chatId;
   if (isNewChat) {
@@ -60,7 +63,7 @@ export async function* runAgentTurn(input: AgentTurnInput): AsyncGenerator<ChatS
   }
 
   const chatId = chatRef.id;
-  const messagesCol = messages(input.orgId, chatId);
+  const messagesCol = messagesIn(input.clientId, input.workspaceId, chatId);
 
   // Append user message
   const userMsgRef = messagesCol.doc();
@@ -101,13 +104,19 @@ export async function* runAgentTurn(input: AgentTurnInput): AsyncGenerator<ChatS
   yield { type: "message_start", chatId, messageId: assistantMsgRef.id };
 
   const ctx: AgentContext = {
-    orgId: input.orgId,
+    clientId: input.clientId,
+    workspaceId: input.workspaceId,
     userId: input.userId,
     chatId,
+    // Deprecated alias retained until all tools migrate off orgId.
+    orgId: input.clientId,
   };
 
   const assistantText: string[] = [];
   const finalToolBlocks: MsgContent[] = [];
+  const turnStartedAt = Date.now();
+  let totalTokensIn = 0;
+  let totalTokensOut = 0;
 
   // ── Agentic loop: stream → tool calls → re-stream ──────────────
   let turn = 0;
@@ -173,6 +182,15 @@ export async function* runAgentTurn(input: AgentTurnInput): AsyncGenerator<ChatS
         activeBlockIndex = null;
       } else if (event.type === "message_delta") {
         stopReason = event.delta.stop_reason ?? null;
+        // Anthropic emits cumulative usage on message_delta. We add
+        // ALL turns together — a single user message can drive 2-8
+        // model turns when tool use is involved, and customers pay
+        // for every token across all of them.
+        const usage = (event as { usage?: { input_tokens?: number; output_tokens?: number } }).usage;
+        if (usage) {
+          totalTokensIn += usage.input_tokens ?? 0;
+          totalTokensOut += usage.output_tokens ?? 0;
+        }
       }
     }
 
@@ -233,6 +251,18 @@ export async function* runAgentTurn(input: AgentTurnInput): AsyncGenerator<ChatS
   }
 
   yield { type: "message_stop" };
+
+  // ── Log usage event (fire-and-forget — never blocks user) ─────
+  logAgentMessage({
+    clientId: input.clientId,
+    workspaceId: input.workspaceId,
+    userId: input.userId,
+    chatId,
+    model: MODEL,
+    tokensIn: totalTokensIn,
+    tokensOut: totalTokensOut,
+    executionMs: Date.now() - turnStartedAt,
+  });
 
   // ── Persist the full assistant message ────────────────────────
   await assistantMsgRef.set({

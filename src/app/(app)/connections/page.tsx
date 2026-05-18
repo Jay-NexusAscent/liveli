@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ConnectIcon, DatabaseIcon, ArrowRightIcon, SparkleIcon } from "@/components/icons";
+import { ConnectIcon, DatabaseIcon } from "@/components/icons";
 import { cn } from "@/lib/utils";
 import { PostgresWizard } from "@/components/connections/postgres-wizard";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
@@ -46,7 +46,6 @@ const popularSources: Array<{
 
 export default function ConnectionsPage() {
   const [connectors, setConnectors] = useState<ConnectorRecord[]>([]);
-  const [seeding, setSeeding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pgOpen, setPgOpen] = useState(false);
   const [syncingId, setSyncingId] = useState<string | null>(null);
@@ -69,27 +68,6 @@ export default function ConnectionsPage() {
     const id = setInterval(refresh, 5000);
     return () => clearInterval(id);
   }, []);
-
-  const seedDemo = async () => {
-    setSeeding(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/connections/seed-demo", { method: "POST" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(
-          data.errorMessage
-            ? `${data.error}\n${data.errorMessage}`
-            : data.error ?? `HTTP ${res.status}`
-        );
-      }
-      await refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setSeeding(false);
-    }
-  };
 
   const triggerSync = async (connectorId: string) => {
     setSyncingId(connectorId);
@@ -124,8 +102,6 @@ export default function ConnectionsPage() {
     await refresh();
   };
 
-  const hasDemoConnector = connectors.some((c) => c.type === "demo");
-
   return (
     <div className="container-page py-8">
       <header className="mb-8">
@@ -135,35 +111,6 @@ export default function ConnectionsPage() {
           the warehouse, and keeps your data fresh.
         </p>
       </header>
-
-      {!hasDemoConnector && (
-        <section className="card-elevated mb-10 flex flex-col items-start gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-4">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent-muted text-accent">
-              <SparkleIcon className="text-accent" />
-            </div>
-            <div>
-              <h2 className="text-[15px] font-medium text-text-primary">Try with sample data</h2>
-              <p className="mt-1 text-[13px] text-text-secondary">
-                Instantly load the TheLook E-commerce dataset so you can start chatting with the
-                agent right away.
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={seedDemo}
-            disabled={seeding}
-            className={cn(
-              "inline-flex shrink-0 items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-[13px] font-medium text-text-inverted transition-all hover:bg-accent-hover hover:shadow-[0_0_20px_var(--accent-glow-strong)]",
-              seeding && "opacity-60"
-            )}
-          >
-            {seeding ? "Loading sample data…" : "Load sample data"}
-            {!seeding && <ArrowRightIcon />}
-          </button>
-        </section>
-      )}
 
       {error && (
         <div className="mb-6 whitespace-pre-wrap rounded-md border border-[color:var(--status-error)]/30 bg-[color:var(--status-error)]/10 px-4 py-2 text-[12px] text-[color:var(--status-error)]">
@@ -184,7 +131,7 @@ export default function ConnectionsPage() {
               <div>
                 <p className="text-[15px] font-medium text-text-primary">No sources connected yet</p>
                 <p className="mt-0.5 text-[13px] text-text-secondary">
-                  Connect Postgres below, or click &ldquo;Load sample data&rdquo; above.
+                  Pick a source below to get started — Liveli will replicate it into BigQuery for you.
                 </p>
               </div>
             </div>
@@ -200,7 +147,7 @@ export default function ConnectionsPage() {
                   <div className="min-w-0 flex-1">
                     <div className="text-[14px] font-medium text-text-primary">{c.name}</div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-text-secondary">
-                      <span>{c.type === "demo" ? `${c.tables?.length ?? 0} tables` : c.type}</span>
+                      <span>{c.type}</span>
                       {c.syncFrequency && (
                         <>
                           <span className="text-text-tertiary">·</span>
@@ -208,11 +155,6 @@ export default function ConnectionsPage() {
                         </>
                       )}
                     </div>
-                    {c.type === "demo" && c.tables && c.tables.length > 0 && (
-                      <div className="mt-1 truncate text-[11px] text-text-tertiary">
-                        {c.tables.join(", ")}
-                      </div>
-                    )}
                     {c.lastError && (
                       <div className="mt-2 line-clamp-2 text-[11px] text-[color:var(--status-error)]">
                         {c.lastError}
@@ -223,19 +165,17 @@ export default function ConnectionsPage() {
                 </div>
 
                 <div className="flex items-center justify-end gap-1.5 border-t border-border pt-2">
-                  {c.type !== "demo" && (
-                    <button
-                      type="button"
-                      onClick={() => triggerSync(c.id)}
-                      disabled={syncingId === c.id || c.status === "syncing"}
-                      className={cn(
-                        "rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text-primary",
-                        (syncingId === c.id || c.status === "syncing") && "opacity-60"
-                      )}
-                    >
-                      {syncingId === c.id || c.status === "syncing" ? "Syncing…" : "Sync now"}
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => triggerSync(c.id)}
+                    disabled={syncingId === c.id || c.status === "syncing"}
+                    className={cn(
+                      "rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text-primary",
+                      (syncingId === c.id || c.status === "syncing") && "opacity-60"
+                    )}
+                  >
+                    {syncingId === c.id || c.status === "syncing" ? "Syncing…" : "Sync now"}
+                  </button>
                   <button
                     type="button"
                     onClick={() => setPendingDelete(c)}
