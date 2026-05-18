@@ -45,10 +45,20 @@ export interface ModelPricing {
 }
 
 export const VERTEX_MODEL_PRICING: Record<string, ModelPricing> = {
-  // Numbers below are published list rates — verify against Anthropic's
-  // pricing page before charging customers. They sit here in code so
-  // any change is reviewable, not silently picked up from a Firestore
-  // doc that nobody can audit.
+  // Numbers below are published list rates — verify against Vertex /
+  // Anthropic pricing pages before charging customers. They sit here in
+  // code so any change is reviewable, not silently picked up from a
+  // Firestore doc that nobody can audit.
+
+  // Gemini (Google) — the current default model family.
+  "gemini-3-flash-preview": { inputUsdPerM: 0.30, outputUsdPerM: 2.50 },
+  "gemini-3-flash": { inputUsdPerM: 0.30, outputUsdPerM: 2.50 },
+  "gemini-2.5-flash": { inputUsdPerM: 0.30, outputUsdPerM: 2.50 },
+  "gemini-2.5-flash-lite": { inputUsdPerM: 0.10, outputUsdPerM: 0.40 },
+  "gemini-3-pro": { inputUsdPerM: 2.50, outputUsdPerM: 15 },
+  "gemini-2.5-pro": { inputUsdPerM: 1.25, outputUsdPerM: 10 },
+
+  // Anthropic Claude (kept in case anyone overrides VERTEX_AI_MODEL).
   "claude-opus-4-7": { inputUsdPerM: 15, outputUsdPerM: 75 },
   "claude-opus-4-6": { inputUsdPerM: 15, outputUsdPerM: 75 },
   "claude-sonnet-4-6": { inputUsdPerM: 3, outputUsdPerM: 15 },
@@ -61,7 +71,7 @@ export function vertexCostGbp(
   tokensIn: number,
   tokensOut: number
 ): number {
-  const rates = VERTEX_MODEL_PRICING[model] ?? VERTEX_MODEL_PRICING["claude-opus-4-7"];
+  const rates = VERTEX_MODEL_PRICING[model] ?? VERTEX_MODEL_PRICING["gemini-3-flash-preview"];
   const usd = (tokensIn / 1_000_000) * rates.inputUsdPerM
             + (tokensOut / 1_000_000) * rates.outputUsdPerM;
   return usdToGbp(usd);

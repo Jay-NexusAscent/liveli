@@ -9,15 +9,17 @@ export const gcp = {
   region: process.env.GCP_REGION ?? "europe-west4",
   bqLocation: process.env.GCP_BQ_LOCATION ?? "EU",
   firestoreDatabase: process.env.GCP_FIRESTORE_DATABASE ?? "(default)",
-  // Vertex AI endpoint type. For Claude Opus 4.7 / Sonnet 4.6 / Haiku
-  // 4.5 the supported endpoints are "global" (recommended, default
-  // pricing), "us" or "eu" (multi-region with 10% premium, useful for
-  // data-residency tiers), or specific regions like "us-east1" /
-  // "europe-west1" for provisioned throughput. The old "us-central1"
-  // regional endpoint does NOT serve Opus 4.7.
-  // Ref: https://platform.claude.com/docs/en/build-with-claude/claude-on-vertex-ai
+  // Vertex AI location for Gemini models. "global" routes dynamically,
+  // "us-central1" / "europe-west1" / etc. for region-pinning. Most
+  // Gemini models are available across many regions — pick the closest
+  // to your workload. We default to europe-west1 since the rest of the
+  // stack is EU.
+  // Ref: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/models
   vertexRegion: process.env.VERTEX_AI_REGION ?? "global",
-  vertexModel: process.env.VERTEX_AI_MODEL ?? "claude-opus-4-7",
+  // Gemini 3 Flash (preview as of mid-2026) — fast, cheap, supports
+  // function calling. Set VERTEX_AI_MODEL to override (e.g. for
+  // gemini-2.5-flash GA, or gemini-3-pro for harder reasoning).
+  vertexModel: process.env.VERTEX_AI_MODEL ?? "gemini-3-flash-preview",
 } as const;
 
 function requireEnv(name: string): string {

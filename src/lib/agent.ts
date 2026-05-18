@@ -1,7 +1,17 @@
 import { FieldValue } from "@google-cloud/firestore";
+import type {
+  Content,
+  FunctionCall,
+  GenerateContentCandidate,
+  Part,
+} from "@google-cloud/vertexai";
 import { vertexReady, MODEL } from "@/lib/vertex";
 import { ensureGcpAuth } from "@/lib/gcp-auth";
-import { anthropicToolSpecs, executeTool, type AgentContext } from "@/lib/tools";
+import {
+  executeTool,
+  geminiFunctionDeclarations,
+  type AgentContext,
+} from "@/lib/tools";
 import { dbReady, chatsIn, messagesIn } from "@/lib/firestore";
 import { logAgentMessage } from "@/lib/usage";
 import type { ChatStreamEvent } from "@/lib/streaming";
@@ -40,12 +50,23 @@ export interface AgentTurnInput {
 }
 
 /**
- * Run one full agent turn: stream tokens from Claude, dispatch any tool
- * calls server-side, append their results to the conversation, and
- * continue until the model emits `end_turn`. Persists user + assistant
- * messages to Firestore under workspaces/{orgId}/chats/{chatId}/messages.
+ * Run one full agent turn against Gemini. Streams text deltas to the
+ * client, dispatches function calls server-side, appends their results
+ * to the conversation, loops until Gemini stops calling functions.
+ *
+ * Persists user + assistant messages to Firestore at
+ *   clients/{clientId}/workspaces/{workspaceId}/chats/{chatId}/messages
+ *
+ * Gemini's streaming differs from Anthropic's in two important ways:
+ *  1. No content-block boundaries — chunks contain Parts which can be
+ *     text or functionCall. Text streams in deltas; functionCalls
+ *     arrive whole (args don't split across chunks).
+ *  2. The chat history is sent fresh on every turn (no SDK-managed
+ *     state) — we maintain it ourselves in `history` and re-send.
  */
-export async function* runAgentTurn(input: AgentTurnInput): AsyncGenerator<ChatStreamEvent> {
+export async function* runAgentTurn(
+  input: AgentTurnInput
+): AsyncGenerator<ChatStreamEvent> {
   await ensureGcpAuth();
 
   // ── Open or create the chat ────────────────────────────────────
@@ -73,7 +94,7 @@ export async function* runAgentTurn(input: AgentTurnInput): AsyncGenerator<ChatS
     createdAt: FieldValue.serverTimestamp(),
   });
 
-  // ── Load conversation history (up to last 20 messages) ─────────
+  // ── Load conversation history (up to last 40 messages) ─────────
   const historySnap = await messagesCol
     .orderBy("createdAt", "asc")
     .limit(40)
@@ -84,7 +105,7 @@ export async function* runAgentTurn(input: AgentTurnInput): AsyncGenerator<ChatS
     | { type: "tool_use"; id: string; name: string; input: unknown }
     | { type: "tool_result"; tool_use_id: string; content: unknown };
 
-  const history: Array<{ role: "user" | "assistant"; content: string | MsgContent[] }> = [];
+  const history: Content[] = [];
 
   for (const doc of historySnap.docs) {
     const data = doc.data() as {
@@ -92,10 +113,13 @@ export async function* runAgentTurn(input: AgentTurnInput): AsyncGenerator<ChatS
       content: string;
       toolBlocks?: MsgContent[];
     };
+    // Gemini uses role: "user" | "model" (not "assistant").
+    const role = data.role === "assistant" ? "model" : "user";
     if (data.toolBlocks && data.toolBlocks.length > 0) {
-      history.push({ role: data.role, content: data.toolBlocks });
+      const parts: Part[] = data.toolBlocks.map((b) => msgContentToGeminiPart(b));
+      history.push({ role, parts });
     } else {
-      history.push({ role: data.role, content: data.content });
+      history.push({ role, parts: [{ text: data.content }] });
     }
   }
 
@@ -118,141 +142,144 @@ export async function* runAgentTurn(input: AgentTurnInput): AsyncGenerator<ChatS
   let totalTokensIn = 0;
   let totalTokensOut = 0;
 
-  // ── Agentic loop: stream → tool calls → re-stream ──────────────
+  // ── Agentic loop ────────────────────────────────────────────────
   let turn = 0;
-  let stopReason: string | null = null;
-
   while (turn < MAX_TURNS) {
     turn++;
 
-    const client = await vertexReady();
-    type StreamParams = Parameters<typeof client.messages.stream>[0];
-    const stream = client.messages.stream({
-      model: MODEL,
-      max_tokens: 4096,
-      system: SYSTEM_PROMPT,
-      tools: anthropicToolSpecs() as unknown as StreamParams["tools"],
-      messages: history as unknown as StreamParams["messages"],
+    const model = await vertexReady();
+    const result = await model.generateContentStream({
+      contents: history,
+      systemInstruction: { role: "system", parts: [{ text: SYSTEM_PROMPT }] },
+      tools: [{ functionDeclarations: geminiFunctionDeclarations() }],
+      generationConfig: { maxOutputTokens: 4096 },
     });
 
-    const pendingToolUses: { id: string; name: string; jsonAcc: string }[] = [];
-    const turnBlocks: MsgContent[] = [];
-    let activeBlockIndex: number | null = null;
+    // Buffers for this turn — Gemini's streaming yields chunks with
+    // candidates[].content.parts[]; functionCalls arrive in full, text
+    // in deltas.
+    const turnTextParts: string[] = [];
+    const turnFunctionCalls: FunctionCall[] = [];
 
-    for await (const event of stream) {
-      if (event.type === "content_block_start") {
-        const block = event.content_block;
-        if (block.type === "text") {
-          activeBlockIndex = event.index;
-          turnBlocks[event.index] = { type: "text", text: "" };
-        } else if (block.type === "tool_use") {
-          activeBlockIndex = event.index;
-          pendingToolUses.push({ id: block.id, name: block.name, jsonAcc: "" });
-          turnBlocks[event.index] = {
-            type: "tool_use",
-            id: block.id,
-            name: block.name,
-            input: {},
-          };
+    for await (const chunk of result.stream) {
+      const candidate = chunk.candidates?.[0] as GenerateContentCandidate | undefined;
+      const parts = candidate?.content?.parts;
+      if (!parts) continue;
+
+      for (const part of parts) {
+        if (part.text) {
+          yield { type: "text_delta", text: part.text };
+          turnTextParts.push(part.text);
+          assistantText.push(part.text);
+        } else if (part.functionCall) {
+          turnFunctionCalls.push(part.functionCall);
         }
-      } else if (event.type === "content_block_delta") {
-        const delta = event.delta;
-        if (delta.type === "text_delta") {
-          yield { type: "text_delta", text: delta.text };
-          const block = turnBlocks[event.index];
-          if (block?.type === "text") block.text += delta.text;
-          assistantText.push(delta.text);
-        } else if (delta.type === "input_json_delta") {
-          // Accumulate partial JSON for the most recent tool_use
-          const tool = pendingToolUses[pendingToolUses.length - 1];
-          if (tool) tool.jsonAcc += delta.partial_json;
-        }
-      } else if (event.type === "content_block_stop") {
-        const block = turnBlocks[event.index];
-        if (block?.type === "tool_use") {
-          const tool = pendingToolUses.find((t) => t.id === block.id);
-          if (tool) {
-            try {
-              block.input = tool.jsonAcc ? JSON.parse(tool.jsonAcc) : {};
-            } catch {
-              block.input = {};
-            }
-          }
-        }
-        activeBlockIndex = null;
-      } else if (event.type === "message_delta") {
-        stopReason = event.delta.stop_reason ?? null;
-        // Anthropic emits cumulative usage on message_delta. We add
-        // ALL turns together — a single user message can drive 2-8
-        // model turns when tool use is involved, and customers pay
-        // for every token across all of them.
-        const usage = (event as { usage?: { input_tokens?: number; output_tokens?: number } }).usage;
-        if (usage) {
-          totalTokensIn += usage.input_tokens ?? 0;
-          totalTokensOut += usage.output_tokens ?? 0;
-        }
+      }
+
+      // Token usage is on the last chunk's usageMetadata. We accumulate
+      // — multiple iterations of the agentic loop each add to the total.
+      const usage = chunk.usageMetadata;
+      if (usage) {
+        totalTokensIn += usage.promptTokenCount ?? 0;
+        totalTokensOut += usage.candidatesTokenCount ?? 0;
       }
     }
 
-    // Persist the assistant turn's content blocks into history
-    finalToolBlocks.push(...turnBlocks.filter(Boolean));
-    history.push({ role: "assistant", content: turnBlocks.filter(Boolean) });
-
-    // ── Did the model request tools? Execute them ────────────────
-    const toolUseBlocks = turnBlocks.filter(
-      (b): b is Extract<MsgContent, { type: "tool_use" }> => b?.type === "tool_use"
-    );
-
-    if (stopReason !== "tool_use" || toolUseBlocks.length === 0) {
-      // No more tools — done with this turn
-      break;
+    // Persist this turn's content into history (so the next iteration
+    // sees what the model just said).
+    const turnParts: Part[] = [];
+    if (turnTextParts.length > 0) {
+      const text = turnTextParts.join("");
+      turnParts.push({ text });
+      finalToolBlocks.push({ type: "text", text });
+    }
+    for (const fc of turnFunctionCalls) {
+      turnParts.push({ functionCall: fc });
+    }
+    if (turnParts.length > 0) {
+      history.push({ role: "model", parts: turnParts });
     }
 
-    const toolResults: MsgContent[] = [];
+    // ── No function calls → we're done ──────────────────────────
+    if (turnFunctionCalls.length === 0) break;
 
-    for (const block of toolUseBlocks) {
-      yield { type: "tool_use", id: block.id, name: block.name, input: block.input };
+    // ── Execute the function calls ──────────────────────────────
+    const fnResultParts: Part[] = [];
+
+    for (const fc of turnFunctionCalls) {
+      // Synthesize a tool_use ID — Gemini doesn't issue one but our
+      // client UI needs a stable handle to associate the result later.
+      const toolUseId = `tu_${Math.random().toString(36).slice(2, 14)}`;
+      const fnName = fc.name ?? "";
+      const fnArgs = (fc.args ?? {}) as Record<string, unknown>;
+
+      yield {
+        type: "tool_use",
+        id: toolUseId,
+        name: fnName,
+        input: fnArgs,
+      };
+
+      finalToolBlocks.push({
+        type: "tool_use",
+        id: toolUseId,
+        name: fnName,
+        input: fnArgs,
+      });
 
       try {
-        const result = await executeTool(block.name, block.input, ctx);
+        const result = await executeTool(fnName, fnArgs, ctx);
 
-        // Emit client render hints for inline chart/table display
         if (result.clientRender?.kind === "chart") {
           yield {
             type: "chart",
-            id: block.id,
-            title: result.clientRender.title ?? block.name,
+            id: toolUseId,
+            title: result.clientRender.title ?? fnName,
             spec: result.clientRender.spec,
           };
         } else if (result.clientRender?.kind === "table") {
-          yield { type: "table", id: block.id, rows: result.clientRender.rows };
+          yield { type: "table", id: toolUseId, rows: result.clientRender.rows };
         }
 
-        yield { type: "tool_result", id: block.id, output: result.content };
+        yield { type: "tool_result", id: toolUseId, output: result.content };
 
-        toolResults.push({
+        fnResultParts.push({
+          functionResponse: {
+            name: fnName,
+            response: result.content as Record<string, unknown>,
+          },
+        });
+
+        finalToolBlocks.push({
           type: "tool_result",
-          tool_use_id: block.id,
-          content: JSON.stringify(result.content),
+          tool_use_id: toolUseId,
+          content: result.content,
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        yield { type: "tool_result", id: block.id, output: null, error: message };
-        toolResults.push({
+        yield { type: "tool_result", id: toolUseId, output: null, error: message };
+        fnResultParts.push({
+          functionResponse: {
+            name: fnName,
+            response: { error: message },
+          },
+        });
+        finalToolBlocks.push({
           type: "tool_result",
-          tool_use_id: block.id,
-          content: JSON.stringify({ error: message }),
+          tool_use_id: toolUseId,
+          content: { error: message },
         });
       }
     }
 
-    // Append tool results as a new user-role turn (the standard Anthropic pattern)
-    history.push({ role: "user", content: toolResults });
+    // Append all function responses as a single "user" turn (Gemini
+    // semantics: tool outputs come from the user role, not assistant).
+    history.push({ role: "user", parts: fnResultParts });
   }
 
   yield { type: "message_stop" };
 
-  // ── Log usage event (fire-and-forget — never blocks user) ─────
+  // ── Log usage event (fire-and-forget) ───────────────────────────
   logAgentMessage({
     clientId: input.clientId,
     workspaceId: input.workspaceId,
@@ -264,11 +291,37 @@ export async function* runAgentTurn(input: AgentTurnInput): AsyncGenerator<ChatS
     executionMs: Date.now() - turnStartedAt,
   });
 
-  // ── Persist the full assistant message ────────────────────────
+  // ── Persist the full assistant message ──────────────────────────
   await assistantMsgRef.set({
     role: "assistant",
     content: assistantText.join(""),
     toolBlocks: finalToolBlocks,
     createdAt: FieldValue.serverTimestamp(),
   });
+}
+
+/**
+ * Convert a persisted MsgContent (our internal Anthropic-flavored
+ * shape) back into a Gemini Part for re-sending in history. We keep
+ * the persisted format consistent across model swaps so old chats
+ * remain replayable.
+ */
+function msgContentToGeminiPart(
+  block:
+    | { type: "text"; text: string }
+    | { type: "tool_use"; id: string; name: string; input: unknown }
+    | { type: "tool_result"; tool_use_id: string; content: unknown }
+): Part {
+  if (block.type === "text") return { text: block.text };
+  if (block.type === "tool_use") {
+    return { functionCall: { name: block.name, args: block.input as Record<string, unknown> } };
+  }
+  // tool_result — but the model wraps these as functionResponse, with no
+  // tool_use_id in the Gemini shape. We just pass the content.
+  return {
+    functionResponse: {
+      name: "tool_result",
+      response: block.content as Record<string, unknown>,
+    },
+  };
 }

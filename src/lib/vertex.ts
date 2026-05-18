@@ -1,27 +1,41 @@
-import { AnthropicVertex } from "@anthropic-ai/vertex-sdk";
+import { VertexAI, type GenerativeModel } from "@google-cloud/vertexai";
 import { gcp } from "@/lib/gcp";
 import { ensureGcpAuth } from "@/lib/gcp-auth";
 
-let _client: AnthropicVertex | null = null;
+let _vertex: VertexAI | null = null;
+let _model: GenerativeModel | null = null;
 
 /**
- * Lazy-init Anthropic client pointed at Vertex AI. Auth via ADC —
- * GOOGLE_APPLICATION_CREDENTIALS points at a JSON file. Locally that's
- * the user's `gcloud auth application-default login` ADC. On Vercel it's
- * the WIF external_account credentials written to /tmp by ensureGcpAuth().
+ * Lazy-init Vertex AI client for Google's Gemini models. Auth via ADC —
+ * `GOOGLE_APPLICATION_CREDENTIALS` points at a JSON file. Locally that's
+ * `gcloud auth application-default login` output. On Vercel it's the
+ * WIF external_account credentials file written to /tmp by
+ * ensureGcpAuth().
+ *
+ * Vertex AI for Gemini is REST-by-default via @google-cloud/vertexai's
+ * underlying transport (google-auth-library + fetch) — no gRPC fallback
+ * needed unlike Firestore / Secret Manager / Cloud Run.
  */
-export function vertex(): AnthropicVertex {
-  if (_client) return _client;
-  _client = new AnthropicVertex({
-    projectId: gcp.projectId,
-    region: gcp.vertexRegion,
+export function vertex(): VertexAI {
+  if (_vertex) return _vertex;
+  _vertex = new VertexAI({
+    project: gcp.projectId,
+    location: gcp.vertexRegion,
   });
-  return _client;
+  return _vertex;
 }
 
-export async function vertexReady(): Promise<AnthropicVertex> {
+export function generativeModel(): GenerativeModel {
+  if (_model) return _model;
+  _model = vertex().getGenerativeModel({
+    model: gcp.vertexModel,
+  });
+  return _model;
+}
+
+export async function vertexReady(): Promise<GenerativeModel> {
   await ensureGcpAuth();
-  return vertex();
+  return generativeModel();
 }
 
 export const MODEL = gcp.vertexModel;
