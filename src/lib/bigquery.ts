@@ -154,7 +154,8 @@ export async function safeQuery(
     maximumBytesBilled: String(maxBytesBilled),
     labels,
   });
-  const [rows] = await job.getQueryResults({ maxResults: maxRows });
+  const [rawRows] = await job.getQueryResults({ maxResults: maxRows });
+  const rows = rawRows.map((r) => sanitizeBqRow(r as Record<string, unknown>));
   const [meta] = await job.getMetadata();
   const bytesScanned = Number(meta.statistics?.totalBytesProcessed ?? 0);
 
@@ -171,11 +172,55 @@ export async function safeQuery(
   }
 
   return {
-    rows: rows as Record<string, unknown>[],
+    rows,
     rowCount: rows.length,
     bytesScanned,
     truncated: rows.length >= maxRows,
   };
+}
+
+/**
+ * Normalize a BigQuery row so every value is a plain JSON-serializable
+ * primitive / array / object.
+ *
+ * Why: BigQuery's Node SDK returns TIMESTAMP/DATE/DATETIME/TIME/NUMERIC
+ * columns as instances of its own classes (BigQueryTimestamp,
+ * BigQueryDate, etc.) — each carries a `.value` string with the
+ * canonical representation. These class instances JSON-serialize fine
+ * (via toJSON), but Firestore's Node SDK value serializer rejects them
+ * because they're objects with custom prototypes. Since we persist
+ * tool_result content (which includes SQL rows) to Firestore for chat
+ * history, every row must be POJO-clean at the moment it leaves this
+ * module.
+ *
+ * STRUCT columns come back as nested objects (recurse). ARRAY columns
+ * come back as JS arrays (recurse). Everything else passes through.
+ */
+function sanitizeBqRow(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row)) {
+    out[k] = sanitizeBqValue(v);
+  }
+  return out;
+}
+
+function sanitizeBqValue(v: unknown): unknown {
+  if (v === null || v === undefined) return v;
+  if (typeof v !== "object") return v;
+  if (Array.isArray(v)) return v.map(sanitizeBqValue);
+  if (v instanceof Date) return v.toISOString();
+  // BigQueryTimestamp / Date / Datetime / Time / Numeric / BigNumeric /
+  // Geography all expose a `.value` string. Buffer (for BYTES) does not —
+  // it'd fall through to the recursion below; we don't currently surface
+  // BYTES columns so leaving Buffers as-is is fine.
+  const maybe = v as { value?: unknown };
+  if (typeof maybe.value === "string") return maybe.value;
+  // Plain or STRUCT — recurse.
+  const out: Record<string, unknown> = {};
+  for (const [k, vv] of Object.entries(v as Record<string, unknown>)) {
+    out[k] = sanitizeBqValue(vv);
+  }
+  return out;
 }
 
 // ── Listing tables across all of a workspace's connector datasets ──
