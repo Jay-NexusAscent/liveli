@@ -44,8 +44,29 @@ export function ChatWindow() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, streaming]);
 
+  // Prefill from sessionStorage — used by the /insights "Query further"
+  // CTAs to drop the user into chat with a starter question ready.
+  // sessionStorage (not a URL param) is the right channel here for two
+  // reasons:
+  //   1) URL stays clean — no stale prefill text in the address bar.
+  //   2) Survives React Strict Mode's double-mount in dev. URL-based
+  //      one-shot consumption is destructive: the second mount sees the
+  //      already-stripped URL and can't repopulate state. sessionStorage
+  //      remains readable until we explicitly clear it on send.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const prefill = sessionStorage.getItem("liveli.chatPrefill");
+    if (prefill) setInput(prefill);
+  }, []);
+
   const sendMessage = async (text: string) => {
     if (!text.trim() || streaming) return;
+
+    // Consume the Insights prefill — clear so it doesn't refill on
+    // refresh or next visit. Safe to call when there was no prefill.
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem("liveli.chatPrefill");
+    }
 
     const userMsg: Message = {
       id: `user-${Date.now()}`,
