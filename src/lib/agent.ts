@@ -5,7 +5,7 @@ import type {
   GenerateContentCandidate,
   Part,
 } from "@google-cloud/vertexai";
-import { vertexReady, MODEL } from "@/lib/vertex";
+import { buildModel, vertexReady, MODEL } from "@/lib/vertex";
 import { ensureGcpAuth } from "@/lib/gcp-auth";
 import { gcp } from "@/lib/gcp";
 import {
@@ -149,12 +149,9 @@ export async function* runAgentTurn(
     turn++;
 
     // Wrap each external call with tagged try/catch so failures
-    // surface their actual source (vertex vs auth vs etc.) in the
-    // SSE error event — rather than a bare "SyntaxError: Unexpected
-    // token '<'" with no clue which API misbehaved.
-    let model;
+    // surface their actual source.
     try {
-      model = await vertexReady();
+      await vertexReady(); // ensures ADC is written before the SDK reads it
     } catch (err) {
       const wrapped = new Error(
         `vertexReady failed (auth/ADC): ${err instanceof Error ? err.message : String(err)}`
@@ -162,6 +159,14 @@ export async function* runAgentTurn(
       (wrapped as Error & { source?: string }).source = "vertexReady";
       throw wrapped;
     }
+
+    // Build a fresh model per turn — systemInstruction lives here (not on
+    // the per-request body) so the SDK uses its canonical wiring.
+    const fnDecls = geminiFunctionDeclarations();
+    const model = buildModel({
+      systemInstruction: { role: "system", parts: [{ text: SYSTEM_PROMPT }] },
+      tools: [{ functionDeclarations: fnDecls }],
+    });
 
     let result;
     try {
@@ -171,11 +176,11 @@ export async function* runAgentTurn(
         project: gcp.projectId,
         turn,
         historyLen: history.length,
+        fnDeclsCount: fnDecls.length,
+        fnDeclsNames: fnDecls.map((f) => f.name),
       });
       result = await model.generateContentStream({
         contents: history,
-        systemInstruction: { role: "system", parts: [{ text: SYSTEM_PROMPT }] },
-        tools: [{ functionDeclarations: geminiFunctionDeclarations() }],
         generationConfig: { maxOutputTokens: 4096 },
       });
     } catch (err) {

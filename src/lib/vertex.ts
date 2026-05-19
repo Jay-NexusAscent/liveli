@@ -1,9 +1,12 @@
-import { VertexAI, type GenerativeModel } from "@google-cloud/vertexai";
+import {
+  VertexAI,
+  type GenerativeModel,
+  type ModelParams,
+} from "@google-cloud/vertexai";
 import { gcp } from "@/lib/gcp";
 import { ensureGcpAuth } from "@/lib/gcp-auth";
 
 let _vertex: VertexAI | null = null;
-let _model: GenerativeModel | null = null;
 
 /**
  * Lazy-init Vertex AI client for Google's Gemini models. Auth via ADC —
@@ -11,10 +14,6 @@ let _model: GenerativeModel | null = null;
  * `gcloud auth application-default login` output. On Vercel it's the
  * WIF external_account credentials file written to /tmp by
  * ensureGcpAuth().
- *
- * Vertex AI for Gemini is REST-by-default via @google-cloud/vertexai's
- * underlying transport (google-auth-library + fetch) — no gRPC fallback
- * needed unlike Firestore / Secret Manager / Cloud Run.
  */
 export function vertex(): VertexAI {
   if (_vertex) return _vertex;
@@ -25,17 +24,24 @@ export function vertex(): VertexAI {
   return _vertex;
 }
 
-export function generativeModel(): GenerativeModel {
-  if (_model) return _model;
-  _model = vertex().getGenerativeModel({
+/**
+ * Fresh GenerativeModel per call. We pass systemInstruction at model
+ * creation rather than per-request because:
+ *  - v1.x SDK has cleaner semantics that way
+ *  - the system prompt embeds the current date — caching the model
+ *    would mean a stale date after the first request
+ * Model objects are cheap to construct; just config + URL builders.
+ */
+export function buildModel(params: Omit<ModelParams, "model"> = {}): GenerativeModel {
+  return vertex().getGenerativeModel({
     model: gcp.vertexModel,
+    ...params,
   });
-  return _model;
 }
 
-export async function vertexReady(): Promise<GenerativeModel> {
+export async function vertexReady(): Promise<VertexAI> {
   await ensureGcpAuth();
-  return generativeModel();
+  return vertex();
 }
 
 export const MODEL = gcp.vertexModel;
