@@ -27,7 +27,7 @@ plugins:
   loaders:
     - name: target-bigquery
       variant: z3z1ma
-      pip_url: git+https://github.com/z3z1ma/target-bigquery.git@v0.7.4
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
       # Config comes from env at runtime:
       #   TARGET_BIGQUERY_PROJECT, TARGET_BIGQUERY_DATASET,
       #   TARGET_BIGQUERY_LOCATION
