@@ -42,6 +42,45 @@ Current date: ${new Date().toISOString().split("T")[0]}.`;
 // Max agent turns per user message — prevents infinite tool loops.
 const MAX_TURNS = 8;
 
+/**
+ * Walk an Error's `.cause` chain (and the SDK's custom `.stackTrace`
+ * alias) and produce a single readable string covering every layer.
+ *
+ * Why: @google-cloud/vertexai wraps fetch failures twice. The outer
+ * wrap message is just "exception posting request" — the URL lives
+ * one layer down, our patch's body content lives two layers down.
+ * `err.message` alone reveals none of that. This walker surfaces all
+ * layers in one string the SSE error event can carry to the UI.
+ *
+ * Each layer is capped at 400 chars; Bearer tokens are redacted so
+ * the request's JSONified Authorization header doesn't leak to the
+ * browser via the error message.
+ */
+function flattenErrorChain(e: unknown, maxDepth = 8): string {
+  const parts: string[] = [];
+  let cur: unknown = e;
+  let depth = 0;
+  while (cur && depth < maxDepth) {
+    if (cur instanceof Error) {
+      let msg = cur.message ?? "";
+      msg = msg.replace(/Bearer\s+[A-Za-z0-9._\-]+/g, "Bearer [redacted]");
+      if (msg.length > 400) msg = msg.slice(0, 400) + "…";
+      parts.push(`[${cur.name}] ${msg}`);
+      const next = cur as Error & { cause?: unknown; stackTrace?: unknown };
+      const candidate = next.cause ?? next.stackTrace;
+      if (!candidate || candidate === cur) break;
+      cur = candidate;
+    } else {
+      let s = String(cur);
+      if (s.length > 400) s = s.slice(0, 400) + "…";
+      parts.push(s);
+      break;
+    }
+    depth++;
+  }
+  return parts.join(" ↳ ");
+}
+
 export interface AgentTurnInput {
   clientId: string;
   workspaceId: string;
@@ -142,6 +181,28 @@ export async function* runAgentTurn(
   const turnStartedAt = Date.now();
   let totalTokensIn = 0;
   let totalTokensOut = 0;
+  let usageLogged = false;
+
+  // Ensure usage is logged EXACTLY ONCE, regardless of how this generator
+  // ends — normal completion, exception, or client-side cancellation
+  // (e.g. user closes tab / aborts fetch). Without this guarantee we
+  // silently lose token costs that the customer should be billed for.
+  const flushUsage = () => {
+    if (usageLogged) return;
+    usageLogged = true;
+    logAgentMessage({
+      clientId: input.clientId,
+      workspaceId: input.workspaceId,
+      userId: input.userId,
+      chatId,
+      model: MODEL,
+      tokensIn: totalTokensIn,
+      tokensOut: totalTokensOut,
+      executionMs: Date.now() - turnStartedAt,
+    });
+  };
+
+  try {
 
   // ── Agentic loop ────────────────────────────────────────────────
   let turn = 0;
@@ -195,17 +256,19 @@ export async function* runAgentTurn(
           }
         }
       }
+      const chain = flattenErrorChain(err);
       console.error("[agent] generateContentStream threw", {
         region: gcp.vertexRegion,
         model: gcp.vertexModel,
         project: gcp.projectId,
         name: err instanceof Error ? err.name : typeof err,
         message: err instanceof Error ? err.message : String(err),
+        chain,
         stack: err instanceof Error ? err.stack : undefined,
         props,
       });
       const wrapped = new Error(
-        `vertex.generateContentStream failed: ${err instanceof Error ? err.message : String(err)}`
+        `vertex.generateContentStream failed: ${chain}`
       );
       (wrapped as Error & { source?: string }).source = "vertex.generateContentStream";
       throw wrapped;
@@ -269,17 +332,19 @@ export async function* runAgentTurn(
           }
         }
       }
+      const chain = flattenErrorChain(err);
       console.error("[agent] stream iteration threw", {
         region: gcp.vertexRegion,
         model: gcp.vertexModel,
         project: gcp.projectId,
         name: err instanceof Error ? err.name : typeof err,
         message: err instanceof Error ? err.message : String(err),
+        chain,
         stack: err instanceof Error ? err.stack : undefined,
         props,
       });
       const wrapped = new Error(
-        `vertex stream iteration failed: ${err instanceof Error ? err.message : String(err)}`
+        `vertex stream iteration failed: ${chain}`
       );
       (wrapped as Error & { source?: string }).source = "vertex.stream.iterate";
       throw wrapped;
@@ -379,18 +444,6 @@ export async function* runAgentTurn(
 
   yield { type: "message_stop" };
 
-  // ── Log usage event (fire-and-forget) ───────────────────────────
-  logAgentMessage({
-    clientId: input.clientId,
-    workspaceId: input.workspaceId,
-    userId: input.userId,
-    chatId,
-    model: MODEL,
-    tokensIn: totalTokensIn,
-    tokensOut: totalTokensOut,
-    executionMs: Date.now() - turnStartedAt,
-  });
-
   // ── Persist the full assistant message ──────────────────────────
   await assistantMsgRef.set({
     role: "assistant",
@@ -398,6 +451,13 @@ export async function* runAgentTurn(
     toolBlocks: finalToolBlocks,
     createdAt: FieldValue.serverTimestamp(),
   });
+
+  } finally {
+    // Fires on normal completion, exception, AND client cancellation
+    // (generator.return()). logAgentMessage is itself fire-and-forget so
+    // this won't block the cancellation path. Idempotent via usageLogged.
+    flushUsage();
+  }
 }
 
 /**
