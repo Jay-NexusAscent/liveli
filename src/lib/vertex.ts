@@ -71,7 +71,7 @@ function installVertexFetchDiagnostics(): void {
     if (!response.ok || !isStreamable) {
       let preview = "";
       try {
-        preview = (await response.clone().text()).slice(0, 500);
+        preview = (await response.clone().text()).slice(0, 1500);
       } catch {
         preview = "[body unreadable]";
       }
@@ -81,6 +81,15 @@ function installVertexFetchDiagnostics(): void {
         contentType,
         bodyPreview: preview,
       });
+      // Surface the body via the error message — Vercel's runtime-logs
+      // MCP truncates console output to ~30 chars per row, but the SSE
+      // error event preserves err.message in full and renders it
+      // verbatim in the chat UI. Throwing here means the body lands
+      // where we can actually read it.
+      const sanitised = preview.replace(/\s+/g, " ").trim();
+      throw new Error(
+        `[vertex-fetch] non-JSON response ${status} (${contentType || "no content-type"}) from ${url} — body: ${sanitised}`
+      );
     } else {
       console.log("[vertex-fetch] ←", { url, status, contentType });
     }
