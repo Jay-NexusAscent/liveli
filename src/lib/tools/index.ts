@@ -57,6 +57,27 @@ function jsonSchemaToGemini(schema: unknown): Record<string, unknown> {
       }
       continue;
     }
+    if (k === "properties") {
+      // CRITICAL: `properties` is a map<string, Schema> in Gemini's proto.
+      // The keys are arbitrary property names chosen by the schema author
+      // — they CAN be "type", "enum", "required" etc. We must NOT pass
+      // those keys through the Schema-keyword logic above (otherwise a
+      // property literally named "type" gets swallowed by the type-handler
+      // and dropped from the output, leaving `required: ["type"]` referring
+      // to a missing property). Walk values only; each value is itself a
+      // Schema processed by a fresh jsonSchemaToGemini call.
+      if (typeof v === "object" && v !== null && !Array.isArray(v)) {
+        const propsOut: Record<string, unknown> = {};
+        for (const [propName, propSchema] of Object.entries(v as Record<string, unknown>)) {
+          propsOut[propName] =
+            typeof propSchema === "object" && propSchema !== null
+              ? jsonSchemaToGemini(propSchema)
+              : propSchema;
+        }
+        out[k] = propsOut;
+      }
+      continue;
+    }
     if (Array.isArray(v)) {
       out[k] = v.map((item) =>
         typeof item === "object" && item !== null ? jsonSchemaToGemini(item) : item
