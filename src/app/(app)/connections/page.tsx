@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ConnectIcon, DatabaseIcon } from "@/components/icons";
 import { cn } from "@/lib/utils";
 import { PostgresWizard } from "@/components/connections/postgres-wizard";
+import { EditConnectorModal } from "@/components/connections/edit-connector-modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 
 interface ConnectorRecord {
@@ -16,6 +17,13 @@ interface ConnectorRecord {
   syncFrequency?: "5m" | "15m" | "30m" | "1h" | "6h" | "12h" | "24h";
   /** Firestore Timestamp shape: { _seconds, _nanoseconds } when serialized. */
   lastSyncFinishedAt?: { _seconds: number; _nanoseconds?: number };
+  // Editable connection metadata (non-sensitive — password lives in Secret Manager).
+  host?: string;
+  port?: number;
+  database?: string;
+  user?: string;
+  ssl?: boolean;
+  schemas?: string;
 }
 
 /** Render a Firestore timestamp as a human "x minutes ago" string. */
@@ -62,7 +70,7 @@ const popularSources: Array<{
 }> = [
   { name: "PostgreSQL", desc: "Replicate tables from any Postgres database", tag: "Database", action: "postgres" },
   { name: "MySQL", desc: "Replicate tables from any MySQL database", tag: "Database", action: null },
-  { name: "BigQuery", desc: "Query datasets directly without ingestion", tag: "Warehouse", action: null },
+  { name: "BigQuery", desc: "Replicate datasets from your BigQuery project", tag: "Database", action: null },
   { name: "Stripe", desc: "Charges, subscriptions, customers, refunds", tag: "Payments", action: null },
   { name: "Shopify", desc: "Orders, products, customers, inventory", tag: "E-commerce", action: null },
   { name: "HubSpot", desc: "Contacts, deals, companies, engagements", tag: "CRM", action: null },
@@ -76,6 +84,7 @@ export default function ConnectionsPage() {
   const [pgOpen, setPgOpen] = useState(false);
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ConnectorRecord | null>(null);
+  const [editing, setEditing] = useState<ConnectorRecord | null>(null);
 
   const refresh = async () => {
     try {
@@ -182,7 +191,8 @@ export default function ConnectionsPage() {
                       )}
                       <span className="text-text-tertiary">·</span>
                       <span title={c.lastSyncFinishedAt ? new Date(c.lastSyncFinishedAt._seconds * 1000).toLocaleString() : "Never synced"}>
-                        last sync: {formatLastSynced(c.lastSyncFinishedAt)}
+                        {/* When status is error, label as 'last attempt' since the sync didn't actually succeed. */}
+                        {c.status === "error" ? "last attempt" : "last sync"}: {formatLastSynced(c.lastSyncFinishedAt)}
                       </span>
                     </div>
                     {c.lastError && (
@@ -195,6 +205,13 @@ export default function ConnectionsPage() {
                 </div>
 
                 <div className="flex items-center justify-end gap-1.5 border-t border-border pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditing(c)}
+                    className="rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
+                  >
+                    Edit
+                  </button>
                   <button
                     type="button"
                     onClick={() => triggerSync(c.id)}
@@ -270,6 +287,14 @@ export default function ConnectionsPage() {
         open={pgOpen}
         onClose={() => setPgOpen(false)}
         onConnected={() => {
+          refresh();
+        }}
+      />
+
+      <EditConnectorModal
+        connector={editing}
+        onClose={() => setEditing(null)}
+        onSaved={() => {
           refresh();
         }}
       />

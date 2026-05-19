@@ -55,6 +55,48 @@ export function PostgresWizard({ open, onClose, onConnected }: PostgresWizardPro
   const update = <K extends keyof FormState>(k: K, v: FormState[K]) =>
     setForm((s) => ({ ...s, [k]: v }));
 
+  /**
+   * If the user pastes a full Postgres connection string into the Host
+   * field, parse it into the individual fields rather than letting it
+   * stay malformed (the most common support issue — pasting
+   * `postgresql://user:pass@host/db` makes psycopg2 fail with
+   * "could not translate host name" because the `:` and `@` become
+   * part of the hostname).
+   */
+  const handleHostChange = (raw: string) => {
+    const trimmed = raw.trim();
+    if (/^postgres(ql)?:\/\//i.test(trimmed)) {
+      try {
+        const url = new URL(trimmed);
+        setForm((s) => ({
+          ...s,
+          host: url.hostname,
+          port: url.port || "5432",
+          database: url.pathname.replace(/^\//, "") || s.database,
+          user: decodeURIComponent(url.username) || s.user,
+          password: decodeURIComponent(url.password) || s.password,
+          ssl: url.searchParams.get("sslmode")
+            ? url.searchParams.get("sslmode") !== "disable"
+            : s.ssl,
+        }));
+        return;
+      } catch {
+        // Fall through — leave the field as-is so the user can see/fix it.
+      }
+    }
+    // Detect a host with `@` or `:` embedded — almost certainly a paste
+    // mistake. Strip up to the `@` and warn (via the error state).
+    if (trimmed.includes("@")) {
+      const afterAt = trimmed.split("@").pop() ?? trimmed;
+      update("host", afterAt);
+      setError(
+        "Looks like you pasted a connection string — auto-extracted the hostname. Double-check the other fields."
+      );
+      return;
+    }
+    update("host", trimmed);
+  };
+
   // Read the response body safely — handle empty bodies, non-JSON,
   // and structured server error envelopes uniformly.
   const readResponse = async (res: Response) => {
@@ -136,13 +178,16 @@ export function PostgresWizard({ open, onClose, onConnected }: PostgresWizardPro
         </Field>
 
         <div className="grid grid-cols-[1fr_120px] gap-3">
-          <Field label="Host">
+          <Field
+            label="Host"
+            hint="Paste a full postgresql:// connection string here and the other fields will auto-fill."
+          >
             <input
               type="text"
               required
               value={form.host}
-              onChange={(e) => update("host", e.target.value)}
-              placeholder="db.example.com"
+              onChange={(e) => handleHostChange(e.target.value)}
+              placeholder="db.example.com — or paste a full postgresql:// URL"
               className={inputClass}
             />
           </Field>
