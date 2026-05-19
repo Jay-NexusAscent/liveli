@@ -86,12 +86,33 @@ locals {
   ]
 }
 
-# Cloud Scheduler signs OIDC tokens AS the runtime SA. For that to work
-# the SA needs token-creator on itself (Google's IAM convention for
-# self-impersonation when minting an OIDC token under its own identity).
+# Cloud Scheduler signs OIDC tokens AS the runtime SA. Two self-IAM
+# bindings are needed for this to work end-to-end:
+#
+#  1. tokenCreator on self — lets the runtime mint OIDC tokens AS itself
+#     at job-fire time. Permissions: signBlob, signJwt, getOpenIdToken.
+#
+#  2. serviceAccountUser on self — lets the runtime CREATE a Cloud
+#     Scheduler job whose httpTarget.oidcToken.serviceAccountEmail
+#     points at itself. Includes iam.serviceAccounts.actAs, which the
+#     Scheduler createJob API requires on the OIDC SA. (tokenCreator
+#     does NOT include actAs — they look interchangeable but the first
+#     is "mint tokens", the second is "attach SA to a resource that
+#     will run as it"; createJob is the latter flow.)
+#
+# Both bindings need to coexist; removing either silently breaks
+# upsertSyncJob with a "lacks permission iam.serviceAccounts.actAs"
+# audit-log error that the soft-fail try/catch in lib/cloud-scheduler.ts
+# swallows. Symptom: connectors never sync on the recurring schedule.
 resource "google_service_account_iam_member" "runtime_token_creator_self" {
   service_account_id = google_service_account.runtime.name
   role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${google_service_account.runtime.email}"
+}
+
+resource "google_service_account_iam_member" "runtime_user_self" {
+  service_account_id = google_service_account.runtime.name
+  role               = "roles/iam.serviceAccountUser"
   member             = "serviceAccount:${google_service_account.runtime.email}"
 }
 
