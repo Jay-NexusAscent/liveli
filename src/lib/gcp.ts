@@ -22,7 +22,14 @@ export const gcp = {
    * the throw in vertex.ts for the runtime guard.
    */
   vertexRegion: process.env.VERTEX_AI_REGION ?? "europe-west1",
-  vertexModel: process.env.VERTEX_AI_MODEL ?? "gemini-3.5-flash",
+  /**
+   * Default model. Must be available in the workspace's residency region.
+   * gemini-2.5-flash is the latest Flash variant available in europe-west1
+   * as of 2026-05. gemini-3.5-flash exists but only in us-central1/global
+   * for now — switching there would break EU data residency. Re-check
+   * regional availability before bumping this default.
+   */
+  vertexModel: process.env.VERTEX_AI_MODEL ?? "gemini-2.5-flash",
 } as const;
 
 /**
