@@ -176,8 +176,8 @@ export function MarketingPricing() {
       </div>
 
       <p className="mt-10 text-center text-[12px] text-text-tertiary">
-        All plans include EU data residency, fully managed BigQuery warehouse, and unlimited team members.
-        Prices in GBP, billed monthly.
+        All plans include a fully managed warehouse, unlimited team members,
+        and your choice of EU or US hosting. Billed monthly.
       </p>
     </section>
   );
