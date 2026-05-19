@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { SparkleIcon } from "@/components/icons";
 import { ChartBlock } from "./chart-block";
 import { ToolCallBlock } from "./tool-call-block";
+import { TableBlock } from "./table-block";
 
 type MessageBlock =
   | { type: "text"; text: string }
@@ -16,7 +17,8 @@ type MessageBlock =
       output?: unknown;
       error?: string;
     }
-  | { type: "chart"; id: string; title: string; spec: unknown };
+  | { type: "chart"; id: string; title: string; spec: unknown }
+  | { type: "table"; id: string; rows: Record<string, unknown>[] };
 
 interface Message {
   id: string;
@@ -36,6 +38,10 @@ export function ChatWindow() {
   const [chatId, setChatId] = useState<string | undefined>();
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  // Map of bqDataset → connector friendly name. Used to substitute
+  // technical dataset IDs in displayed SQL with the user's source name.
+  // Fetched once on mount; empty map gracefully no-ops the substitution.
+  const [datasetNames, setDatasetNames] = useState<Record<string, string>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll on new content
@@ -57,6 +63,27 @@ export function ChatWindow() {
     if (typeof window === "undefined") return;
     const prefill = sessionStorage.getItem("liveli.chatPrefill");
     if (prefill) setInput(prefill);
+  }, []);
+
+  // Fetch the workspace's connectors once and build the dataset→friendly
+  // name map. We don't block render on this — if the fetch is slow or
+  // fails, SQL falls back to showing the raw dataset IDs (current
+  // behaviour, ugly but functional).
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/connectors");
+        if (!res.ok) return;
+        const json = (await res.json()) as { items?: Array<{ bqDataset?: string; name?: string }> };
+        const map: Record<string, string> = {};
+        for (const c of json.items ?? []) {
+          if (c.bqDataset && c.name) map[c.bqDataset] = c.name;
+        }
+        setDatasetNames(map);
+      } catch {
+        // ignore — UI just shows raw dataset IDs
+      }
+    })();
   }, []);
 
   const sendMessage = async (text: string) => {
@@ -146,7 +173,12 @@ export function ChatWindow() {
           ) : (
             <div className="space-y-6">
               {messages.map((m) => (
-                <MessageItem key={m.id} message={m} chatId={chatId} />
+                <MessageItem
+                  key={m.id}
+                  message={m}
+                  chatId={chatId}
+                  datasetNames={datasetNames}
+                />
               ))}
               {streaming && (
                 <div className="flex items-center gap-2 text-[12px] text-text-tertiary">
@@ -226,7 +258,15 @@ function EmptyState({ onPick }: { onPick: (text: string) => void }) {
   );
 }
 
-function MessageItem({ message, chatId }: { message: Message; chatId?: string }) {
+function MessageItem({
+  message,
+  chatId,
+  datasetNames,
+}: {
+  message: Message;
+  chatId?: string;
+  datasetNames?: Record<string, string>;
+}) {
   if (message.role === "user") {
     const text = message.blocks
       .filter((b): b is { type: "text"; text: string } => b.type === "text")
@@ -263,6 +303,7 @@ function MessageItem({ message, chatId }: { message: Message; chatId?: string })
               input={b.input}
               output={b.output}
               error={b.error}
+              datasetNames={datasetNames}
             />
           );
         }
@@ -276,6 +317,9 @@ function MessageItem({ message, chatId }: { message: Message; chatId?: string })
               chatId={chatId}
             />
           );
+        }
+        if (b.type === "table") {
+          return <TableBlock key={i} rows={b.rows} />;
         }
         return null;
       })}
@@ -296,6 +340,7 @@ function applyEvent(
     error?: string;
     title?: string;
     spec?: unknown;
+    rows?: Record<string, unknown>[];
     chatId?: string;
   },
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>,
@@ -383,6 +428,21 @@ function applyEvent(
       msgs.map((m) =>
         m.id === assistantId
           ? { ...m, blocks: [...m.blocks, { type: "chart", id, title, spec }] }
+          : m
+      )
+    );
+    return;
+  }
+
+  // Table from run_sql — without this case the rows are streamed and
+  // then dropped on the floor (the bug screenshot the user reported).
+  if (event.type === "table" && event.id && Array.isArray(event.rows)) {
+    const id = event.id;
+    const rows = event.rows;
+    setMessages((msgs) =>
+      msgs.map((m) =>
+        m.id === assistantId
+          ? { ...m, blocks: [...m.blocks, { type: "table", id, rows }] }
           : m
       )
     );
