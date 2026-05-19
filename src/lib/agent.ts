@@ -7,6 +7,7 @@ import type {
 } from "@google-cloud/vertexai";
 import { vertexReady, MODEL } from "@/lib/vertex";
 import { ensureGcpAuth } from "@/lib/gcp-auth";
+import { gcp } from "@/lib/gcp";
 import {
   executeTool,
   geminiFunctionDeclarations,
@@ -147,13 +148,63 @@ export async function* runAgentTurn(
   while (turn < MAX_TURNS) {
     turn++;
 
-    const model = await vertexReady();
-    const result = await model.generateContentStream({
-      contents: history,
-      systemInstruction: { role: "system", parts: [{ text: SYSTEM_PROMPT }] },
-      tools: [{ functionDeclarations: geminiFunctionDeclarations() }],
-      generationConfig: { maxOutputTokens: 4096 },
-    });
+    // Wrap each external call with tagged try/catch so failures
+    // surface their actual source (vertex vs auth vs etc.) in the
+    // SSE error event — rather than a bare "SyntaxError: Unexpected
+    // token '<'" with no clue which API misbehaved.
+    let model;
+    try {
+      model = await vertexReady();
+    } catch (err) {
+      const wrapped = new Error(
+        `vertexReady failed (auth/ADC): ${err instanceof Error ? err.message : String(err)}`
+      );
+      (wrapped as Error & { source?: string }).source = "vertexReady";
+      throw wrapped;
+    }
+
+    let result;
+    try {
+      console.log("[agent] generateContentStream", {
+        region: gcp.vertexRegion,
+        model: gcp.vertexModel,
+        project: gcp.projectId,
+        turn,
+        historyLen: history.length,
+      });
+      result = await model.generateContentStream({
+        contents: history,
+        systemInstruction: { role: "system", parts: [{ text: SYSTEM_PROMPT }] },
+        tools: [{ functionDeclarations: geminiFunctionDeclarations() }],
+        generationConfig: { maxOutputTokens: 4096 },
+      });
+    } catch (err) {
+      const props: Record<string, unknown> = {};
+      if (err && typeof err === "object") {
+        for (const key of Object.getOwnPropertyNames(err)) {
+          try {
+            const v = (err as Record<string, unknown>)[key];
+            if (typeof v !== "function") props[key] = v;
+          } catch {
+            /* unreadable */
+          }
+        }
+      }
+      console.error("[agent] generateContentStream threw", {
+        region: gcp.vertexRegion,
+        model: gcp.vertexModel,
+        project: gcp.projectId,
+        name: err instanceof Error ? err.name : typeof err,
+        message: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+        props,
+      });
+      const wrapped = new Error(
+        `vertex.generateContentStream failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+      (wrapped as Error & { source?: string }).source = "vertex.generateContentStream";
+      throw wrapped;
+    }
 
     // Buffers for this turn — Gemini's streaming yields chunks with
     // candidates[].content.parts[]; functionCalls arrive in full, text
@@ -161,28 +212,72 @@ export async function* runAgentTurn(
     const turnTextParts: string[] = [];
     const turnFunctionCalls: FunctionCall[] = [];
 
-    for await (const chunk of result.stream) {
-      const candidate = chunk.candidates?.[0] as GenerateContentCandidate | undefined;
-      const parts = candidate?.content?.parts;
-      if (!parts) continue;
+    // The stream iteration itself can throw a SyntaxError if the
+    // underlying HTTP response is HTML (model not available in this
+    // region, billing not enabled, auth challenged to web UI). Wrap
+    // separately so the error tag identifies "stream iteration" not
+    // "generateContentStream entry".
+    let streamIter;
+    try {
+      streamIter = result.stream;
+    } catch (err) {
+      const wrapped = new Error(
+        `vertex.stream access failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+      (wrapped as Error & { source?: string }).source = "vertex.stream.access";
+      throw wrapped;
+    }
 
-      for (const part of parts) {
-        if (part.text) {
-          yield { type: "text_delta", text: part.text };
-          turnTextParts.push(part.text);
-          assistantText.push(part.text);
-        } else if (part.functionCall) {
-          turnFunctionCalls.push(part.functionCall);
+    try {
+      for await (const chunk of streamIter) {
+        const candidate = chunk.candidates?.[0] as GenerateContentCandidate | undefined;
+        const parts = candidate?.content?.parts;
+        if (!parts) continue;
+
+        for (const part of parts) {
+          if (part.text) {
+            yield { type: "text_delta", text: part.text };
+            turnTextParts.push(part.text);
+            assistantText.push(part.text);
+          } else if (part.functionCall) {
+            turnFunctionCalls.push(part.functionCall);
+          }
+        }
+
+        // Token usage is on the last chunk's usageMetadata. We accumulate
+        // — multiple iterations of the agentic loop each add to the total.
+        const usage = chunk.usageMetadata;
+        if (usage) {
+          totalTokensIn += usage.promptTokenCount ?? 0;
+          totalTokensOut += usage.candidatesTokenCount ?? 0;
         }
       }
-
-      // Token usage is on the last chunk's usageMetadata. We accumulate
-      // — multiple iterations of the agentic loop each add to the total.
-      const usage = chunk.usageMetadata;
-      if (usage) {
-        totalTokensIn += usage.promptTokenCount ?? 0;
-        totalTokensOut += usage.candidatesTokenCount ?? 0;
+    } catch (err) {
+      const props: Record<string, unknown> = {};
+      if (err && typeof err === "object") {
+        for (const key of Object.getOwnPropertyNames(err)) {
+          try {
+            const v = (err as Record<string, unknown>)[key];
+            if (typeof v !== "function") props[key] = v;
+          } catch {
+            /* unreadable */
+          }
+        }
       }
+      console.error("[agent] stream iteration threw", {
+        region: gcp.vertexRegion,
+        model: gcp.vertexModel,
+        project: gcp.projectId,
+        name: err instanceof Error ? err.name : typeof err,
+        message: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+        props,
+      });
+      const wrapped = new Error(
+        `vertex stream iteration failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+      (wrapped as Error & { source?: string }).source = "vertex.stream.iterate";
+      throw wrapped;
     }
 
     // Persist this turn's content into history (so the next iteration
