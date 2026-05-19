@@ -11,7 +11,75 @@ interface ConnectorDoc {
   type?: string;
   lastExecutionName?: string;
   lastError?: string;
+  lastSyncAttemptAt?: { _seconds?: number };
+  lastSyncDurationMs?: number;
+  typicalSyncDurationMs?: number;
+  recentSyncDurationsMs?: number[];
   [k: string]: unknown;
+}
+
+/**
+ * Rolling-average target sample size for "typical sync duration". Five
+ * runs gives a sensible baseline that adapts to gradual data-volume
+ * growth without overweighting a single anomalous run.
+ */
+const TYPICAL_SAMPLE_SIZE = 5;
+
+/**
+ * Given the connector's prior duration history + the just-completed run,
+ * compute the patch fields for sync-time tracking. Caller merges into
+ * the existing tryUpdate patch.
+ */
+function computeDurationPatch(
+  data: ConnectorDoc,
+  completionTime: unknown
+): Record<string, unknown> {
+  // Reconstruct start time from lastSyncAttemptAt (which the sync route
+  // set when it kicked off the Cloud Run Job). Skip if missing.
+  const startedAtSec = data.lastSyncAttemptAt?._seconds;
+  if (typeof startedAtSec !== "number") return {};
+
+  // completionTime comes from Cloud Run SDK as gax's ITimestamp shape:
+  // { seconds?: number | string | Long; nanos?: number }. Accept anything
+  // we can coerce to ms-epoch.
+  let completedAtMs: number | null = null;
+  if (completionTime instanceof Date) {
+    completedAtMs = completionTime.getTime();
+  } else if (typeof completionTime === "string") {
+    const parsed = Date.parse(completionTime);
+    if (!Number.isNaN(parsed)) completedAtMs = parsed;
+  } else if (completionTime && typeof completionTime === "object") {
+    const sec = (completionTime as { seconds?: unknown }).seconds;
+    if (typeof sec === "number") completedAtMs = sec * 1000;
+    else if (typeof sec === "string") completedAtMs = Number(sec) * 1000;
+    else if (sec && typeof sec === "object") {
+      // Long.js shape — toNumber()
+      const n = (sec as { toNumber?: () => number }).toNumber?.();
+      if (typeof n === "number") completedAtMs = n * 1000;
+    }
+  }
+  if (completedAtMs === null) return {};
+
+  const durationMs = completedAtMs - startedAtSec * 1000;
+  if (durationMs <= 0 || durationMs > 1000 * 60 * 60 * 24) {
+    // Sanity-check: negative duration (clock skew) or >24h (stale state).
+    return {};
+  }
+
+  const recent = Array.isArray(data.recentSyncDurationsMs)
+    ? data.recentSyncDurationsMs.filter(
+        (v): v is number => typeof v === "number" && v > 0
+      )
+    : [];
+  const updatedRecent = [...recent, durationMs].slice(-TYPICAL_SAMPLE_SIZE);
+  const typical =
+    updatedRecent.reduce((a, b) => a + b, 0) / updatedRecent.length;
+
+  return {
+    lastSyncDurationMs: durationMs,
+    recentSyncDurationsMs: updatedRecent,
+    typicalSyncDurationMs: Math.round(typical),
+  };
 }
 
 /**
@@ -124,13 +192,16 @@ async function reconcileStatus(
     return { ...data, status: "error", lastError };
   }
 
+  // Successful sync — capture duration for "typical sync duration" UI.
+  const durationPatch = computeDurationPatch(data, exec.completionTime);
   const ok = await tryUpdate(col, connectorId, {
     status: "synced",
     lastError: FieldValue.delete(),
     lastSyncFinishedAt: FieldValue.serverTimestamp(),
+    ...durationPatch,
   });
   if (!ok) return null;
-  return { ...data, status: "synced", lastError: undefined };
+  return { ...data, status: "synced", lastError: undefined, ...durationPatch };
 }
 
 async function tryUpdate(

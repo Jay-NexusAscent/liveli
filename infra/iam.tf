@@ -75,6 +75,10 @@ locals {
     #   disconnect — both covered by admin.
     # Narrow to a custom role with exactly the perms we need post-demo.
     "roles/run.admin",
+    # Read Cloud Run Job execution logs for the in-flight sync progress
+    # endpoint (parses Meltano stdout for record counts). Read-only;
+    # never writes to logging.
+    "roles/logging.viewer",
     # Cloud Scheduler: create/update/delete per-connector recurring jobs.
     # The runtime creates these on connector connect, removes them on
     # delete, updates the cron on frequency change. (LIVELI-50)

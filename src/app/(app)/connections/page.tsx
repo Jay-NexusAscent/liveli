@@ -24,6 +24,10 @@ interface ConnectorRecord {
   syncFrequency?: "5m" | "15m" | "30m" | "1h" | "6h" | "12h" | "24h";
   /** Firestore Timestamp shape: { _seconds, _nanoseconds } when serialized. */
   lastSyncFinishedAt?: { _seconds: number; _nanoseconds?: number };
+  /** Duration of the most recent successful sync, ms. (Tier 1) */
+  lastSyncDurationMs?: number;
+  /** Rolling average of the last 5 successful syncs, ms. (Tier 1) */
+  typicalSyncDurationMs?: number;
   // Editable connection metadata (non-sensitive — password lives in Secret Manager).
   host?: string;
   port?: number;
@@ -31,6 +35,42 @@ interface ConnectorRecord {
   user?: string;
   ssl?: boolean;
   schemas?: string;
+}
+
+/**
+ * Live-progress response shape from /api/connections/[id]/progress.
+ * Polled every ~3s while a connector is in "syncing" state.
+ */
+interface ProgressResponse {
+  state: "idle" | "syncing";
+  phase?: "starting" | "discovery" | "extracting" | "loading" | "finalising" | "unknown";
+  recordsProcessed?: number;
+  elapsedMs?: number;
+  typicalMs?: number | null;
+  percent?: number | null;
+  latestLogLine?: string | null;
+}
+
+const PHASE_LABELS: Record<NonNullable<ProgressResponse["phase"]>, string> = {
+  starting: "Starting up",
+  discovery: "Discovering schema",
+  extracting: "Reading from source",
+  loading: "Writing to warehouse",
+  finalising: "Finalising",
+  unknown: "Syncing",
+};
+
+/** Render a millisecond duration as "47s" / "1m 23s" / "2h 14m". */
+function formatDuration(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || ms <= 0) return "—";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const remS = s % 60;
+  if (m < 60) return remS === 0 ? `${m}m` : `${m}m ${remS}s`;
+  const h = Math.floor(m / 60);
+  const remM = m % 60;
+  return remM === 0 ? `${h}h` : `${h}h ${remM}m`;
 }
 
 /** Render a Firestore timestamp as a human "x minutes ago" string. */
@@ -206,6 +246,9 @@ export default function ConnectionsPage() {
   const [editing, setEditing] = useState<ConnectorRecord | null>(null);
   const [search, setSearch] = useState("");
   const [filterCategory, setFilterCategory] = useState<SourceCategory | "All">("All");
+  // Live per-connector progress, keyed by connectorId. Populated by the
+  // polling effect below for any connector in "syncing" state.
+  const [progressById, setProgressById] = useState<Record<string, ProgressResponse>>({});
 
   const refresh = async () => {
     try {
@@ -224,6 +267,52 @@ export default function ConnectionsPage() {
     const id = setInterval(refresh, 5000);
     return () => clearInterval(id);
   }, []);
+
+  // Poll the per-connector progress endpoint while any connectors are
+  // syncing. Cheap (~one Cloud Logging read per call) and only runs when
+  // there's something to track. Clears the map entry once a connector
+  // leaves the syncing state so stale progress doesn't linger.
+  useEffect(() => {
+    const syncing = connectors.filter((c) => c.status === "syncing");
+    if (syncing.length === 0) {
+      setProgressById((prev) => (Object.keys(prev).length ? {} : prev));
+      return;
+    }
+    let cancelled = false;
+    const pollOnce = async () => {
+      const results = await Promise.all(
+        syncing.map(async (c) => {
+          try {
+            const res = await fetch(`/api/connections/${c.id}/progress`);
+            if (!res.ok) return null;
+            const data = (await res.json()) as ProgressResponse;
+            return [c.id, data] as const;
+          } catch {
+            return null;
+          }
+        })
+      );
+      if (cancelled) return;
+      setProgressById((prev) => {
+        const next = { ...prev };
+        for (const r of results) {
+          if (!r) continue;
+          if (r[1].state === "idle") {
+            delete next[r[0]];
+          } else {
+            next[r[0]] = r[1];
+          }
+        }
+        return next;
+      });
+    };
+    pollOnce();
+    const id = setInterval(pollOnce, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [connectors]);
 
   const triggerSync = async (connectorId: string) => {
     setSyncingId(connectorId);
@@ -297,7 +386,10 @@ export default function ConnectionsPage() {
             className="grid gap-3"
             style={{ gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))" }}
           >
-            {connectors.map((c) => (
+            {connectors.map((c) => {
+              const prog = progressById[c.id];
+              const isSyncing = c.status === "syncing";
+              return (
               <div key={c.id} className="card-elevated flex flex-col gap-3 p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
@@ -315,7 +407,47 @@ export default function ConnectionsPage() {
                         {/* When status is error, label as 'last attempt' since the sync didn't actually succeed. */}
                         {c.status === "error" ? "last attempt" : "last sync"}: {formatLastSynced(c.lastSyncFinishedAt)}
                       </span>
+                      {/* Tier 1: typical sync duration (rolling avg of last 5
+                          successful runs). Only shown when we have history. */}
+                      {c.typicalSyncDurationMs && c.typicalSyncDurationMs > 0 && !isSyncing && (
+                        <>
+                          <span className="text-text-tertiary">·</span>
+                          <span title="Rolling average of the last 5 successful syncs">
+                            typical {formatDuration(c.typicalSyncDurationMs)}
+                          </span>
+                        </>
+                      )}
                     </div>
+                    {/* Tier 3: live progress shown only while syncing. */}
+                    {isSyncing && prog?.state === "syncing" && (
+                      <div className="mt-2 flex flex-col gap-1.5">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-accent">
+                            {PHASE_LABELS[prog.phase ?? "unknown"]}
+                            {prog.recordsProcessed
+                              ? ` · ${prog.recordsProcessed.toLocaleString()} records`
+                              : ""}
+                          </span>
+                          <span className="font-mono tabular-nums text-text-tertiary">
+                            {formatDuration(prog.elapsedMs ?? 0)}
+                            {prog.typicalMs ? ` / ~${formatDuration(prog.typicalMs)}` : ""}
+                          </span>
+                        </div>
+                        <div className="h-1 w-full overflow-hidden rounded-full bg-border-subtle">
+                          <div
+                            className="h-full rounded-full bg-accent transition-all duration-1000"
+                            style={{
+                              width:
+                                prog.percent != null
+                                  ? `${prog.percent}%`
+                                  : // no typical history yet — show a slow
+                                    // indeterminate-ish bar based on elapsed
+                                    `${Math.min(95, Math.floor((prog.elapsedMs ?? 0) / 1000))}%`,
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
                     {c.lastError && (
                       <div className="mt-2 line-clamp-2 text-[11px] text-[color:var(--status-error)]">
                         {c.lastError}
@@ -354,7 +486,8 @@ export default function ConnectionsPage() {
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>
