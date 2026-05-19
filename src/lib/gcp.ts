@@ -9,27 +9,48 @@ export const gcp = {
   region: process.env.GCP_REGION ?? "europe-west4",
   bqLocation: process.env.GCP_BQ_LOCATION ?? "EU",
   firestoreDatabase: process.env.GCP_FIRESTORE_DATABASE ?? "(default)",
-  // Vertex AI location for Gemini models.
-  //
-  // IMPORTANT: the @google-cloud/vertexai SDK formats the API URL as
-  //   https://${location}-aiplatform.googleapis.com
-  // It does NOT support "global" as a location string (that was an
-  // Anthropic-Vertex-SDK convenience). The "global" endpoint exists
-  // at the underlying API level (host: aiplatform.googleapis.com)
-  // but this SDK can't target it. Using "global" here produces 404
-  // HTML responses from a non-existent hostname, which surface as
-  // JSON.parse SyntaxError on '<!DOCTYPE'.
-  //
-  // Always set this to a real regional string: europe-west1 / us-central1
-  // / asia-northeast1 etc. We default to europe-west1 for EU residency.
-  // Ref: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/learn/locations
+  /**
+   * Default Vertex region — used only when a workspace has no
+   * `bqLocation` set (legacy / orphan workspaces). The primary path
+   * is per-workspace via `vertexRegionForResidency(workspace.bqLocation)`.
+   *
+   * The @google-cloud/vertexai SDK formats the API URL as
+   *   https://${location}-aiplatform.googleapis.com
+   * so the value MUST be a real regional string. "global" produces
+   * https://global-aiplatform.googleapis.com which doesn't exist —
+   * Google returns an HTML 404 the SDK then mis-parses as JSON. See
+   * the throw in vertex.ts for the runtime guard.
+   */
   vertexRegion: process.env.VERTEX_AI_REGION ?? "europe-west1",
-  // Default to gemini-2.5-flash (GA, default-enabled in every GCP
-  // project — no Model Garden enablement step). Override via env to
-  // gemini-3-flash-preview (latest but requires Model Garden enable) or
-  // gemini-3-pro for harder reasoning.
-  vertexModel: process.env.VERTEX_AI_MODEL ?? "gemini-2.5-flash",
+  vertexModel: process.env.VERTEX_AI_MODEL ?? "gemini-3.5-flash",
 } as const;
+
+/**
+ * Map a workspace's data-residency choice to the Vertex AI region the
+ * agent should target. Keeps inference in the customer's residency
+ * zone so we honour LIVELI's data-residency promise end-to-end (data
+ * at rest in BQ/Firestore/GCS, AND the inference call itself).
+ *
+ * EU → europe-west1 (same region family as our Cloud Run / Artifact
+ *      Registry / Secret Manager footprint, also serves Gemini family)
+ * US → us-central1 (the canonical Vertex Gemini region, max model
+ *      availability)
+ *
+ * Multi-region values like "eu" / "us" are NOT used here — the
+ * @google-cloud/vertexai SDK builds `${region}-aiplatform.googleapis.com`
+ * hostnames and only true regional names resolve.
+ */
+export function vertexRegionForResidency(
+  bqLocation: "EU" | "US" | undefined
+): string {
+  switch (bqLocation) {
+    case "US":
+      return "us-central1";
+    case "EU":
+    default:
+      return "europe-west1";
+  }
+}
 
 function requireEnv(name: string): string {
   const v = process.env[name];

@@ -7,13 +7,13 @@ import type {
 } from "@google-cloud/vertexai";
 import { buildModel, vertexReady, MODEL } from "@/lib/vertex";
 import { ensureGcpAuth } from "@/lib/gcp-auth";
-import { gcp } from "@/lib/gcp";
+import { gcp, vertexRegionForResidency } from "@/lib/gcp";
 import {
   executeTool,
   geminiFunctionDeclarations,
   type AgentContext,
 } from "@/lib/tools";
-import { dbReady, chatsIn, messagesIn } from "@/lib/firestore";
+import { dbReady, chatsIn, messagesIn, workspaceDoc } from "@/lib/firestore";
 import { logAgentMessage } from "@/lib/usage";
 import type { ChatStreamEvent } from "@/lib/streaming";
 
@@ -109,8 +109,17 @@ export async function* runAgentTurn(
 ): AsyncGenerator<ChatStreamEvent> {
   await ensureGcpAuth();
 
-  // ── Open or create the chat ────────────────────────────────────
+  // ── Resolve workspace residency → Vertex region ─────────────────
+  // The workspace owns the data-residency choice; the agent's
+  // inference region must match so we don't leak EU customer data
+  // to US inference endpoints (or vice versa). bqLocation is the
+  // single source of truth — set at workspace creation, immutable.
   await dbReady();
+  const wsSnap = await workspaceDoc(input.clientId, input.workspaceId).get();
+  const wsData = wsSnap.data() as { bqLocation?: "EU" | "US" } | undefined;
+  const vertexRegion = vertexRegionForResidency(wsData?.bqLocation);
+
+  // ── Open or create the chat ────────────────────────────────────
   const chatsCol = chatsIn(input.clientId, input.workspaceId);
   const chatRef = input.chatId ? chatsCol.doc(input.chatId) : chatsCol.doc();
 
@@ -212,7 +221,7 @@ export async function* runAgentTurn(
     // Wrap each external call with tagged try/catch so failures
     // surface their actual source.
     try {
-      await vertexReady(); // ensures ADC is written before the SDK reads it
+      await vertexReady(vertexRegion); // ensures ADC is written before the SDK reads it
     } catch (err) {
       const wrapped = new Error(
         `vertexReady failed (auth/ADC): ${err instanceof Error ? err.message : String(err)}`
@@ -224,7 +233,7 @@ export async function* runAgentTurn(
     // Build a fresh model per turn — systemInstruction lives here (not on
     // the per-request body) so the SDK uses its canonical wiring.
     const fnDecls = geminiFunctionDeclarations();
-    const model = buildModel({
+    const model = buildModel(vertexRegion, {
       systemInstruction: { role: "system", parts: [{ text: SYSTEM_PROMPT }] },
       tools: [{ functionDeclarations: fnDecls }],
     });
@@ -232,7 +241,8 @@ export async function* runAgentTurn(
     let result;
     try {
       console.log("[agent] generateContentStream", {
-        region: gcp.vertexRegion,
+        region: vertexRegion,
+        bqLocation: wsData?.bqLocation,
         model: gcp.vertexModel,
         project: gcp.projectId,
         turn,
@@ -258,7 +268,7 @@ export async function* runAgentTurn(
       }
       const chain = flattenErrorChain(err);
       console.error("[agent] generateContentStream threw", {
-        region: gcp.vertexRegion,
+        region: vertexRegion,
         model: gcp.vertexModel,
         project: gcp.projectId,
         name: err instanceof Error ? err.name : typeof err,
@@ -334,7 +344,7 @@ export async function* runAgentTurn(
       }
       const chain = flattenErrorChain(err);
       console.error("[agent] stream iteration threw", {
-        region: gcp.vertexRegion,
+        region: vertexRegion,
         model: gcp.vertexModel,
         project: gcp.projectId,
         name: err instanceof Error ? err.name : typeof err,

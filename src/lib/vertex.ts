@@ -6,7 +6,12 @@ import {
 import { gcp } from "@/lib/gcp";
 import { ensureGcpAuth } from "@/lib/gcp-auth";
 
-let _vertex: VertexAI | null = null;
+// Per-region cache. Different workspaces target different regions
+// (EU vs US data residency), so we maintain one VertexAI client per
+// region rather than a single global instance. Region strings come
+// from vertexRegionForResidency() — always a real regional name like
+// "europe-west1" / "us-central1", never "global" / "eu" / "us".
+const _vertexByRegion = new Map<string, VertexAI>();
 let _fetchPatched = false;
 
 /**
@@ -101,40 +106,71 @@ function installVertexFetchDiagnostics(): void {
 }
 
 /**
- * Lazy-init Vertex AI client for Google's Gemini models. Auth via ADC —
- * `GOOGLE_APPLICATION_CREDENTIALS` points at a JSON file. Locally that's
- * `gcloud auth application-default login` output. On Vercel it's the
- * WIF external_account credentials file written to /tmp by
- * ensureGcpAuth().
+ * Reject region strings the SDK can't actually target. The
+ * @google-cloud/vertexai SDK builds URLs as
+ * `https://${region}-aiplatform.googleapis.com` so multi-region
+ * values like "global" / "eu" / "us" resolve to non-existent
+ * hostnames and return HTML 404s the SDK then mis-parses.
+ *
+ * Real regions only: "europe-west1", "us-central1", etc.
  */
-export function vertex(): VertexAI {
-  if (_vertex) return _vertex;
-  installVertexFetchDiagnostics();
-  _vertex = new VertexAI({
-    project: gcp.projectId,
-    location: gcp.vertexRegion,
-  });
-  return _vertex;
+function assertValidRegion(region: string): void {
+  if (!region) {
+    throw new Error(
+      "vertex: region is required (got empty/undefined). Pass a real Vertex region like 'europe-west1' or 'us-central1'."
+    );
+  }
+  if (region === "global" || region === "eu" || region === "us") {
+    throw new Error(
+      `vertex: region '${region}' is a multi-region alias the @google-cloud/vertexai SDK cannot target — it builds '${region}-aiplatform.googleapis.com' which doesn't exist. Use a real regional name (e.g. 'europe-west1', 'us-central1').`
+    );
+  }
 }
 
 /**
- * Fresh GenerativeModel per call. We pass systemInstruction at model
- * creation rather than per-request because:
+ * Per-region Vertex AI client. Auth via ADC — `GOOGLE_APPLICATION_CREDENTIALS`
+ * points at a JSON file. Locally that's `gcloud auth application-default
+ * login` output. On Vercel it's the WIF external_account credentials file
+ * written to /tmp by ensureGcpAuth().
+ *
+ * Region MUST be the real regional string (e.g. "europe-west1"), not a
+ * multi-region alias — see assertValidRegion().
+ */
+export function vertex(region: string): VertexAI {
+  assertValidRegion(region);
+  const cached = _vertexByRegion.get(region);
+  if (cached) return cached;
+  installVertexFetchDiagnostics();
+  const client = new VertexAI({
+    project: gcp.projectId,
+    location: region,
+  });
+  _vertexByRegion.set(region, client);
+  return client;
+}
+
+/**
+ * Fresh GenerativeModel per call, in the caller-specified region. We
+ * pass systemInstruction at model creation rather than per-request
+ * because:
  *  - v1.x SDK has cleaner semantics that way
  *  - the system prompt embeds the current date — caching the model
  *    would mean a stale date after the first request
  * Model objects are cheap to construct; just config + URL builders.
  */
-export function buildModel(params: Omit<ModelParams, "model"> = {}): GenerativeModel {
-  return vertex().getGenerativeModel({
+export function buildModel(
+  region: string,
+  params: Omit<ModelParams, "model"> = {}
+): GenerativeModel {
+  return vertex(region).getGenerativeModel({
     model: gcp.vertexModel,
     ...params,
   });
 }
 
-export async function vertexReady(): Promise<VertexAI> {
+export async function vertexReady(region: string): Promise<VertexAI> {
   await ensureGcpAuth();
-  return vertex();
+  return vertex(region);
 }
 
 export const MODEL = gcp.vertexModel;
