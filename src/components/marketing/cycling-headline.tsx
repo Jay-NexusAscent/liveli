@@ -7,21 +7,21 @@ import { useEffect, useState } from "react";
  *  - `lead`   renders on line 1 in the primary text colour
  *  - `accent` renders on line 2 with the indigo gradient
  *
- * Keep all accent strings short enough to fit one line at lg:80px so
- * the H1 stays exactly two lines tall — that's what stops the layout
- * jumping during the crossfade.
+ * Constraint: every line MUST fit within the H1's max-width at the
+ * largest breakpoint. A headline that wraps to 3 lines while others
+ * are 2 lines causes a vertical layout shift below the H1 every
+ * rotation — bad UX. The fixed `min-height` on the wrapper is a
+ * second line of defence, but the right answer is short copy.
  *
- * Order is intentional: visitor-action → product-positioning → mechanism
- * → speed → contrarian-replacement. Each angle is distinct so the
- * rotation builds a picture rather than restating the same idea five
- * times.
+ * No timing claims here ("8 seconds" etc.) — those belong on the
+ * stat card below with its `MEDIAN` qualifier intact, not in a hero
+ * headline that gets screenshotted and quoted without context.
  */
 const HEADLINES = [
   { lead: "Talk to your", accent: "data." },
   { lead: "Fully managed agentic", accent: "data platform." },
   { lead: "Plain English in.", accent: "Charts out." },
-  { lead: "Question to chart in", accent: "8 seconds." },
-  { lead: "No SQL, no dashboards,", accent: "just answers." },
+  { lead: "No SQL.", accent: "Just answers." },
 ];
 
 const INTERVAL_MS = 4500;
@@ -57,7 +57,14 @@ export function CyclingHeadline() {
   const { lead, accent } = HEADLINES[idx];
 
   return (
-    <h1 className="text-[44px] font-semibold leading-[1.05] tracking-[-0.03em] text-text-primary sm:text-[64px] lg:text-[80px] font-heading">
+    // Fixed min-height per breakpoint = 2 lines at that breakpoint's
+    // font size with leading-[1.05]. This freezes the vertical space
+    // the H1 occupies so the sub, CTAs, ECG band, and stat strip
+    // below it never jump during a rotation.
+    //   - 44px font × 1.05 × 2 lines ≈ 92px  (mobile)
+    //   - 56px font × 1.05 × 2 lines ≈ 118px (sm)
+    //   - 68px font × 1.05 × 2 lines ≈ 143px (lg)
+    <h1 className="min-h-[100px] text-[44px] font-semibold leading-[1.05] tracking-[-0.03em] text-text-primary sm:min-h-[124px] sm:text-[56px] lg:min-h-[150px] lg:text-[68px] font-heading">
       <span
         className={`block transition-all duration-500 ease-out ${
           show

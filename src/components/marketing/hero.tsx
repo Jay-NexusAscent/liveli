@@ -19,7 +19,7 @@ export function MarketingHero() {
             CTAs. Single column, centered alignment. The headline cycles
             every 4.5s in a smooth fade + slide-up; respects reduced
             motion preference. */}
-        <div className="mx-auto max-w-3xl text-center">
+        <div className="mx-auto max-w-3xl text-center lg:max-w-4xl">
           <span className="inline-flex items-center gap-2 rounded-full border border-border bg-accent-subtle px-3 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-text-secondary">
             <span className="live-dot" />
             AI Data Agent — Early Access
