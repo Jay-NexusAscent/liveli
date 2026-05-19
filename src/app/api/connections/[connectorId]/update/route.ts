@@ -4,7 +4,7 @@ import { requireWorkspaceContext, UnauthorizedError } from "@/lib/clients";
 import { connectorsIn, dbReady } from "@/lib/firestore";
 import { storeConnectorSecret } from "@/lib/secret-manager";
 import { logUsageEvent } from "@/lib/usage";
-import { upsertSyncJob } from "@/lib/cloud-scheduler";
+import { upsertSyncJob, type SyncFrequency } from "@/lib/cloud-scheduler";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -73,7 +73,11 @@ export async function PATCH(
   if (!snap.exists) {
     return Response.json({ error: "Connector not found" }, { status: 404 });
   }
-  const existing = snap.data() as { type: string; secretRef?: string };
+  const existing = snap.data() as {
+    type: string;
+    secretRef?: string;
+    syncFrequency?: SyncFrequency;
+  };
 
   // Build the Firestore patch.
   const patch: Record<string, unknown> = {};
@@ -117,15 +121,20 @@ export async function PATCH(
 
   await ref.update(patch);
 
-  // If syncFrequency changed, push the new cron to Cloud Scheduler.
-  if (body.syncFrequency !== undefined) {
-    await upsertSyncJob({
-      clientId: ctx.clientId,
-      workspaceId: ctx.workspaceId,
-      connectorId,
-      syncFrequency: body.syncFrequency,
-    });
-  }
+  // Always re-upsert the Cloud Scheduler job on save. This is the
+  // recovery path for connectors that pre-date scheduler wiring (no
+  // job ever created) or whose initial upsert silently failed —
+  // before this, Edit→Save was a no-op for Scheduler unless the user
+  // also changed the frequency, leaving the connector unsyncable
+  // short of delete+recreate. upsertSyncJob is idempotent.
+  const effectiveFrequency: SyncFrequency =
+    body.syncFrequency ?? existing.syncFrequency ?? "1h";
+  await upsertSyncJob({
+    clientId: ctx.clientId,
+    workspaceId: ctx.workspaceId,
+    connectorId,
+    syncFrequency: effectiveFrequency,
+  });
 
   logUsageEvent({
     clientId: ctx.clientId,
