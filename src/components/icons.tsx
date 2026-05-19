@@ -129,6 +129,31 @@ export function SparkleIcon({ className }: IconProps) {
   );
 }
 
+export function InsightIcon({ className }: IconProps) {
+  return (
+    <svg className={className} width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10 2.5a5.5 5.5 0 0 0-3.3 9.9c.5.4.8 1 .8 1.7v.4h5v-.4c0-.6.3-1.3.8-1.7A5.5 5.5 0 0 0 10 2.5Z" />
+      <path d="M8 17h4M9 19h2" />
+    </svg>
+  );
+}
+
+export function TrendUpIcon({ className }: IconProps) {
+  return (
+    <svg className={className} width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 14L8 9l3 3 6-6M13 7h4v4" />
+    </svg>
+  );
+}
+
+export function TrendDownIcon({ className }: IconProps) {
+  return (
+    <svg className={className} width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 6l5 5 3-3 6 6M13 13h4V9" />
+    </svg>
+  );
+}
+
 export function SettingsIcon({ className }: IconProps) {
   return (
     <svg className={className} width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
