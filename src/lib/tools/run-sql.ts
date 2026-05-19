@@ -20,6 +20,15 @@ const Input = z.object({
 
 const READ_ONLY = /^\s*(SELECT|WITH)\b/i;
 
+function stripSyncMetadata(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row)) {
+    if (k.startsWith("_sdc_")) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
 export const runSqlTool: ToolDefinition = {
   name: "run_sql",
   description:
@@ -38,14 +47,20 @@ export const runSqlTool: ToolDefinition = {
         userId: ctx.userId,
       },
     });
+    // Strip Singer/Meltano sync-metadata columns (_sdc_extracted_at,
+    // _sdc_batched_at, etc.). They're an artifact of the ingestion
+    // pipeline and not part of the user's actual data — surfacing them
+    // both pollutes the chat UI's table render and tempts the model
+    // to comment on or chart them.
+    const rows = result.rows.map(stripSyncMetadata);
     return {
       content: {
-        rows: result.rows,
+        rows,
         rowCount: result.rowCount,
         bytesScanned: result.bytesScanned,
         truncated: result.truncated,
       },
-      clientRender: { kind: "table", rows: result.rows },
+      clientRender: { kind: "table", rows },
     };
   },
 };

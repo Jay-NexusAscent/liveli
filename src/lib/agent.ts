@@ -32,7 +32,9 @@ Rules:
 - If the user asks about "their data" without specifying a source, query across all relevant connectors' datasets (UNION ALL where the schema matches, or describe what each source has).
 - READ-ONLY queries only: SELECT and WITH allowed. Never DDL, UPDATE, DELETE, INSERT, MERGE.
 - Keep queries efficient: aggregate, filter, LIMIT. The dataset has a 10 GB scan cap.
-- For charts: pick the right type (bar for ranking, line for time series, pie for share-of-total, scatter for correlation). Always set a title.
+- **Never \`SELECT *\`** — explicitly list the columns the user cares about. Tables often have noisy sync-metadata columns (anything starting with an underscore like \`_sdc_*\`) that are filtered out anyway, but listing real columns also keeps results tidy.
+- **Do NOT re-emit run_sql rows as a markdown table in your reply.** The client renders the result rows in a dedicated table UI automatically — repeating them as markdown is duplicate and clutters the response. Comment on what the data shows, don't reproduce it.
+- For charts: pick the right type (bar for ranking, line for time series, pie for share-of-total, scatter for correlation). Always set a title. When the user asks for a chart, prefer \`make_chart\` over reciting numbers.
 - Write conversationally. Don't say "I will now call the run_sql tool" — just call it and present the result.
 - If the result is empty or unexpected, say so plainly.
 - Use the current date for any "last quarter / this month / YTD" references.
@@ -165,8 +167,14 @@ export async function* runAgentTurn(
     // Gemini uses role: "user" | "model" (not "assistant").
     const role = data.role === "assistant" ? "model" : "user";
     if (data.toolBlocks && data.toolBlocks.length > 0) {
-      const parts: Part[] = data.toolBlocks.map((b) => msgContentToGeminiPart(b));
-      history.push({ role, parts });
+      // CRITICAL: don't merge into one Content. Gemini rejects a Content
+      // turn that mixes functionCall and functionResponse parts with:
+      //   "function call turn contains at least one function_call part
+      //    which can not be mixed with function_response"
+      // tool_result parts must live on a {role: "user"} turn, separate
+      // from any preceding text/tool_use on the assistant's {role: "model"}
+      // turn. Split the flat block list back into alternating turns.
+      history.push(...blocksToGeminiTurns(data.toolBlocks));
     } else {
       history.push({ role, parts: [{ text: data.content }] });
     }
@@ -494,4 +502,51 @@ function msgContentToGeminiPart(
       response: block.content as Record<string, unknown>,
     },
   };
+}
+
+/**
+ * Split a persisted assistant message's flat block list back into the
+ * Content turns Gemini's API expects.
+ *
+ * Why this matters: during a single runAgentTurn we build history in
+ * the correct shape (model turn → user turn for tool_results → model
+ * turn → …). But we persist the entire assistant exchange as ONE
+ * Firestore doc with `toolBlocks` holding all parts in order. Replaying
+ * that as a single Content turn merges function_call and function_response
+ * parts, which Gemini rejects with:
+ *
+ *   "function call turn contains at least one function_call part which
+ *    can not be mixed with function_response"
+ *
+ * We detect role boundaries by part kind:
+ *   - text + tool_use  →  {role: "model"} turn
+ *   - tool_result      →  {role: "user"} turn (Gemini puts tool outputs
+ *                          on the user role, not assistant)
+ * and emit a new Content each time the role changes.
+ */
+function blocksToGeminiTurns(
+  blocks: Array<
+    | { type: "text"; text: string }
+    | { type: "tool_use"; id: string; name: string; input: unknown }
+    | { type: "tool_result"; tool_use_id: string; content: unknown }
+  >
+): Content[] {
+  const turns: Content[] = [];
+  let currentRole: "model" | "user" | null = null;
+  let currentParts: Part[] = [];
+
+  for (const block of blocks) {
+    const targetRole: "model" | "user" =
+      block.type === "tool_result" ? "user" : "model";
+    if (currentRole !== null && currentRole !== targetRole) {
+      turns.push({ role: currentRole, parts: currentParts });
+      currentParts = [];
+    }
+    currentRole = targetRole;
+    currentParts.push(msgContentToGeminiPart(block));
+  }
+  if (currentRole !== null && currentParts.length > 0) {
+    turns.push({ role: currentRole, parts: currentParts });
+  }
+  return turns;
 }
