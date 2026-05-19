@@ -62,20 +62,112 @@ const SYNC_FREQUENCY_LABELS: Record<NonNullable<ConnectorRecord["syncFrequency"]
 
 type ConnectAction = "postgres" | null;
 
-const popularSources: Array<{
+type SourceCategory =
+  | "Databases"
+  | "Payments"
+  | "E-commerce"
+  | "CRM"
+  | "Marketing"
+  | "Analytics"
+  | "Project Management"
+  | "Support"
+  | "Finance"
+  | "Productivity";
+
+const CATEGORIES: SourceCategory[] = [
+  "Databases",
+  "Payments",
+  "E-commerce",
+  "CRM",
+  "Marketing",
+  "Analytics",
+  "Project Management",
+  "Support",
+  "Finance",
+  "Productivity",
+];
+
+interface PopularSource {
   name: string;
   desc: string;
-  tag: string;
+  category: SourceCategory;
   action: ConnectAction;
-}> = [
-  { name: "PostgreSQL", desc: "Replicate tables from any Postgres database", tag: "Database", action: "postgres" },
-  { name: "MySQL", desc: "Replicate tables from any MySQL database", tag: "Database", action: null },
-  { name: "BigQuery", desc: "Replicate datasets from your BigQuery project", tag: "Database", action: null },
-  { name: "Stripe", desc: "Charges, subscriptions, customers, refunds", tag: "Payments", action: null },
-  { name: "Shopify", desc: "Orders, products, customers, inventory", tag: "E-commerce", action: null },
-  { name: "HubSpot", desc: "Contacts, deals, companies, engagements", tag: "CRM", action: null },
-  { name: "Google Ads", desc: "Campaign performance and spend", tag: "Marketing", action: null },
-  { name: "Meta Ads", desc: "Facebook + Instagram ad performance", tag: "Marketing", action: null },
+}
+
+// Top 50 Meltano connectors — well-supported taps in the data-engineering
+// ecosystem that the typical Liveli prospect is most likely to ask for.
+// Anything with action: null shows a "Coming soon" CTA until we ship the
+// connect wizard for that source type.
+const popularSources: PopularSource[] = [
+  // Databases
+  { name: "PostgreSQL", desc: "Replicate tables from any Postgres database", category: "Databases", action: "postgres" },
+  { name: "MySQL", desc: "Replicate tables from any MySQL database", category: "Databases", action: null },
+  { name: "BigQuery", desc: "Replicate datasets from your BigQuery project", category: "Databases", action: null },
+  { name: "MongoDB", desc: "Sync collections from MongoDB or Atlas", category: "Databases", action: null },
+  { name: "Snowflake", desc: "Replicate tables from your Snowflake warehouse", category: "Databases", action: null },
+  { name: "Amazon Redshift", desc: "Replicate tables from a Redshift cluster", category: "Databases", action: null },
+  { name: "Oracle Database", desc: "Replicate tables from an Oracle DB", category: "Databases", action: null },
+  { name: "Microsoft SQL Server", desc: "Replicate tables from MSSQL / Azure SQL", category: "Databases", action: null },
+  { name: "MariaDB", desc: "Replicate tables from any MariaDB instance", category: "Databases", action: null },
+  { name: "DuckDB", desc: "Replicate from a DuckDB file or motherduck", category: "Databases", action: null },
+
+  // Payments
+  { name: "Stripe", desc: "Charges, subscriptions, customers, refunds", category: "Payments", action: null },
+  { name: "PayPal", desc: "Transactions, disputes, payouts", category: "Payments", action: null },
+  { name: "Chargebee", desc: "Subscription billing + revenue events", category: "Payments", action: null },
+  { name: "Recurly", desc: "Subscriptions, invoices, accounts", category: "Payments", action: null },
+  { name: "Square", desc: "Transactions, items, customers, payouts", category: "Payments", action: null },
+
+  // E-commerce
+  { name: "Shopify", desc: "Orders, products, customers, inventory", category: "E-commerce", action: null },
+  { name: "WooCommerce", desc: "Orders, products, customers from your WP store", category: "E-commerce", action: null },
+  { name: "BigCommerce", desc: "Orders, catalog, customers, fulfilment", category: "E-commerce", action: null },
+  { name: "Adobe Commerce", desc: "Magento / Adobe Commerce orders + catalog", category: "E-commerce", action: null },
+  { name: "Amazon Seller", desc: "Orders, fulfilment, settlements, fees", category: "E-commerce", action: null },
+
+  // CRM
+  { name: "HubSpot", desc: "Contacts, deals, companies, engagements", category: "CRM", action: null },
+  { name: "Salesforce", desc: "Accounts, opportunities, contacts, leads", category: "CRM", action: null },
+  { name: "Pipedrive", desc: "Pipelines, deals, activities, persons", category: "CRM", action: null },
+  { name: "Zendesk Sell", desc: "Pipeline, contacts, deals", category: "CRM", action: null },
+  { name: "Close", desc: "Leads, opportunities, calls, emails", category: "CRM", action: null },
+
+  // Marketing
+  { name: "Google Ads", desc: "Campaign performance and spend", category: "Marketing", action: null },
+  { name: "Meta Ads", desc: "Facebook + Instagram ad performance", category: "Marketing", action: null },
+  { name: "LinkedIn Ads", desc: "Sponsored content + lead-gen campaigns", category: "Marketing", action: null },
+  { name: "TikTok Ads", desc: "TikTok ad performance + creatives", category: "Marketing", action: null },
+  { name: "Microsoft Ads", desc: "Bing search ads performance + spend", category: "Marketing", action: null },
+  { name: "Mailchimp", desc: "Campaigns, lists, audience engagement", category: "Marketing", action: null },
+  { name: "Klaviyo", desc: "Email + SMS flows, lists, events", category: "Marketing", action: null },
+  { name: "ActiveCampaign", desc: "Automations, deals, contacts", category: "Marketing", action: null },
+
+  // Analytics
+  { name: "Google Analytics 4", desc: "Sessions, events, conversions", category: "Analytics", action: null },
+  { name: "Mixpanel", desc: "Product events + funnels", category: "Analytics", action: null },
+  { name: "Amplitude", desc: "Product events + cohorts", category: "Analytics", action: null },
+  { name: "Segment", desc: "Customer events from any Segment source", category: "Analytics", action: null },
+
+  // Project Management
+  { name: "Jira", desc: "Issues, sprints, projects, worklogs", category: "Project Management", action: null },
+  { name: "Asana", desc: "Tasks, projects, teams, time tracking", category: "Project Management", action: null },
+  { name: "Linear", desc: "Issues, cycles, projects, teams", category: "Project Management", action: null },
+  { name: "Notion", desc: "Databases, pages, blocks", category: "Project Management", action: null },
+
+  // Support
+  { name: "Intercom", desc: "Conversations, contacts, tags, segments", category: "Support", action: null },
+  { name: "Zendesk Support", desc: "Tickets, users, organizations, SLAs", category: "Support", action: null },
+  { name: "Freshdesk", desc: "Tickets, agents, conversations", category: "Support", action: null },
+
+  // Finance
+  { name: "QuickBooks", desc: "Invoices, P&L, accounts, customers", category: "Finance", action: null },
+  { name: "Xero", desc: "Invoices, contacts, balance sheet, P&L", category: "Finance", action: null },
+  { name: "Sage Intacct", desc: "GL, AR/AP, vendors, customers", category: "Finance", action: null },
+
+  // Productivity
+  { name: "Slack", desc: "Messages, channels, users, files", category: "Productivity", action: null },
+  { name: "GitHub", desc: "Issues, PRs, commits, releases", category: "Productivity", action: null },
+  { name: "Google Sheets", desc: "Sync any spreadsheet as a table", category: "Productivity", action: null },
 ];
 
 export default function ConnectionsPage() {
@@ -85,6 +177,8 @@ export default function ConnectionsPage() {
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ConnectorRecord | null>(null);
   const [editing, setEditing] = useState<ConnectorRecord | null>(null);
+  const [search, setSearch] = useState("");
+  const [filterCategory, setFilterCategory] = useState<SourceCategory | "All">("All");
 
   const refresh = async () => {
     try {
@@ -239,48 +333,139 @@ export default function ConnectionsPage() {
       </section>
 
       <section>
-        <h2 className="mb-4 text-[13px] font-medium uppercase tracking-wider text-text-tertiary">
-          Popular sources
-        </h2>
-        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {popularSources.map((s) => {
-            const interactive = s.action === "postgres";
+        <div className="mb-5 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-[13px] font-medium uppercase tracking-wider text-text-tertiary">
+              Popular sources
+            </h2>
+            <p className="mt-1 text-[12px] text-text-tertiary">
+              {popularSources.length} sources available — more added weekly.
+            </p>
+          </div>
+
+          {/* Search box */}
+          <div className="relative w-full sm:w-72">
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search sources…"
+              className="w-full rounded-md border border-border bg-elevated px-3 py-2 text-[13px] text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30"
+            />
+          </div>
+        </div>
+
+        {/* Category filter chips — horizontally scrollable on mobile. */}
+        <div className="mb-5 -mx-1 flex gap-1.5 overflow-x-auto pb-1">
+          {(["All", ...CATEGORIES] as const).map((cat) => {
+            const isActive = filterCategory === cat;
             return (
               <button
-                key={s.name}
+                key={cat}
                 type="button"
-                onClick={() => {
-                  if (s.action === "postgres") setPgOpen(true);
-                }}
-                disabled={!interactive}
+                onClick={() => setFilterCategory(cat as SourceCategory | "All")}
                 className={cn(
-                  "card group relative flex flex-col items-start p-5 text-left transition-all",
-                  interactive
-                    ? "cursor-pointer hover:-translate-y-0.5"
-                    : "cursor-not-allowed opacity-50"
+                  "shrink-0 rounded-full px-3 py-1.5 text-[12px] font-medium transition-colors",
+                  isActive
+                    ? "bg-accent text-text-inverted"
+                    : "border border-border bg-elevated text-text-secondary hover:border-accent hover:text-text-primary"
                 )}
               >
-                <div className="mb-3 flex w-full items-center justify-between">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-md bg-accent-subtle text-accent">
-                    <DatabaseIcon className="text-accent" />
-                  </div>
-                  <span className="text-[10px] font-medium uppercase tracking-wider text-text-tertiary">
-                    {s.tag}
-                  </span>
-                </div>
-                <h3 className="mb-1 text-[15px] font-semibold text-text-primary font-heading">{s.name}</h3>
-                <p className="text-[13px] leading-relaxed text-text-secondary">{s.desc}</p>
-                <div className="mt-4 inline-flex items-center gap-1 text-[11px] font-medium">
-                  {interactive ? (
-                    <span className="text-accent">Connect →</span>
-                  ) : (
-                    <span className="text-text-tertiary">Coming soon</span>
-                  )}
-                </div>
+                {cat}
               </button>
             );
           })}
         </div>
+
+        {(() => {
+          const q = search.trim().toLowerCase();
+          const filtered = popularSources.filter((s) => {
+            const matchCat =
+              filterCategory === "All" || s.category === filterCategory;
+            const matchSearch =
+              !q ||
+              s.name.toLowerCase().includes(q) ||
+              s.desc.toLowerCase().includes(q) ||
+              s.category.toLowerCase().includes(q);
+            return matchCat && matchSearch;
+          });
+
+          if (filtered.length === 0) {
+            return (
+              <div className="rounded-lg border border-dashed border-border-subtle p-12 text-center">
+                <p className="text-[14px] text-text-secondary">
+                  No sources match{" "}
+                  <span className="font-medium text-text-primary">
+                    &ldquo;{search}&rdquo;
+                  </span>
+                  {filterCategory !== "All" && (
+                    <>
+                      {" "}
+                      in <span className="font-medium text-text-primary">{filterCategory}</span>
+                    </>
+                  )}
+                  .
+                </p>
+                <p className="mt-1 text-[12px] text-text-tertiary">
+                  Try a different search, clear the category filter, or{" "}
+                  <a
+                    href="mailto:hello@liveli.co.uk?subject=Connector%20request"
+                    className="text-accent hover:underline"
+                  >
+                    request a connector
+                  </a>
+                  .
+                </p>
+              </div>
+            );
+          }
+
+          return (
+            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {filtered.map((s) => {
+                const interactive = s.action === "postgres";
+                return (
+                  <button
+                    key={s.name}
+                    type="button"
+                    onClick={() => {
+                      if (s.action === "postgres") setPgOpen(true);
+                    }}
+                    disabled={!interactive}
+                    className={cn(
+                      "card group relative flex flex-col items-start p-5 text-left transition-all",
+                      interactive
+                        ? "cursor-pointer hover:-translate-y-0.5"
+                        : "cursor-not-allowed opacity-50"
+                    )}
+                  >
+                    <div className="mb-3 flex w-full items-center justify-between">
+                      <div className="flex h-9 w-9 items-center justify-center rounded-md bg-accent-subtle text-accent">
+                        <DatabaseIcon className="text-accent" />
+                      </div>
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-text-tertiary">
+                        {s.category}
+                      </span>
+                    </div>
+                    <h3 className="mb-1 text-[15px] font-semibold text-text-primary font-heading">
+                      {s.name}
+                    </h3>
+                    <p className="text-[13px] leading-relaxed text-text-secondary">
+                      {s.desc}
+                    </p>
+                    <div className="mt-4 inline-flex items-center gap-1 text-[11px] font-medium">
+                      {interactive ? (
+                        <span className="text-accent">Connect →</span>
+                      ) : (
+                        <span className="text-text-tertiary">Coming soon</span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          );
+        })()}
       </section>
 
       <PostgresWizard
