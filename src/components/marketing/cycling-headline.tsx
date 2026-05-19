@@ -18,10 +18,10 @@ import { useEffect, useState } from "react";
  * headline that gets screenshotted and quoted without context.
  */
 const HEADLINES = [
-  { lead: "Talk to your", accent: "data." },
-  { lead: "Fully managed agentic", accent: "data platform." },
-  { lead: "Plain English in.", accent: "Charts out." },
-  { lead: "No SQL.", accent: "Just answers." },
+  { lead: "Talk To Your", accent: "Data." },
+  { lead: "Fully Managed Agentic", accent: "Data Platform." },
+  { lead: "Your Warehouse,", accent: "Already Built." },
+  { lead: "No Code.", accent: "Just Answers." },
 ];
 
 const INTERVAL_MS = 4500;

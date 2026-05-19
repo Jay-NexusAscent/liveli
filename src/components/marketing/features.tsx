@@ -68,9 +68,18 @@ export function MarketingFeatures() {
           </h2>
         </div>
 
-        <ol className="grid gap-5 md:grid-cols-3">
+        <ol className="relative grid gap-5 md:grid-cols-3">
+          {/* Connecting line through the icon row — solid bgs on the
+              cards mask it where the cards sit, so the line is visible
+              only in the gap-5 gaps between cards. Reads as "01 → 02
+              → 03 progression" without adding any chrome on the cards
+              themselves. Hidden on mobile (single column stack). */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-12 top-12 hidden h-px bg-gradient-to-r from-transparent via-accent/40 to-transparent md:block"
+          />
           {steps.map((s, i) => (
-            <li key={s.title} className="card-elevated p-7">
+            <li key={s.title} className="card-elevated relative p-7">
               <div className="mb-5 flex items-center justify-between">
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent-muted text-accent">
                   <s.icon className="text-accent" />

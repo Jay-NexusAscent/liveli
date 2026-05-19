@@ -120,7 +120,7 @@ export function MarketingPricing() {
             className={cn(
               "card flex flex-col p-6 transition-transform duration-300 hover:-translate-y-0.5",
               tier.emphasis === "popular" &&
-                "ring-2 ring-accent shadow-[0_0_30px_var(--accent-glow-strong)]",
+                "ring-2 ring-accent shadow-[0_0_36px_var(--accent-glow-strong)] lg:-translate-y-3 lg:hover:-translate-y-4",
               tier.emphasis === "enterprise" && "bg-elevated"
             )}
           >
