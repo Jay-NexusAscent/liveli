@@ -1,11 +1,29 @@
 /**
- * Shared GCP config. Reads from env once at module load.
+ * Shared GCP config.
+ *
+ * `projectId` is read LAZILY via a getter — the env var lookup happens
+ * on first access, not at module load. This is the difference between
+ * production and preview Vercel builds: production has GCP_PROJECT_ID
+ * set, preview doesn't. With an eager `requireEnv()` at module load,
+ * preview builds crashed during Next.js "collect page data" for every
+ * API route that imported this file (transitively most of them).
+ * Lazy access means the build phase doesn't need the env, only request
+ * handlers that actually touch GCP do.
+ *
  * Production uses Workload Identity Federation (no key file);
  * local dev sets GOOGLE_APPLICATION_CREDENTIALS to a SA JSON path.
  */
 
+let _projectId: string | undefined;
+
 export const gcp = {
-  projectId: requireEnv("GCP_PROJECT_ID"),
+  /**
+   * GCP project ID. First access reads + caches; subsequent accesses
+   * return the cached value. Throws if GCP_PROJECT_ID isn't set.
+   */
+  get projectId(): string {
+    return (_projectId ??= requireEnv("GCP_PROJECT_ID"));
+  },
   region: process.env.GCP_REGION ?? "europe-west4",
   bqLocation: process.env.GCP_BQ_LOCATION ?? "EU",
   firestoreDatabase: process.env.GCP_FIRESTORE_DATABASE ?? "(default)",
@@ -30,7 +48,7 @@ export const gcp = {
    * regional availability before bumping this default.
    */
   vertexModel: process.env.VERTEX_AI_MODEL ?? "gemini-2.5-flash",
-} as const;
+};
 
 /**
  * Map a workspace's data-residency choice to the Vertex AI region the
