@@ -13,10 +13,17 @@ plugins:
       pip_url: meltanolabs-tap-postgres
       # Connection params come from env at runtime:
       #   TAP_POSTGRES_HOST, TAP_POSTGRES_PORT, TAP_POSTGRES_USER,
-      #   TAP_POSTGRES_PASSWORD, TAP_POSTGRES_DATABASE
+      #   TAP_POSTGRES_PASSWORD, TAP_POSTGRES_DATABASE,
+      #   TAP_POSTGRES_FILTER_SCHEMAS (JSON array, overrides default below)
       config:
         ssl: true
         ssl_mode: prefer
+        # Default to user schema only. Without this the tap discovers
+        # pg_catalog + information_schema and target-bigquery crashes
+        # creating tables like "information_schema__pg_..." because BQ
+        # reserves the `information_schema` namespace. Override per-run
+        # via TAP_POSTGRES_FILTER_SCHEMAS.
+        filter_schemas: ["public"]
 
   loaders:
     - name: target-bigquery

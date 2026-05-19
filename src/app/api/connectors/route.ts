@@ -83,24 +83,41 @@ async function reconcileStatus(
       if (!ok) return null;
       return { ...data, status: "synced", lastError: undefined };
     }
-    // Any other error: surface it in the UI as an error status with a
-    // diagnostic message rather than silently lying about success.
+    // Any other error: surface a friendly message in the UI, log the
+    // technical detail server-side for ops triage.
     const msg = err instanceof Error ? err.message : String(err);
+    console.error("[sync] reconcile lookup failed", { connectorId, msg });
+    const lastError =
+      "We're having trouble checking sync status. We'll retry automatically — contact support if this persists.";
     const ok = await tryUpdate(col, connectorId, {
       status: "error",
-      lastError: `Sync status check failed: ${msg}`,
+      lastError,
+      lastErrorDiagnosticMessage: msg,
     });
     if (!ok) return null;
-    return { ...data, status: "error", lastError: `Sync status check failed: ${msg}` };
+    return { ...data, status: "error", lastError };
   }
 
   if (!exec.completionTime) return data;
 
   if (exec.failedCount > 0) {
-    const lastError = `Sync failed. Check Cloud Run logs: ${exec.logUri ?? "(no log URI)"}`;
+    // Customer-facing copy — never leak Cloud Run / BigQuery / Meltano
+    // internals. The full diagnostic (log URL + execution name) goes to
+    // the server console for ops triage and into a separate diagnostic
+    // field on the doc so it's accessible from admin tooling later
+    // without surfacing in the UI.
+    const lastError =
+      "Sync failed. Check that your connection details are still valid, or contact support if this keeps happening.";
+    const diagnosticLogUri = exec.logUri ?? null;
+    console.error("[sync] execution failed", {
+      connectorId,
+      executionName: data.lastExecutionName,
+      logUri: diagnosticLogUri,
+    });
     const ok = await tryUpdate(col, connectorId, {
       status: "error",
       lastError,
+      lastErrorDiagnosticLogUri: diagnosticLogUri,
       lastSyncFinishedAt: FieldValue.serverTimestamp(),
     });
     if (!ok) return null;

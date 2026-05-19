@@ -291,14 +291,14 @@ export default function ConnectionsPage() {
                 . This will:
               </p>
               <ul className="mt-3 ml-5 list-disc space-y-1 text-[13px]">
-                <li>Revoke and delete the stored credentials from Secret Manager.</li>
+                <li>Securely remove your stored connection credentials.</li>
                 <li>Stop any future syncs for this source.</li>
                 <li>
                   <span className="font-medium text-text-primary">
-                    Keep your already-synced tables
+                    Permanently delete all replicated data
                   </span>{" "}
-                  in BigQuery — they remain queryable by the agent. Drop the workspace
-                  dataset manually if you want to wipe the data too.
+                  for this source — tables, history, and any charts that reference
+                  them will no longer load.
                 </li>
               </ul>
               <p className="mt-3 text-[12px] text-text-tertiary">This action cannot be undone.</p>

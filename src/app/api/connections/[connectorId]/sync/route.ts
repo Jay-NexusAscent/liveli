@@ -63,12 +63,22 @@ export async function POST(
   };
 
   if (data.type === "postgres") {
+    // filter_schemas restricts tap-postgres to user schemas only — without
+    // it the tap discovers everything including pg_catalog and
+    // information_schema, which then crashes target-bigquery because BQ
+    // reserves the `information_schema` prefix on table names.
+    const schemas = (creds.schemas ?? "public")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
     Object.assign(env, {
       TAP_POSTGRES_HOST: creds.host,
       TAP_POSTGRES_PORT: creds.port,
       TAP_POSTGRES_USER: creds.user,
       TAP_POSTGRES_PASSWORD: creds.password,
       TAP_POSTGRES_DATABASE: creds.database,
+      TAP_POSTGRES_FILTER_SCHEMAS: JSON.stringify(schemas),
     });
   } else {
     return Response.json(
@@ -82,13 +92,21 @@ export async function POST(
     const r = await runConnectorJob(jobName, env);
     executionName = r.executionName;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const technical = err instanceof Error ? err.message : String(err);
+    console.error("[sync] runConnectorJob failed", {
+      connectorId,
+      clientId: ctx.clientId,
+      msg: technical,
+    });
+    const lastError =
+      "Couldn't start the sync. We're looking into it — contact support if this persists.";
     await ref.update({
       status: "error",
-      lastError: message,
+      lastError,
+      lastErrorDiagnosticMessage: technical,
       lastSyncAttemptAt: FieldValue.serverTimestamp(),
     });
-    return Response.json({ error: message }, { status: 500 });
+    return Response.json({ error: lastError }, { status: 500 });
   }
 
   await ref.update({
