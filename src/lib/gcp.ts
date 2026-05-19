@@ -16,10 +16,11 @@ export const gcp = {
   // stack is EU.
   // Ref: https://docs.cloud.google.com/vertex-ai/generative-ai/docs/models
   vertexRegion: process.env.VERTEX_AI_REGION ?? "global",
-  // Gemini 3 Flash (preview as of mid-2026) — fast, cheap, supports
-  // function calling. Set VERTEX_AI_MODEL to override (e.g. for
-  // gemini-2.5-flash GA, or gemini-3-pro for harder reasoning).
-  vertexModel: process.env.VERTEX_AI_MODEL ?? "gemini-3-flash-preview",
+  // Default to gemini-2.5-flash (GA, default-enabled in every GCP
+  // project — no Model Garden enablement step). Override via env to
+  // gemini-3-flash-preview (latest but requires Model Garden enable) or
+  // gemini-3-pro for harder reasoning.
+  vertexModel: process.env.VERTEX_AI_MODEL ?? "gemini-2.5-flash",
 } as const;
 
 function requireEnv(name: string): string {

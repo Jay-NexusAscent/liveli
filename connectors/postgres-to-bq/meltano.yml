@@ -25,7 +25,11 @@ plugins:
       # Config comes from env at runtime:
       #   TARGET_BIGQUERY_PROJECT, TARGET_BIGQUERY_DATASET,
       #   TARGET_BIGQUERY_LOCATION
+      # storage_write_api was crashing with BrokenPipeError when targeting
+      # EU multi-region datasets — z3z1ma issue. batch_job_load is slower
+      # (writes JSON to GCS then loads) but rock-solid and works across
+      # any BQ region. Acceptable tradeoff for reliable demo + production.
       config:
-        method: storage_write_api
+        method: batch_job_load
         denormalized: true
         upsert: true

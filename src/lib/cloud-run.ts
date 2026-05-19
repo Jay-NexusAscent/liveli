@@ -30,7 +30,18 @@ export interface JobEnv {
 
 /**
  * Trigger a Cloud Run Job execution with per-invocation env overrides.
- * Returns the execution resource name (used to poll status later).
+ * Returns the EXECUTION resource name (not the LRO operation name).
+ *
+ * Subtle pitfall: client.runJob() returns a long-running operation
+ * (LRO). `operation.name` is the LRO name (".../operations/<id>"),
+ * NOT the execution name. The execution is reachable via the LRO's
+ * metadata.name which is ".../jobs/<job>/executions/<exec>" — that's
+ * what getExecutionStatus() expects.
+ *
+ * Prior bug: we stored operation.name as lastExecutionName. Subsequent
+ * getExecutionStatus() calls 400'd ("invalid resource name"), the
+ * reconcile catch fired, and the connector got incorrectly marked
+ * "synced" while the underlying job had crashed.
  */
 export async function runConnectorJob(
   jobName: string,
@@ -50,7 +61,20 @@ export async function runConnectorJob(
     },
   });
 
-  return { executionName: operation.name ?? "" };
+  // The LRO's metadata is the partially-populated Execution resource.
+  // Its `name` field is the canonical execution resource name we want.
+  const metadata = operation.metadata as { name?: string } | undefined;
+  const executionName = metadata?.name ?? "";
+
+  if (!executionName) {
+    // Defensive — should never happen, but fail loud rather than store
+    // an empty string that breaks reconcile downstream.
+    throw new Error(
+      `runJob returned an LRO with no execution metadata.name. operation.name=${operation.name}`
+    );
+  }
+
+  return { executionName };
 }
 
 /**

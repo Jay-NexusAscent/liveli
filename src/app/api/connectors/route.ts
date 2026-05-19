@@ -66,14 +66,32 @@ async function reconcileStatus(
   let exec;
   try {
     exec = await getExecutionStatus(data.lastExecutionName);
-  } catch {
-    // Execution gone (Cloud Run GCs old executions after ~7d).
+  } catch (err) {
+    // ONLY treat actual NOT_FOUND as "execution garbage-collected,
+    // assume it finished". Anything else (bad arg, perm denied, etc.)
+    // must NOT silently mark the connector synced — that's how the
+    // earlier LRO-name-vs-execution-name bug masked a failed sync as
+    // a green "Synced" badge.
+    const code = (err as { code?: number; status?: string })?.code;
+    const status = (err as { code?: number; status?: string })?.status;
+    const isNotFound = code === 5 || code === 404 || status === "NOT_FOUND";
+    if (isNotFound) {
+      const ok = await tryUpdate(col, connectorId, {
+        status: "synced",
+        lastError: FieldValue.delete(),
+      });
+      if (!ok) return null;
+      return { ...data, status: "synced", lastError: undefined };
+    }
+    // Any other error: surface it in the UI as an error status with a
+    // diagnostic message rather than silently lying about success.
+    const msg = err instanceof Error ? err.message : String(err);
     const ok = await tryUpdate(col, connectorId, {
-      status: "synced",
-      lastError: FieldValue.delete(),
+      status: "error",
+      lastError: `Sync status check failed: ${msg}`,
     });
     if (!ok) return null;
-    return { ...data, status: "synced", lastError: undefined };
+    return { ...data, status: "error", lastError: `Sync status check failed: ${msg}` };
   }
 
   if (!exec.completionTime) return data;

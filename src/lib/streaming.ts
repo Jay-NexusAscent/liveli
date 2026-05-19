@@ -39,16 +39,34 @@ export function streamResponse(
         await producer(push);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        const name = err instanceof Error ? err.name : typeof err;
         // Surface the full error to Vercel runtime logs — without this,
         // a Vertex / Firestore / BigQuery failure inside the stream
         // shows up as a silent "thinking… forever" on the client and
         // there's no way to diagnose it after the fact.
+        // Walk the error properties so non-Error throwables (e.g.
+        // GoogleAuthError wrappers) surface their actual cause too.
+        const props: Record<string, unknown> = {};
+        if (err && typeof err === "object") {
+          for (const key of Object.getOwnPropertyNames(err)) {
+            try {
+              const v = (err as Record<string, unknown>)[key];
+              if (typeof v !== "function") props[key] = v;
+            } catch {
+              /* unreadable */
+            }
+          }
+        }
         console.error("[chat-stream] producer threw", {
           message,
-          name: err instanceof Error ? err.name : typeof err,
+          name,
           stack: err instanceof Error ? err.stack : undefined,
+          props,
         });
-        push({ type: "error", error: message });
+        // Send a richer error event to the client so the UI shows
+        // ${name}: ${message}, not just message — helps distinguish
+        // a SyntaxError (auth/HTML response) from a SafetyError, etc.
+        push({ type: "error", error: `${name}: ${message}` });
       } finally {
         push({ type: "done" });
         controller.close();
