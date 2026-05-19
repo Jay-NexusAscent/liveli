@@ -75,7 +75,20 @@ locals {
     #   disconnect — both covered by admin.
     # Narrow to a custom role with exactly the perms we need post-demo.
     "roles/run.admin",
+    # Cloud Scheduler: create/update/delete per-connector recurring jobs.
+    # The runtime creates these on connector connect, removes them on
+    # delete, updates the cron on frequency change. (LIVELI-50)
+    "roles/cloudscheduler.admin",
   ]
+}
+
+# Cloud Scheduler signs OIDC tokens AS the runtime SA. For that to work
+# the SA needs token-creator on itself (Google's IAM convention for
+# self-impersonation when minting an OIDC token under its own identity).
+resource "google_service_account_iam_member" "runtime_token_creator_self" {
+  service_account_id = google_service_account.runtime.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${google_service_account.runtime.email}"
 }
 
 resource "google_project_iam_member" "runtime" {

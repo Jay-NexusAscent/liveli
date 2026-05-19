@@ -4,6 +4,7 @@ import { requireWorkspaceContext, UnauthorizedError } from "@/lib/clients";
 import { connectorsIn, dbReady } from "@/lib/firestore";
 import { storeConnectorSecret } from "@/lib/secret-manager";
 import { logUsageEvent } from "@/lib/usage";
+import { upsertSyncJob } from "@/lib/cloud-scheduler";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -115,6 +116,16 @@ export async function PATCH(
   }
 
   await ref.update(patch);
+
+  // If syncFrequency changed, push the new cron to Cloud Scheduler.
+  if (body.syncFrequency !== undefined) {
+    await upsertSyncJob({
+      clientId: ctx.clientId,
+      workspaceId: ctx.workspaceId,
+      connectorId,
+      syncFrequency: body.syncFrequency,
+    });
+  }
 
   logUsageEvent({
     clientId: ctx.clientId,

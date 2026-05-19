@@ -1,13 +1,14 @@
 locals {
   enabled_services = [
-    "aiplatform.googleapis.com",       # Vertex AI (Claude)
+    "aiplatform.googleapis.com",       # Vertex AI (Gemini)
     "artifactregistry.googleapis.com", # Docker repo for connector images
     "bigquery.googleapis.com",
     "cloudbuild.googleapis.com", # Builds connector images
     "cloudresourcemanager.googleapis.com",
+    "cloudscheduler.googleapis.com", # Per-connector recurring sync triggers
     "firestore.googleapis.com",
     "iam.googleapis.com",
-    "iamcredentials.googleapis.com", # WIF
+    "iamcredentials.googleapis.com", # WIF + OIDC token mint for Scheduler
     "logging.googleapis.com",
     "monitoring.googleapis.com",
     "run.googleapis.com", # Cloud Run + Jobs

@@ -4,6 +4,7 @@ import { getExecutionStatus } from "@/lib/cloud-run";
 import { deleteConnectorSecret } from "@/lib/secret-manager";
 import { bqReady } from "@/lib/bigquery";
 import { logUsageEvent } from "@/lib/usage";
+import { deleteSyncJob } from "@/lib/cloud-scheduler";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -90,6 +91,12 @@ export async function DELETE(
       return Response.json({ error: "Connector not found" }, { status: 404 });
     }
     const data = snap.data() as { type?: string; bqDataset?: string };
+
+    // Stop scheduled syncs FIRST so Cloud Scheduler can't fire a sync
+    // mid-teardown (it would attempt to read deleted creds + 404 the
+    // connector doc, mostly harmless but noisy).
+    step.current = "delete Cloud Scheduler job";
+    await deleteSyncJob(ctx.clientId, connectorId);
 
     step.current = "delete Secret Manager secret";
     await deleteConnectorSecret(ctx.clientId, connectorId);

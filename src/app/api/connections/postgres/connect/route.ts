@@ -10,6 +10,7 @@ import {
 } from "@/lib/bigquery";
 import { gcp } from "@/lib/gcp";
 import { logUsageEvent } from "@/lib/usage";
+import { upsertSyncJob } from "@/lib/cloud-scheduler";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -109,6 +110,17 @@ export async function POST(req: Request) {
       bqProject: gcp.projectId,
       bqDataset: datasetId,
       bqLocation,
+    });
+
+    // Wire the recurring Scheduler job for this connector. Failures
+    // here are logged but never block the connector save — manual
+    // "Sync now" still works without the scheduled trigger.
+    step.current = "upsertSyncJob (Cloud Scheduler)";
+    await upsertSyncJob({
+      clientId: ctx.clientId,
+      workspaceId: ctx.workspaceId,
+      connectorId,
+      syncFrequency: body.syncFrequency,
     });
 
     logUsageEvent({
