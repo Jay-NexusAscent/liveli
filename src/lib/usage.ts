@@ -67,18 +67,63 @@ export function logUsageEvent(event: UsageEventBase & Partial<UsageEventRow>): v
   };
   // Fire-and-forget. Never block user requests on logging.
   insert(row).catch((err) => {
+    // BigQuery streaming-insert failures arrive as PartialFailureError
+    // with err.errors[] containing per-row reasons. The raw `err.message`
+    // just says "An API error has occurred" — useless without the inner
+    // detail. Walk own properties to capture the full failure shape.
+    const props: Record<string, unknown> = {};
+    if (err && typeof err === "object") {
+      for (const key of Object.getOwnPropertyNames(err)) {
+        try {
+          const v = (err as Record<string, unknown>)[key];
+          if (typeof v !== "function") props[key] = v;
+        } catch {
+          /* unreadable */
+        }
+      }
+    }
     // eslint-disable-next-line no-console
     console.error("[usage] insert failed", {
       eventType: row.eventType,
       clientId: row.clientId,
-      err: err instanceof Error ? err.message : String(err),
+      message: err instanceof Error ? err.message : String(err),
+      name: err instanceof Error ? err.name : typeof err,
+      props,
     });
   });
 }
 
 async function insert(row: UsageEventRow): Promise<void> {
   const bq = await bqReady();
-  await bq.dataset(INTERNAL_DATASET).table(EVENTS_TABLE).insert([row]);
+
+  // Massage the row before streaming insert:
+  //  1. JSON columns need a serialized string, NOT a JS object. The
+  //     Node SDK auto-handles STRUCT/RECORD but NOT JSON. Without this
+  //     the insert fails with "Could not parse '[object Object]' as
+  //     valid JSON for field labels".
+  //  2. Drop undefined fields — BQ schemas accept missing keys but
+  //     can reject `undefined` (it serialises to literal "null" in
+  //     odd ways depending on the SDK version).
+  const cleaned: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (value === undefined) continue;
+    if (key === "labels" && value !== null) {
+      cleaned[key] = typeof value === "string" ? value : JSON.stringify(value);
+    } else {
+      cleaned[key] = value;
+    }
+  }
+
+  await bq
+    .dataset(INTERNAL_DATASET)
+    .table(EVENTS_TABLE)
+    .insert([cleaned], {
+      // Defensive: if we add a new field but the table hasn't been
+      // migrated yet, skip-the-row-and-log rather than fail the call.
+      ignoreUnknownValues: true,
+      // Same goes for nullable mismatches.
+      skipInvalidRows: false,
+    });
 }
 
 // ── Typed helpers — preferred call sites ───────────────────────────
