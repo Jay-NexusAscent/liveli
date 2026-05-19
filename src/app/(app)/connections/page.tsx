@@ -14,6 +14,32 @@ interface ConnectorRecord {
   tables?: string[];
   lastError?: string;
   syncFrequency?: "5m" | "15m" | "30m" | "1h" | "6h" | "12h" | "24h";
+  /** Firestore Timestamp shape: { _seconds, _nanoseconds } when serialized. */
+  lastSyncFinishedAt?: { _seconds: number; _nanoseconds?: number };
+}
+
+/** Render a Firestore timestamp as a human "x minutes ago" string. */
+function formatLastSynced(
+  ts: ConnectorRecord["lastSyncFinishedAt"]
+): string {
+  if (!ts || typeof ts._seconds !== "number") return "Never";
+  const ms = ts._seconds * 1000;
+  const diff = Date.now() - ms;
+  if (diff < 0) return "Just now";
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  if (d < 7) return `${d}d ago`;
+  // Older than a week — show the date instead of "23d ago".
+  return new Date(ms).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 const SYNC_FREQUENCY_LABELS: Record<NonNullable<ConnectorRecord["syncFrequency"]>, string> = {
@@ -154,6 +180,10 @@ export default function ConnectionsPage() {
                           <span>syncs {SYNC_FREQUENCY_LABELS[c.syncFrequency]}</span>
                         </>
                       )}
+                      <span className="text-text-tertiary">·</span>
+                      <span title={c.lastSyncFinishedAt ? new Date(c.lastSyncFinishedAt._seconds * 1000).toLocaleString() : "Never synced"}>
+                        last sync: {formatLastSynced(c.lastSyncFinishedAt)}
+                      </span>
                     </div>
                     {c.lastError && (
                       <div className="mt-2 line-clamp-2 text-[11px] text-[color:var(--status-error)]">
