@@ -1,6 +1,8 @@
 import { Webhook } from "svix";
+import { clerkClient } from "@clerk/nextjs/server";
 import { ensureClient } from "@/lib/clients";
 import { dbReady, userDoc } from "@/lib/firestore";
+import { isEmailAllowed } from "@/lib/access-control";
 import { FieldValue } from "@google-cloud/firestore";
 
 export const runtime = "nodejs";
@@ -139,15 +141,43 @@ async function handleOrgCreated(event: ClerkOrgCreatedEvent): Promise<void> {
  * Mirror Clerk user metadata into Firestore. We don't store passwords
  * or auth state — Clerk owns that. We just keep email + name for joins
  * and for usage_events.userId lookups.
+ *
+ * Email allowlist enforcement: if the user's email isn't on the
+ * LIVELI_ALLOWED_EMAILS env var (private testing mode), we delete
+ * the freshly-created Clerk user immediately. This is the secondary
+ * defense — the primary defense is Clerk Dashboard's "Allowed email
+ * addresses" restriction, which blocks at the sign-up form.
  */
 async function handleUserCreated(event: ClerkUserCreatedEvent): Promise<void> {
-  await dbReady();
   const primary = event.data.email_addresses.find(
     (e) => e.id === event.data.primary_email_address_id
   );
+  const email =
+    primary?.email_address ?? event.data.email_addresses[0]?.email_address;
+
+  if (!isEmailAllowed(email)) {
+    // Outside the allowlist — purge the user so they can't access anything.
+    console.warn("[clerk-webhook] purging user outside allowlist", {
+      userId: event.data.id,
+      email,
+    });
+    try {
+      const cc = await clerkClient();
+      await cc.users.deleteUser(event.data.id);
+    } catch (err) {
+      console.error("[clerk-webhook] failed to purge user", {
+        userId: event.data.id,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+    // Don't mirror to Firestore — the user shouldn't exist on our side.
+    return;
+  }
+
+  await dbReady();
   await userDoc(event.data.id).set(
     {
-      email: primary?.email_address ?? event.data.email_addresses[0]?.email_address,
+      email,
       firstName: event.data.first_name,
       lastName: event.data.last_name,
       createdAt: FieldValue.serverTimestamp(),
