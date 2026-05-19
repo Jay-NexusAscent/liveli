@@ -54,10 +54,19 @@ interface ClerkOrgDeletedEvent {
   };
 }
 
+interface ClerkUserDeletedEvent {
+  type: "user.deleted";
+  data: {
+    id: string;
+    deleted: boolean;
+  };
+}
+
 type ClerkEvent =
   | ClerkOrgCreatedEvent
   | ClerkUserCreatedEvent
   | ClerkOrgDeletedEvent
+  | ClerkUserDeletedEvent
   | { type: string; data: Record<string, unknown> };
 
 export async function POST(req: Request) {
@@ -100,6 +109,9 @@ export async function POST(req: Request) {
         break;
       case "organization.deleted":
         await handleOrgDeleted(event as ClerkOrgDeletedEvent);
+        break;
+      case "user.deleted":
+        await handleUserDeleted(event as ClerkUserDeletedEvent);
         break;
       default:
         // We don't subscribe to other events but Clerk may send some
@@ -199,4 +211,24 @@ async function handleOrgDeleted(event: ClerkOrgDeletedEvent): Promise<void> {
   // every webhook invocation when other events fire.
   const { deleteClient } = await import("@/lib/clients");
   await deleteClient(event.data.id, { reason: "clerk:organization.deleted" });
+}
+
+/**
+ * On Clerk User delete, remove our users/{userId} mirror doc. The
+ * organization.deleted webhook handles wiping the actual workspace
+ * data — this is just cleanup of the auth-mirror record.
+ */
+async function handleUserDeleted(event: ClerkUserDeletedEvent): Promise<void> {
+  await dbReady();
+  try {
+    await userDoc(event.data.id).delete();
+    console.log("[clerk-webhook] deleted user mirror", { userId: event.data.id });
+  } catch (err) {
+    // .delete() is idempotent on Firestore (no-op if doc doesn't exist),
+    // so any throw here is unexpected — log loud.
+    console.error("[clerk-webhook] failed to delete user mirror", {
+      userId: event.data.id,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
 }

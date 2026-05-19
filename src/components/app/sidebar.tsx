@@ -11,6 +11,7 @@ import {
   DashboardIcon,
   HamburgerIcon,
   CloseIcon,
+  SettingsIcon,
 } from "@/components/icons";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { cn } from "@/lib/utils";
@@ -19,6 +20,7 @@ const navItems = [
   { label: "Chat", href: "/chat", icon: ChatIcon },
   { label: "Connections", href: "/connections", icon: ConnectIcon },
   { label: "Dashboards", href: "/dashboards", icon: DashboardIcon },
+  { label: "Settings", href: "/settings", icon: SettingsIcon },
 ];
 
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {

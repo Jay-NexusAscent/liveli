@@ -128,3 +128,12 @@ export function SparkleIcon({ className }: IconProps) {
     </svg>
   );
 }
+
+export function SettingsIcon({ className }: IconProps) {
+  return (
+    <svg className={className} width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="10" cy="10" r="2.5" />
+      <path d="M10 1.5v2.5M10 16v2.5M3.5 10H1M19 10h-2.5M5.4 5.4L3.6 3.6M16.4 16.4l-1.8-1.8M5.4 14.6l-1.8 1.8M16.4 3.6l-1.8 1.8" />
+    </svg>
+  );
+}

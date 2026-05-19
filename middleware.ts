@@ -27,6 +27,7 @@ const isAppRoute = createRouteMatcher([
   "/chat(.*)",
   "/connections(.*)",
   "/dashboards(.*)",
+  "/settings(.*)",
 ]);
 
 const isPublicAuthRoute = createRouteMatcher([

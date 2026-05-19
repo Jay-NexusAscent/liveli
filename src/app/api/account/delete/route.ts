@@ -7,36 +7,41 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const Body = z.object({
+  /** Type the user's email exactly to confirm intent. */
+  confirmEmail: z.string().min(1),
   /**
-   * Confirmation string. The user has to type their Clerk org name
-   * exactly. Anything else rejects.
+   * If true (default), data wipe is IMMEDIATE — Liveli data + Clerk org +
+   * Clerk user are all torn down right now. Useful while we're pre-launch
+   * and don't need the 30-day grace period.
+   *
+   * The grace-period flow (LIVELI-75) will introduce mode: "scheduled"
+   * which schedules deletion for now+30d and pauses syncs in the meantime.
    */
-  confirmName: z.string().min(1),
+  mode: z.enum(["immediate", "scheduled"]).default("immediate"),
 });
 
 /**
- * Permanently delete the current Client and all of its data.
+ * Delete the customer's account and ALL their data.
  *
- * Flow:
- *   1. Require auth + active org (the Clerk org context).
- *   2. Load the Client doc to compare confirmName against the stored
- *      name — prevents accidental deletes via copy-paste of a wrong
- *      curl.
- *   3. deleteClient() — drops BQ datasets, Secret Manager secrets,
- *      Firestore connector/chat/chart/dashboard docs, workspace docs,
- *      then the Client doc. A snapshot lands in billing_history first.
- *   4. Delete the Clerk Organization via Clerk Backend API. The org's
- *      deletion fires our /api/webhooks/clerk handler which calls
- *      deleteClient again (idempotent — no-ops since we already wiped).
+ * "immediate" mode (current behaviour):
+ *   1. Authenticate the user + their active org.
+ *   2. Match confirmEmail against the user's Clerk primary email.
+ *   3. deleteClient() — wipes Firestore + BQ + Secret Manager, snapshots
+ *      billing history.
+ *   4. Delete the Clerk Organization (fires our org.deleted webhook —
+ *      idempotent, no-ops since the Firestore client doc is gone).
+ *   5. Delete the Clerk User (fires our user.deleted webhook which
+ *      cleans the users/{userId} mirror doc).
  *
- * After this returns, the user is in an "orgless" Clerk state. The
- * frontend should redirect them to /sign-in (which auto-creates a new
- * personal workspace if they sign back in, or they can join another
- * org they're a member of).
+ * After step 5 the user is fully logged out. Frontend should redirect
+ * to the marketing landing page.
+ *
+ * "scheduled" mode (TODO LIVELI-75): mark for deletion, pause syncs,
+ * email customer, sign them out — daily cron purges after 30 days.
  */
 export async function POST(req: Request) {
   const { userId, orgId } = await auth();
-  if (!userId || !orgId) {
+  if (!userId) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
 
@@ -50,55 +55,83 @@ export async function POST(req: Request) {
     );
   }
 
-  await dbReady();
-  const snap = await clientDoc(orgId).get();
-  if (!snap.exists) {
-    return Response.json({ error: "Client not found" }, { status: 404 });
-  }
-  const data = snap.data() as { name?: string };
-  const expectedName = data.name ?? "";
+  // Verify confirmEmail matches the user's primary email — primary
+  // defense against accidental deletes via a stale tab or curl.
+  const cc = await clerkClient();
+  const clerkUser = await cc.users.getUser(userId);
+  const primaryEmail = clerkUser.emailAddresses.find(
+    (e) => e.id === clerkUser.primaryEmailAddressId
+  )?.emailAddress;
 
-  // Constant-time-ish comparison. The string is non-secret but the
-  // confirmation pattern still benefits from explicit equality.
-  if (body.confirmName.trim() !== expectedName.trim()) {
+  if (!primaryEmail) {
+    return Response.json({ error: "No primary email on account" }, { status: 400 });
+  }
+  if (body.confirmEmail.trim().toLowerCase() !== primaryEmail.toLowerCase()) {
     return Response.json(
-      {
-        error: "Confirmation name mismatch. Type the workspace name exactly.",
-        expected: expectedName,
-      },
+      { error: "Confirmation email doesn't match the email on your account." },
       { status: 400 }
     );
   }
 
-  // ── Step 1+2: wipe our side ──────────────────────────────────────
-  await deleteClient(orgId, {
-    reason: "user-initiated",
-    deletedBy: userId,
-  });
+  if (body.mode === "scheduled") {
+    // Placeholder for the grace-period flow. Not yet implemented —
+    // see LIVELI-75. Reject so callers know it's not available.
+    return Response.json(
+      {
+        error:
+          "Scheduled deletion (30-day grace period) is not yet available. Use mode: 'immediate' or wait for the grace-period feature.",
+      },
+      { status: 501 }
+    );
+  }
 
-  // ── Step 3: delete the Clerk Org ─────────────────────────────────
-  // Clerk fires organization.deleted back to our webhook, which calls
-  // deleteClient again — idempotent no-op since the doc is gone.
+  // ── Immediate teardown ───────────────────────────────────────────
+  await dbReady();
+
+  // Wipe Liveli data for the active org (if any). User may not have an
+  // org if they already deleted their workspace and are now deleting
+  // their account — that's fine, just skip.
+  if (orgId) {
+    const snap = await clientDoc(orgId).get();
+    if (snap.exists) {
+      await deleteClient(orgId, {
+        reason: "user-initiated:account-delete",
+        deletedBy: userId,
+      });
+    }
+  }
+
+  // Delete the Clerk Organization (if any).
+  if (orgId) {
+    try {
+      await cc.organizations.deleteOrganization(orgId);
+    } catch (err) {
+      console.error("[account.delete] Clerk org delete failed", {
+        orgId,
+        err: err instanceof Error ? err.message : String(err),
+      });
+      // Continue — we still want to delete the user.
+    }
+  }
+
+  // Delete the Clerk User — fires user.deleted webhook which cleans
+  // up our users/{userId} mirror doc.
   try {
-    const cc = await clerkClient();
-    await cc.organizations.deleteOrganization(orgId);
+    await cc.users.deleteUser(userId);
   } catch (err) {
-    // Clerk delete failed but our data is already gone. Surface but
-    // don't undo — there's nothing to undo. User can retry the Clerk
-    // delete manually or via support.
-    console.error("[account.delete] Clerk org delete failed", {
-      orgId,
+    console.error("[account.delete] Clerk user delete failed", {
+      userId,
       err: err instanceof Error ? err.message : String(err),
     });
     return Response.json(
       {
-        ok: true,
+        ok: false,
         warning:
-          "Workspace data deleted, but Clerk organization could not be removed. Contact support.",
+          "Workspace data deleted, but your account couldn't be removed. Contact support to finish closing the account.",
       },
       { status: 200 }
     );
   }
 
-  return Response.json({ ok: true, deleted: orgId });
+  return Response.json({ ok: true, deleted: { userId, orgId } });
 }
