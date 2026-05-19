@@ -4,19 +4,21 @@ import { dashboardsIn } from "@/lib/firestore";
 import type { ToolDefinition } from "./types";
 
 /**
- * Reuse the same narrow ECharts spec subset as make_chart.
+ * Reuse the same narrow ECharts spec subset as make_chart. Same Gemini
+ * Schema constraints: no z.union(), no z.unknown(). See make-chart.ts
+ * for the rationale.
  */
 const SeriesSchema = z.object({
   name: z.string().optional(),
   type: z.enum(["bar", "line", "pie", "scatter", "area"]),
-  data: z.array(z.unknown()).max(10_000),
+  data: z.array(z.number()).max(10_000),
   smooth: z.boolean().optional(),
   stack: z.string().optional(),
 });
 
 const AxisSchema = z.object({
   type: z.enum(["category", "value", "time", "log"]),
-  data: z.array(z.union([z.string(), z.number()])).max(10_000).optional(),
+  data: z.array(z.string()).max(10_000).optional(),
   name: z.string().optional(),
 });
 
@@ -24,8 +26,8 @@ const EChartsOption = z.object({
   title: z.object({ text: z.string(), subtext: z.string().optional() }).optional(),
   tooltip: z.object({ trigger: z.enum(["axis", "item", "none"]).optional() }).optional(),
   legend: z.object({ data: z.array(z.string()).optional() }).optional(),
-  xAxis: z.union([AxisSchema, z.array(AxisSchema)]).optional(),
-  yAxis: z.union([AxisSchema, z.array(AxisSchema)]).optional(),
+  xAxis: AxisSchema.optional(),
+  yAxis: AxisSchema.optional(),
   series: z.array(SeriesSchema).min(1).max(8),
 });
 

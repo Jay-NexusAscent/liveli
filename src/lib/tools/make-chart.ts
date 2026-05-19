@@ -5,18 +5,23 @@ import type { ToolDefinition } from "./types";
  * Narrow subset of ECharts option that the agent is allowed to emit. Full
  * ECharts API has hundreds of keys — we whitelist the common chart-building
  * subset so the agent can't accidentally crash the browser with a 10MB blob.
+ *
+ * No z.union() / no z.unknown() — Gemini's Schema proto doesn't accept
+ * JSON-Schema-7's `type: [a,b]` array form, and our zod-to-gemini
+ * converter can't resolve $ref. Numeric series, string axis labels,
+ * string grid offsets ("10%" / "auto" / "10"). Single-axis only.
  */
 const SeriesSchema = z.object({
   name: z.string().optional(),
   type: z.enum(["bar", "line", "pie", "scatter", "area"]),
-  data: z.array(z.unknown()).max(10_000),
+  data: z.array(z.number()).max(10_000),
   smooth: z.boolean().optional(),
   stack: z.string().optional(),
 });
 
 const AxisSchema = z.object({
   type: z.enum(["category", "value", "time", "log"]),
-  data: z.array(z.union([z.string(), z.number()])).max(10_000).optional(),
+  data: z.array(z.string()).max(10_000).optional(),
   name: z.string().optional(),
 });
 
@@ -26,20 +31,20 @@ const EChartsOption = z.object({
   legend: z
     .object({
       data: z.array(z.string()).optional(),
-      bottom: z.union([z.number(), z.string()]).optional(),
+      bottom: z.string().optional(),
     })
     .optional(),
   grid: z
     .object({
-      left: z.union([z.string(), z.number()]).optional(),
-      right: z.union([z.string(), z.number()]).optional(),
-      top: z.union([z.string(), z.number()]).optional(),
-      bottom: z.union([z.string(), z.number()]).optional(),
+      left: z.string().optional(),
+      right: z.string().optional(),
+      top: z.string().optional(),
+      bottom: z.string().optional(),
       containLabel: z.boolean().optional(),
     })
     .optional(),
-  xAxis: z.union([AxisSchema, z.array(AxisSchema)]).optional(),
-  yAxis: z.union([AxisSchema, z.array(AxisSchema)]).optional(),
+  xAxis: AxisSchema.optional(),
+  yAxis: AxisSchema.optional(),
   series: z.array(SeriesSchema).min(1).max(8),
 });
 

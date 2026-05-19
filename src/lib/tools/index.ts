@@ -18,14 +18,21 @@ export const tools: ToolDefinition[] = [
 const byName = new Map(tools.map((t) => [t.name, t]));
 
 /**
- * Convert JSON-Schema-7 (which zodToJsonSchema emits) into Gemini's
- * FunctionDeclaration parameter schema. The shape is JSON-Schema-like
- * but Gemini wants UPPERCASE type names ("OBJECT", "STRING") and a
- * limited subset of features (no $ref, no oneOf in most fields).
+ * Convert JSON-Schema-7 (zodToJsonSchema output) into Gemini's
+ * FunctionDeclaration parameter schema. Gemini wants UPPERCASE type
+ * names ("OBJECT", "STRING") and a STRICT subset of features:
  *
- * Strategy: rename `type` fields recursively, drop the $schema/title
- * meta keys, leave the rest. Works for our tool specs because they're
- * shallow object-with-primitive-properties shapes.
+ * Rejected / not supported by Gemini's Schema proto:
+ *   - $schema, $ref, additionalProperties (JSON-Schema metadata)
+ *   - title (JSON-Schema meta; Gemini's title is different)
+ *   - type: [a, b]  → Gemini wants a single Type enum value
+ *
+ * Strategy:
+ *   - Drop metadata keys.
+ *   - Uppercase `type` strings.
+ *   - For `type: [a, b]`, pick the first non-"null" entry and warn.
+ *     (Source schemas should avoid this — see make-chart.ts comment.)
+ *   - Recurse into nested objects and arrays.
  */
 function jsonSchemaToGemini(schema: unknown): Record<string, unknown> {
   if (schema === null || typeof schema !== "object") {
@@ -34,9 +41,23 @@ function jsonSchemaToGemini(schema: unknown): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(schema as Record<string, unknown>)) {
     if (k === "$schema" || k === "$ref" || k === "title" || k === "additionalProperties") continue;
-    if (k === "type" && typeof v === "string") {
-      out[k] = v.toUpperCase();
-    } else if (Array.isArray(v)) {
+    if (k === "type") {
+      if (typeof v === "string") {
+        out[k] = v.toUpperCase();
+      } else if (Array.isArray(v)) {
+        const picked = (v as unknown[]).find(
+          (t) => typeof t === "string" && t !== "null"
+        );
+        if (typeof picked === "string") {
+          out[k] = picked.toUpperCase();
+        }
+        console.warn(
+          `[geminiFunctionDeclarations] union type ${JSON.stringify(v)} collapsed to '${out[k] ?? "<dropped>"}' — Gemini Schema requires a single Type. Avoid z.union() in tool input schemas.`
+        );
+      }
+      continue;
+    }
+    if (Array.isArray(v)) {
       out[k] = v.map((item) =>
         typeof item === "object" && item !== null ? jsonSchemaToGemini(item) : item
       );
@@ -49,10 +70,21 @@ function jsonSchemaToGemini(schema: unknown): Record<string, unknown> {
   return out;
 }
 
-/** Gemini tool spec — { name, description, parameters }. */
+/**
+ * Gemini tool spec — { name, description, parameters }.
+ *
+ * `$refStrategy: "none"` forces zodToJsonSchema to fully inline every
+ * subschema. The default ("root") dedupes by emitting $ref pointers
+ * (e.g. yAxis → "$ref":"#/properties/.../xAxis" when both reuse the
+ * same Zod schema), and Gemini's Schema proto can't resolve $ref. The
+ * resulting schema is slightly larger but valid.
+ */
 export function geminiFunctionDeclarations(): FunctionDeclaration[] {
   return tools.map((t) => {
-    const schema = zodToJsonSchema(t.inputSchema, { target: "jsonSchema7" });
+    const schema = zodToJsonSchema(t.inputSchema, {
+      target: "jsonSchema7",
+      $refStrategy: "none",
+    });
     return {
       name: t.name,
       description: t.description,
