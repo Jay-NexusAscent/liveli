@@ -22,7 +22,10 @@ async function execsClient(): Promise<ExecutionsClient> {
   return _execs;
 }
 
-const CLOUD_RUN_REGION = "europe-west4"; // Where the connector jobs live
+// Region the connector Cloud Run Jobs live in. Override via GCP_REGION
+// (default europe-west4) — must match the region the deploy-connectors
+// workflow pushes images to.
+const CLOUD_RUN_REGION = process.env.GCP_REGION ?? "europe-west4";
 
 export interface JobEnv {
   [key: string]: string;

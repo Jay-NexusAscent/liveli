@@ -55,7 +55,24 @@ Issue prefix is **`LIVELI`** (Liveli team in Linear). Commits and PR titles must
 
 ## Stage of build
 
-This is an early scaffold. Wired so far: marketing landing, auth pages, app shell with 3 placeholder tabs, middleware, design system. Pending: Clerk Organizations onboarding, Firestore client, BigQuery client, Vertex AI agent wiring, Meltano Cloud Run Job, dashboards persistence, Terraform.
+Past the scaffold stage. Currently in private testing with the email allowlist on (LIVELI_ALLOWED_EMAILS env var). Major chunks shipped:
+
+- **Marketing**: landing + 5-tier pricing section (LIVELI-69 tracks removing the allowlist for public launch)
+- **Auth**: Clerk Organizations with eager provisioning via webhook + delete-account flow with billing-history preservation (LIVELI-75 tracks the 30-day soft-delete grace period)
+- **Multi-tenancy**: Client → Workspace → Connector hierarchy in Firestore. Dataset-per-connector in BigQuery, naming `c_<C>__w_<W>__d_<conn>`
+- **Connectors**: Postgres end-to-end (connect wizard, sync trigger, edit modal, status reconcile, customer-facing error messages, Cloud Scheduler recurring syncs via OIDC-authed HTTP target). 8 other connector wizards added by the connector chat (mysql, stripe, shopify, hubspot, google-ads, facebook-ads, salesforce, mailchimp); image building tracked separately. 50-source catalogue with search + category filter on the Connections page.
+- **Agent**: Gemini 2.5 Flash via Vertex AI with function calling (list_tables, run_sql, make_chart, make_dashboard). Streaming SSE to client. Token usage logged to `liveli_internal.usage_events`.
+- **Usage tracking**: append-only `usage_events` table + GBP cost estimates per Vertex/BQ/Cloud Run call.
+- **Infra**: Terraform-managed APIs, Firestore, BigQuery (workspace + internal datasets), Cloud Run Jobs (per connector type, shared), Cloud Scheduler, Secret Manager, WIF for Vercel + GH Actions.
+
+Pending (Phase 2 / launch blockers, tracked in Linear):
+- Per-client SA + impersonation chain (LIVELI-?)
+- Per-customer Cloud Run Jobs as a tier upgrade
+- Region selection at workspace creation (LIVELI-46) — agent region MUST be derived from workspace.bqLocation, NOT a global env var
+- Soft-delete with 30-day grace (LIVELI-75)
+- Remove email allowlist (LIVELI-69)
+- Production Clerk instance switch (LIVELI-72)
+- DNS for app.liveli.co.uk + www.liveli.co.uk (LIVELI-21 partial)
 
 ## Env
 

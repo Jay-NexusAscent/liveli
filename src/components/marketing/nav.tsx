@@ -18,37 +18,54 @@ export function MarketingNav() {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
+  const navLinks = [
+    { href: "/#features", label: "Features" },
+    { href: "/#how-it-works", label: "How it works" },
+    { href: "/#pricing", label: "Pricing" },
+  ];
+
   return (
     <nav
       className={cn(
-        "fixed inset-x-0 top-0 z-40 transition-all duration-200",
+        "fixed inset-x-0 top-0 z-40 transition-all duration-300",
         scrolled
-          ? "border-b border-border-subtle bg-background/80 backdrop-blur-md"
-          : "bg-transparent"
+          ? "border-b border-border-subtle bg-background/70 backdrop-blur-xl"
+          : "border-b border-transparent bg-transparent"
       )}
     >
-      <div className="container-page flex h-16 items-center justify-between">
-        <Link href="/" className="flex items-center gap-2.5 text-text-primary">
+      <div
+        className={cn(
+          "flex items-center px-6 transition-[height] duration-300 lg:px-10",
+          scrolled ? "h-14" : "h-16"
+        )}
+      >
+        {/* Left cluster — logo + nav links */}
+        <Link
+          href="/"
+          className="flex items-center gap-2.5 text-text-primary"
+          aria-label="Liveli home"
+        >
           <EcgLogo className="text-accent" size={28} />
-          <span className="text-[18px] font-semibold tracking-tight font-heading">Liveli</span>
+          <span className="text-[18px] font-semibold tracking-tight font-heading">
+            Liveli
+          </span>
         </Link>
 
-        <div className="hidden items-center gap-8 md:flex">
-          <Link href="/#features" className="relative text-[14px] text-text-secondary transition-colors hover:text-text-primary group">
-            Features
-            <span className="absolute -bottom-1 left-0 h-px w-0 bg-accent transition-all duration-300 group-hover:w-full" />
-          </Link>
-          <Link href="/#how-it-works" className="relative text-[14px] text-text-secondary transition-colors hover:text-text-primary group">
-            How it works
-            <span className="absolute -bottom-1 left-0 h-px w-0 bg-accent transition-all duration-300 group-hover:w-full" />
-          </Link>
-          <Link href="/#pricing" className="relative text-[14px] text-text-secondary transition-colors hover:text-text-primary group">
-            Pricing
-            <span className="absolute -bottom-1 left-0 h-px w-0 bg-accent transition-all duration-300 group-hover:w-full" />
-          </Link>
+        <div className="ml-10 hidden items-center gap-7 md:flex">
+          {navLinks.map((l) => (
+            <Link
+              key={l.href}
+              href={l.href}
+              className="group relative text-[14px] text-text-secondary transition-colors hover:text-text-primary"
+            >
+              {l.label}
+              <span className="absolute -bottom-1 left-0 h-px w-0 bg-accent transition-all duration-300 group-hover:w-full" />
+            </Link>
+          ))}
         </div>
 
-        <div className="flex items-center gap-2 sm:gap-3">
+        {/* Right cluster — pushed to the far right via ml-auto */}
+        <div className="ml-auto flex items-center gap-2 sm:gap-3">
           <ThemeToggle />
           <Link
             href="/sign-in"

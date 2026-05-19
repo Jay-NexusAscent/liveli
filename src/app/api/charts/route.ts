@@ -1,7 +1,7 @@
-import { auth } from "@clerk/nextjs/server";
 import { FieldValue } from "@google-cloud/firestore";
 import { z } from "zod";
-import { dbReady, charts } from "@/lib/firestore";
+import { requireWorkspaceContext, UnauthorizedError } from "@/lib/clients";
+import { dbReady, chartsIn } from "@/lib/firestore";
 
 export const runtime = "nodejs";
 
@@ -12,29 +12,44 @@ const SaveBody = z.object({
 });
 
 export async function GET() {
-  const { userId, orgId } = await auth();
-  if (!userId || !orgId) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  let ctx;
+  try {
+    ctx = await requireWorkspaceContext();
+  } catch (err) {
+    if (err instanceof UnauthorizedError) {
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    throw err;
   }
+
   await dbReady();
-  const snap = await charts(orgId).orderBy("createdAt", "desc").limit(100).get();
+  const snap = await chartsIn(ctx.clientId, ctx.workspaceId)
+    .orderBy("createdAt", "desc")
+    .limit(100)
+    .get();
   const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
   return Response.json({ items });
 }
 
 export async function POST(req: Request) {
-  const { userId, orgId } = await auth();
-  if (!userId || !orgId) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  let ctx;
+  try {
+    ctx = await requireWorkspaceContext();
+  } catch (err) {
+    if (err instanceof UnauthorizedError) {
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    throw err;
   }
+
   const body = SaveBody.parse(await req.json());
   await dbReady();
-  const doc = charts(orgId).doc();
+  const doc = chartsIn(ctx.clientId, ctx.workspaceId).doc();
   await doc.set({
     title: body.title,
     spec: body.spec,
     chatId: body.chatId ?? null,
-    createdBy: userId,
+    createdBy: ctx.userId,
     createdAt: FieldValue.serverTimestamp(),
   });
   return Response.json({ id: doc.id });

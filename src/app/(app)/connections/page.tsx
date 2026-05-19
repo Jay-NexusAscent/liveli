@@ -20,7 +20,6 @@ interface ConnectorRecord {
   name: string;
   type: string;
   status: string;
-  tables?: string[];
   lastError?: string;
   syncFrequency?: "5m" | "15m" | "30m" | "1h" | "6h" | "12h" | "24h";
   /** Firestore Timestamp shape: { _seconds, _nanoseconds } when serialized. */

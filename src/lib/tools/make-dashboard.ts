@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { FieldValue } from "@google-cloud/firestore";
-import { dashboards } from "@/lib/firestore";
+import { dashboardsIn } from "@/lib/firestore";
 import type { ToolDefinition } from "./types";
 
 /**
@@ -51,7 +51,7 @@ export const makeDashboardTool: ToolDefinition = {
   inputSchema: Input,
   handler: async (raw, ctx) => {
     const { title, description, charts } = Input.parse(raw);
-    const docRef = dashboards(ctx.orgId).doc();
+    const docRef = dashboardsIn(ctx.clientId, ctx.workspaceId).doc();
     await docRef.set({
       title,
       description: description ?? null,

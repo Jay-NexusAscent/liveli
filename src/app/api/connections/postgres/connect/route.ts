@@ -10,7 +10,8 @@ import {
 } from "@/lib/bigquery";
 import { gcp } from "@/lib/gcp";
 import { logUsageEvent } from "@/lib/usage";
-import { upsertSyncJob } from "@/lib/cloud-scheduler";
+import { upsertSyncJob, deleteSyncJob } from "@/lib/cloud-scheduler";
+import { deleteConnectorSecret } from "@/lib/secret-manager";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -48,6 +49,18 @@ export async function POST(req: Request) {
     );
   }
 
+  // Track what we've created so we can undo on partial failure.
+  // Without this, a failure between BQ-dataset-create and Firestore-doc-
+  // write leaves an orphan dataset (and a secret with no record pointing
+  // at it). The compensating delete in the catch block reverses whatever
+  // got created up to the failure point.
+  const created = {
+    bqDataset: null as string | null,
+    secret: null as { connectorId: string } | null,
+    firestoreDoc: null as FirebaseFirestore.DocumentReference | null,
+    schedulerJob: null as { connectorId: string } | null,
+  };
+
   const step = { current: "init" };
   try {
     step.current = "dbReady";
@@ -80,6 +93,7 @@ export async function POST(req: Request) {
         type: "postgres",
       },
     });
+    created.bqDataset = datasetId;
 
     step.current = "storeConnectorSecret";
     const secretRef = await storeConnectorSecret(ctx.clientId, connectorId, {
@@ -91,6 +105,7 @@ export async function POST(req: Request) {
       ssl: body.ssl ? "true" : "false",
       schemas: body.schemas ?? "public",
     });
+    created.secret = { connectorId };
 
     step.current = "firestore connector record";
     await connectorRef.set({
@@ -111,6 +126,7 @@ export async function POST(req: Request) {
       bqDataset: datasetId,
       bqLocation,
     });
+    created.firestoreDoc = connectorRef;
 
     // Wire the recurring Scheduler job for this connector. Failures
     // here are logged but never block the connector save — manual
@@ -122,6 +138,7 @@ export async function POST(req: Request) {
       connectorId,
       syncFrequency: body.syncFrequency,
     });
+    created.schedulerJob = { connectorId };
 
     logUsageEvent({
       clientId: ctx.clientId,
@@ -138,25 +155,121 @@ export async function POST(req: Request) {
       message: "Connector saved. Click Sync to start the first import.",
     });
   } catch (err) {
+    // ── Compensating cleanup (reverse order of creation) ──────────
+    // Best-effort. Any failure here is logged but doesn't prevent
+    // the original error from surfacing. The goal is to leave the
+    // system in the same state as before this request ran.
+    const cleanupErrors: string[] = [];
+
+    if (created.schedulerJob) {
+      try {
+        await deleteSyncJob(ctx.clientId, created.schedulerJob.connectorId);
+      } catch (cleanupErr) {
+        cleanupErrors.push(
+          `scheduler: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`
+        );
+      }
+    }
+
+    if (created.firestoreDoc) {
+      try {
+        await created.firestoreDoc.delete();
+      } catch (cleanupErr) {
+        cleanupErrors.push(
+          `firestore: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`
+        );
+      }
+    }
+
+    if (created.secret) {
+      try {
+        await deleteConnectorSecret(ctx.clientId, created.secret.connectorId);
+      } catch (cleanupErr) {
+        cleanupErrors.push(
+          `secret: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`
+        );
+      }
+    }
+
+    if (created.bqDataset) {
+      try {
+        const bq = await bqReady();
+        await bq.dataset(created.bqDataset).delete({ force: true });
+      } catch (cleanupErr) {
+        const code = (cleanupErr as { code?: number })?.code;
+        if (code !== 404) {
+          cleanupErrors.push(
+            `bq: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`
+          );
+        }
+      }
+    }
+
+    if (cleanupErrors.length > 0) {
+      console.error("[postgres/connect] compensating cleanup had failures", {
+        clientId: ctx.clientId,
+        cleanupErrors,
+      });
+    }
+
+    // Some SDK errors attach the request payload to .config / .request /
+    // ._request — which for storeConnectorSecret means the user's
+    // password could end up serialised into our error envelope. Filter
+    // hard on both keys (anything credential-shaped) AND values (the
+    // password string they just submitted).
+    const SENSITIVE_KEYS = /password|secret|token|credential|api[_-]?key|authorization/i;
+    const userInputSensitiveValues = [body.password].filter(Boolean);
+
+    const sanitise = (val: unknown): unknown => {
+      if (typeof val === "string") {
+        let s = val;
+        for (const sv of userInputSensitiveValues) {
+          if (sv && s.includes(sv)) s = s.split(sv).join("[redacted]");
+        }
+        return s;
+      }
+      return val;
+    };
+
     const props: Record<string, unknown> = {};
     if (err && typeof err === "object") {
       for (const key of Object.getOwnPropertyNames(err)) {
+        if (SENSITIVE_KEYS.test(key)) {
+          props[key] = "[redacted]";
+          continue;
+        }
         try {
           const v = (err as Record<string, unknown>)[key];
-          props[key] = typeof v === "function" ? "[function]" : v;
+          if (typeof v === "function") {
+            props[key] = "[function]";
+          } else if (typeof v === "object" && v !== null) {
+            // Shallow scan — most SDK errors aren't deeper than 2-3 levels
+            // and we don't want to walk circular refs. JSON.stringify with
+            // a replacer that redacts at any depth.
+            props[key] = JSON.parse(
+              JSON.stringify(v, (k, x) => {
+                if (typeof k === "string" && SENSITIVE_KEYS.test(k)) return "[redacted]";
+                return sanitise(x);
+              })
+            );
+          } else {
+            props[key] = sanitise(v);
+          }
         } catch {
           props[key] = "[unreadable]";
         }
       }
     }
+
     const responseBody = {
       error: `postgres/connect failed at step "${step.current}"`,
       errorType:
         (err as { constructor?: { name?: string } })?.constructor?.name ??
         typeof err,
-      errorString: String(err),
-      errorMessage:
-        (err as { message?: string })?.message ?? String(err),
+      errorString: sanitise(String(err)),
+      errorMessage: sanitise(
+        (err as { message?: string })?.message ?? String(err)
+      ),
       errorProps: props,
     };
     console.error("[postgres/connect]", JSON.stringify(responseBody).slice(0, 2000));

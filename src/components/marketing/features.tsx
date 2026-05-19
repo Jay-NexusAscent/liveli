@@ -47,7 +47,7 @@ export function MarketingFeatures() {
         <div className="grid gap-5 md:grid-cols-3">
           {features.map((f) => (
             <div key={f.title} className="card group relative flex flex-col overflow-hidden p-7 transition-transform duration-300 hover:-translate-y-0.5">
-              <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
+              <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent to-transparent opacity-30 transition-opacity duration-300 group-hover:opacity-100" />
               <div className="mb-5 flex h-10 w-10 items-center justify-center rounded-lg bg-accent-muted text-accent">
                 <f.icon className="text-accent" />
               </div>

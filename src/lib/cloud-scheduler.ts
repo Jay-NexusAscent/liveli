@@ -27,7 +27,8 @@ let _client: CloudSchedulerClient | null = null;
  * scheduled trigger is the only thing that's missing.
  */
 
-const REGION = "europe-west4"; // Same region as our Cloud Run Jobs
+// Same region as our Cloud Run Jobs. Override via GCP_REGION.
+const REGION = process.env.GCP_REGION ?? "europe-west4";
 
 async function scheduler(): Promise<CloudSchedulerClient> {
   await ensureGcpAuth();

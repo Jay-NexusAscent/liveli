@@ -21,8 +21,15 @@
 // constant — wire a live FX feed (e.g. exchangerate.host daily refresh
 // into Firestore) when we have real customer spend to track precisely.
 
-/** Approximate USD→GBP rate, 2026-05. Update quarterly until live feed lands. */
-export const USD_TO_GBP = 0.79;
+/**
+ * USD→GBP rate. Override via LIVELI_USD_TO_GBP env var (e.g. set from
+ * a daily refresh job hitting exchangerate.host). The hardcoded fallback
+ * tracks roughly 2026-mid; will drift if not refreshed.
+ *
+ * For accurate per-customer billing, this should ultimately come from a
+ * Firestore-cached daily rate. Tracked in Linear.
+ */
+export const USD_TO_GBP = Number(process.env.LIVELI_USD_TO_GBP) || 0.79;
 
 export function usdToGbp(usd: number): number {
   return usd * USD_TO_GBP;
