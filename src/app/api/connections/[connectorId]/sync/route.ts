@@ -5,6 +5,10 @@ import { readConnectorSecret } from "@/lib/secret-manager";
 import { runConnectorJob } from "@/lib/cloud-run";
 import { gcp } from "@/lib/gcp";
 import { DEFAULT_BQ_LOCATION } from "@/lib/bigquery";
+import {
+  buildTapEnv,
+  UnsupportedConnectorTypeError,
+} from "@/lib/connector-env";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -62,29 +66,13 @@ export async function POST(
     TARGET_BIGQUERY_LOCATION: location,
   };
 
-  if (data.type === "postgres") {
-    // filter_schemas restricts tap-postgres to user schemas only — without
-    // it the tap discovers everything including pg_catalog and
-    // information_schema, which then crashes target-bigquery because BQ
-    // reserves the `information_schema` prefix on table names.
-    const schemas = (creds.schemas ?? "public")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-
-    Object.assign(env, {
-      TAP_POSTGRES_HOST: creds.host,
-      TAP_POSTGRES_PORT: creds.port,
-      TAP_POSTGRES_USER: creds.user,
-      TAP_POSTGRES_PASSWORD: creds.password,
-      TAP_POSTGRES_DATABASE: creds.database,
-      TAP_POSTGRES_FILTER_SCHEMAS: JSON.stringify(schemas),
-    });
-  } else {
-    return Response.json(
-      { error: `Sync not yet wired for connector type: ${data.type}` },
-      { status: 400 }
-    );
+  try {
+    Object.assign(env, buildTapEnv(data.type, creds));
+  } catch (err) {
+    if (err instanceof UnsupportedConnectorTypeError) {
+      return Response.json({ error: err.message }, { status: 400 });
+    }
+    throw err;
   }
 
   let executionName: string;

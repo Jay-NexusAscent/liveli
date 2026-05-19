@@ -1,0 +1,35 @@
+version: 1
+default_environment: dev
+project_id: liveli-salesforce-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-salesforce
+      variant: meltanolabs
+      pip_url: meltanolabs-tap-salesforce
+      # Required env at runtime (OAuth refresh-token flow):
+      #   TAP_SALESFORCE_CLIENT_ID
+      #   TAP_SALESFORCE_CLIENT_SECRET
+      #   TAP_SALESFORCE_REFRESH_TOKEN
+      # Optional:
+      #   TAP_SALESFORCE_DOMAIN       ("login" for prod, "test" for sandbox; default "login")
+      #   TAP_SALESFORCE_START_DATE   (ISO8601; defaults to config below)
+      config:
+        # `REST` is the most widely-available API mode and the one
+        # MeltanoLabs' tap defaults to. `BULK` is faster on big orgs but
+        # requires extra permissions; expose it as an opt-in env later.
+        api_type: REST
+        start_date: "2020-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git@v0.7.4
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true

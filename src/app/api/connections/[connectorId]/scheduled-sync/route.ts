@@ -10,6 +10,10 @@ import { readConnectorSecret } from "@/lib/secret-manager";
 import { runConnectorJob } from "@/lib/cloud-run";
 import { gcp } from "@/lib/gcp";
 import { DEFAULT_BQ_LOCATION } from "@/lib/bigquery";
+import {
+  buildTapEnv,
+  UnsupportedConnectorTypeError,
+} from "@/lib/connector-env";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -50,11 +54,23 @@ export async function POST(
     process.env.LIVELI_SCHEDULER_SA_EMAIL ||
     `liveli-runtime@${gcp.projectId}.iam.gserviceaccount.com`;
 
-  // The audience claim in the OIDC token equals the URL Cloud Scheduler
-  // was configured to hit. Reconstruct from the request URL so we don't
-  // hardcode a domain.
+  // SECURITY: do NOT derive the audience from req.url. The Host header
+  // is attacker-controllable (Vercel proxies whatever's in there to our
+  // function). An attacker who can reach this endpoint with a Host header
+  // matching the audience claim of a stolen/replayed Cloud Scheduler OIDC
+  // token would bypass verification entirely.
+  //
+  // Instead, build the audience from a server-controlled origin
+  // (LIVELI_SCHEDULER_AUDIENCE_ORIGIN env var, falls back to the configured
+  // app URL, falls back to a known-good production hostname). The path
+  // portion is trustworthy — it's what Next.js routed on, not the Host.
   const url = new URL(req.url);
-  const expectedAudience = `${url.origin}${url.pathname}`;
+  const audienceOrigin = (
+    process.env.LIVELI_SCHEDULER_AUDIENCE_ORIGIN ||
+    process.env.NEXT_PUBLIC_APP_URL ||
+    "https://app.liveli.co.uk"
+  ).replace(/\/$/, "");
+  const expectedAudience = `${audienceOrigin}${url.pathname}`;
 
   try {
     const ticket = await oauth.verifyIdToken({
@@ -142,25 +158,13 @@ export async function POST(
     TARGET_BIGQUERY_LOCATION: location,
   };
 
-  if (data.type === "postgres") {
-    const schemas = (creds.schemas ?? "public")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-
-    Object.assign(env, {
-      TAP_POSTGRES_HOST: creds.host,
-      TAP_POSTGRES_PORT: creds.port,
-      TAP_POSTGRES_USER: creds.user,
-      TAP_POSTGRES_PASSWORD: creds.password,
-      TAP_POSTGRES_DATABASE: creds.database,
-      TAP_POSTGRES_FILTER_SCHEMAS: JSON.stringify(schemas),
-    });
-  } else {
-    return Response.json(
-      { error: `Sync not yet wired for connector type: ${data.type}` },
-      { status: 400 }
-    );
+  try {
+    Object.assign(env, buildTapEnv(data.type, creds));
+  } catch (err) {
+    if (err instanceof UnsupportedConnectorTypeError) {
+      return Response.json({ error: err.message }, { status: 400 });
+    }
+    throw err;
   }
 
   let executionName: string;

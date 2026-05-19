@@ -4,6 +4,14 @@ import { useEffect, useState } from "react";
 import { ConnectIcon, DatabaseIcon } from "@/components/icons";
 import { cn } from "@/lib/utils";
 import { PostgresWizard } from "@/components/connections/postgres-wizard";
+import { MysqlWizard } from "@/components/connections/mysql-wizard";
+import { StripeWizard } from "@/components/connections/stripe-wizard";
+import { ShopifyWizard } from "@/components/connections/shopify-wizard";
+import { HubspotWizard } from "@/components/connections/hubspot-wizard";
+import { GoogleAdsWizard } from "@/components/connections/google-ads-wizard";
+import { FacebookAdsWizard } from "@/components/connections/facebook-ads-wizard";
+import { SalesforceWizard } from "@/components/connections/salesforce-wizard";
+import { MailchimpWizard } from "@/components/connections/mailchimp-wizard";
 import { EditConnectorModal } from "@/components/connections/edit-connector-modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 
@@ -60,7 +68,21 @@ const SYNC_FREQUENCY_LABELS: Record<NonNullable<ConnectorRecord["syncFrequency"]
   "24h": "daily",
 };
 
-type ConnectAction = "postgres" | null;
+// One enum value per wizard. When a source tile is clicked we set
+// `activeWizard` to its action and the corresponding wizard mounts. The
+// strings must match the `type` field the connect route writes to the
+// connector doc, since the sync env-mapping switch keys off the same.
+type ConnectAction =
+  | "postgres"
+  | "mysql"
+  | "stripe"
+  | "shopify"
+  | "hubspot"
+  | "google-ads"
+  | "facebook-ads"
+  | "salesforce"
+  | "mailchimp"
+  | null;
 
 type SourceCategory =
   | "Databases"
@@ -101,7 +123,7 @@ interface PopularSource {
 const popularSources: PopularSource[] = [
   // Databases
   { name: "PostgreSQL", desc: "Replicate tables from any Postgres database", category: "Databases", action: "postgres" },
-  { name: "MySQL", desc: "Replicate tables from any MySQL database", category: "Databases", action: null },
+  { name: "MySQL", desc: "Replicate tables from any MySQL database", category: "Databases", action: "mysql" },
   { name: "BigQuery", desc: "Replicate datasets from your BigQuery project", category: "Databases", action: null },
   { name: "MongoDB", desc: "Sync collections from MongoDB or Atlas", category: "Databases", action: null },
   { name: "Snowflake", desc: "Replicate tables from your Snowflake warehouse", category: "Databases", action: null },
@@ -112,33 +134,33 @@ const popularSources: PopularSource[] = [
   { name: "DuckDB", desc: "Replicate from a DuckDB file or motherduck", category: "Databases", action: null },
 
   // Payments
-  { name: "Stripe", desc: "Charges, subscriptions, customers, refunds", category: "Payments", action: null },
+  { name: "Stripe", desc: "Charges, subscriptions, customers, refunds", category: "Payments", action: "stripe" },
   { name: "PayPal", desc: "Transactions, disputes, payouts", category: "Payments", action: null },
   { name: "Chargebee", desc: "Subscription billing + revenue events", category: "Payments", action: null },
   { name: "Recurly", desc: "Subscriptions, invoices, accounts", category: "Payments", action: null },
   { name: "Square", desc: "Transactions, items, customers, payouts", category: "Payments", action: null },
 
   // E-commerce
-  { name: "Shopify", desc: "Orders, products, customers, inventory", category: "E-commerce", action: null },
+  { name: "Shopify", desc: "Orders, products, customers, inventory", category: "E-commerce", action: "shopify" },
   { name: "WooCommerce", desc: "Orders, products, customers from your WP store", category: "E-commerce", action: null },
   { name: "BigCommerce", desc: "Orders, catalog, customers, fulfilment", category: "E-commerce", action: null },
   { name: "Adobe Commerce", desc: "Magento / Adobe Commerce orders + catalog", category: "E-commerce", action: null },
   { name: "Amazon Seller", desc: "Orders, fulfilment, settlements, fees", category: "E-commerce", action: null },
 
   // CRM
-  { name: "HubSpot", desc: "Contacts, deals, companies, engagements", category: "CRM", action: null },
-  { name: "Salesforce", desc: "Accounts, opportunities, contacts, leads", category: "CRM", action: null },
+  { name: "HubSpot", desc: "Contacts, deals, companies, engagements", category: "CRM", action: "hubspot" },
+  { name: "Salesforce", desc: "Accounts, opportunities, contacts, leads", category: "CRM", action: "salesforce" },
   { name: "Pipedrive", desc: "Pipelines, deals, activities, persons", category: "CRM", action: null },
   { name: "Zendesk Sell", desc: "Pipeline, contacts, deals", category: "CRM", action: null },
   { name: "Close", desc: "Leads, opportunities, calls, emails", category: "CRM", action: null },
 
   // Marketing
-  { name: "Google Ads", desc: "Campaign performance and spend", category: "Marketing", action: null },
-  { name: "Meta Ads", desc: "Facebook + Instagram ad performance", category: "Marketing", action: null },
+  { name: "Google Ads", desc: "Campaign performance and spend", category: "Marketing", action: "google-ads" },
+  { name: "Meta Ads", desc: "Facebook + Instagram ad performance", category: "Marketing", action: "facebook-ads" },
   { name: "LinkedIn Ads", desc: "Sponsored content + lead-gen campaigns", category: "Marketing", action: null },
   { name: "TikTok Ads", desc: "TikTok ad performance + creatives", category: "Marketing", action: null },
   { name: "Microsoft Ads", desc: "Bing search ads performance + spend", category: "Marketing", action: null },
-  { name: "Mailchimp", desc: "Campaigns, lists, audience engagement", category: "Marketing", action: null },
+  { name: "Mailchimp", desc: "Campaigns, lists, audience engagement", category: "Marketing", action: "mailchimp" },
   { name: "Klaviyo", desc: "Email + SMS flows, lists, events", category: "Marketing", action: null },
   { name: "ActiveCampaign", desc: "Automations, deals, contacts", category: "Marketing", action: null },
 
@@ -173,7 +195,13 @@ const popularSources: PopularSource[] = [
 export default function ConnectionsPage() {
   const [connectors, setConnectors] = useState<ConnectorRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [pgOpen, setPgOpen] = useState(false);
+  // One wizard at a time — clicking a tile sets this to its action,
+  // each wizard's onClose clears it. Cleaner than 9 boolean flags.
+  const [activeWizard, setActiveWizard] = useState<ConnectAction>(null);
+  const closeWizard = () => setActiveWizard(null);
+  const onWizardConnected = () => {
+    refresh();
+  };
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ConnectorRecord | null>(null);
   const [editing, setEditing] = useState<ConnectorRecord | null>(null);
@@ -423,13 +451,13 @@ export default function ConnectionsPage() {
           return (
             <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {filtered.map((s) => {
-                const interactive = s.action === "postgres";
+                const interactive = s.action !== null;
                 return (
                   <button
                     key={s.name}
                     type="button"
                     onClick={() => {
-                      if (s.action === "postgres") setPgOpen(true);
+                      if (s.action) setActiveWizard(s.action);
                     }}
                     disabled={!interactive}
                     className={cn(
@@ -469,11 +497,49 @@ export default function ConnectionsPage() {
       </section>
 
       <PostgresWizard
-        open={pgOpen}
-        onClose={() => setPgOpen(false)}
-        onConnected={() => {
-          refresh();
-        }}
+        open={activeWizard === "postgres"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <MysqlWizard
+        open={activeWizard === "mysql"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <StripeWizard
+        open={activeWizard === "stripe"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <ShopifyWizard
+        open={activeWizard === "shopify"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <HubspotWizard
+        open={activeWizard === "hubspot"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <GoogleAdsWizard
+        open={activeWizard === "google-ads"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <FacebookAdsWizard
+        open={activeWizard === "facebook-ads"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <SalesforceWizard
+        open={activeWizard === "salesforce"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <MailchimpWizard
+        open={activeWizard === "mailchimp"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
       />
 
       <EditConnectorModal

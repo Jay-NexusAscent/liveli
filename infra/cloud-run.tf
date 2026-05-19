@@ -17,6 +17,8 @@ locals {
     "hubspot-to-bq",
     "google-ads-to-bq",
     "facebook-ads-to-bq",
+    "salesforce-to-bq",
+    "mailchimp-to-bq",
   ]
 }
 

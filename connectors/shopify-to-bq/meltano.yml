@@ -1,8 +1,9 @@
 version: 1
-default_environment: prod
+default_environment: dev
 project_id: liveli-shopify-to-bq
 
 environments:
+  - name: dev
   - name: prod
 
 plugins:
@@ -10,9 +11,9 @@ plugins:
     - name: tap-shopify
       variant: meltanolabs
       pip_url: meltanolabs-tap-shopify
-      # Required env:
-      #   TAP_SHOPIFY_STORE         (the {store}.myshopify.com handle)
-      #   TAP_SHOPIFY_ADMIN_API_KEY (Admin API access token, starts shpat_)
+      # Required env at runtime:
+      #   TAP_SHOPIFY_STORE         (the {store}.myshopify.com handle, without the protocol)
+      #   TAP_SHOPIFY_ADMIN_API_KEY (Admin API access token, starts with shpat_)
       config:
         api_version: "2024-10"
       select:

@@ -27,14 +27,23 @@ jobs:
 
     strategy:
       fail-fast: false
-      # Only postgres-to-bq is in the active build matrix — its
-      # `meltanolabs` tap-postgres variant is confirmed in Meltano Hub.
-      # The other 6 connector image dirs exist on disk but each needs
-      # its tap variant verified against hub.meltano.com before adding
-      # back here. Track in Linear LIVELI-43.
+      # Each new connector is matrix-built independently — one failure
+      # doesn't block the others. Image build time is ~6-8 min per
+      # connector (meltano install dominates), so adding to this list
+      # costs roughly that on the next push. Order is alphabetical for
+      # readability — Cloud Run Job names are derived from the same
+      # slug via `connector-<name>` in infra/cloud-run.tf.
       matrix:
         connector:
+          - facebook-ads-to-bq
+          - google-ads-to-bq
+          - hubspot-to-bq
+          - mailchimp-to-bq
+          - mysql-to-bq
           - postgres-to-bq
+          - salesforce-to-bq
+          - shopify-to-bq
+          - stripe-to-bq
 
     env:
       REGION: europe-west4

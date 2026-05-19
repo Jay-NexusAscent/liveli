@@ -1,8 +1,9 @@
 version: 1
-default_environment: prod
+default_environment: dev
 project_id: liveli-stripe-to-bq
 
 environments:
+  - name: dev
   - name: prod
 
 plugins:
@@ -10,9 +11,15 @@ plugins:
     - name: tap-stripe
       variant: hotgluexyz
       pip_url: git+https://github.com/hotgluexyz/tap-stripe.git
-      # Required env: TAP_STRIPE_CLIENT_SECRET (sk_live_... or sk_test_...)
-      # Optional:     TAP_STRIPE_START_DATE (ISO8601, default 1y ago)
+      # Required env at runtime:
+      #   TAP_STRIPE_CLIENT_SECRET  (sk_live_... or sk_test_...)
+      # Optional:
+      #   TAP_STRIPE_START_DATE     (ISO8601; entrypoint defaults to 1y ago)
       config: {}
+      # Restrict replication to the customer-facing core entities. The
+      # full Stripe object surface is huge (events, balance_transactions,
+      # exchange rates) and most of it is noise for a "talk to your data"
+      # product. Expand the list when customers ask for it.
       select:
         - charges.*
         - customers.*

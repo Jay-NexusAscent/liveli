@@ -1,8 +1,9 @@
 version: 1
-default_environment: prod
+default_environment: dev
 project_id: liveli-google-ads-to-bq
 
 environments:
+  - name: dev
   - name: prod
 
 plugins:
@@ -10,12 +11,15 @@ plugins:
     - name: tap-google-ads
       variant: hotgluexyz
       pip_url: git+https://github.com/hotgluexyz/tap-google-ads.git
-      # Required env (Google Ads API OAuth):
+      # Required env at runtime (Google Ads API OAuth):
       #   TAP_GOOGLE_ADS_DEVELOPER_TOKEN
       #   TAP_GOOGLE_ADS_CLIENT_ID
       #   TAP_GOOGLE_ADS_CLIENT_SECRET
       #   TAP_GOOGLE_ADS_REFRESH_TOKEN
-      #   TAP_GOOGLE_ADS_CUSTOMER_IDS  (comma-separated 10-digit IDs)
+      #   TAP_GOOGLE_ADS_CUSTOMER_IDS   (comma-separated 10-digit IDs)
+      # Optional:
+      #   TAP_GOOGLE_ADS_LOGIN_CUSTOMER_ID  (manager account, if you sit
+      #     above the operating customers in an MCC tree)
       config:
         start_date: "2024-01-01T00:00:00Z"
 
