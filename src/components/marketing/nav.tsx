@@ -42,6 +42,10 @@ export function MarketingNav() {
             How it works
             <span className="absolute -bottom-1 left-0 h-px w-0 bg-accent transition-all duration-300 group-hover:w-full" />
           </Link>
+          <Link href="/#pricing" className="relative text-[14px] text-text-secondary transition-colors hover:text-text-primary group">
+            Pricing
+            <span className="absolute -bottom-1 left-0 h-px w-0 bg-accent transition-all duration-300 group-hover:w-full" />
+          </Link>
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3">
