@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
-import { DashboardIcon, SparkleIcon } from "@/components/icons";
+import { DashboardIcon, SparkleIcon, TrashIcon } from "@/components/icons";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
@@ -24,6 +24,9 @@ export default function DashboardsPage() {
   const [charts, setCharts] = useState<SavedChart[]>([]);
   const [dashboards, setDashboards] = useState<SavedDashboard[]>([]);
   const [loading, setLoading] = useState(true);
+  // Per-id pending state for delete actions — prevents double-clicks
+  // and lets the trash icon dim while the DELETE round-trips.
+  const [deleting, setDeleting] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     (async () => {
@@ -39,6 +42,42 @@ export default function DashboardsPage() {
       }
     })();
   }, []);
+
+  const deleteChart = async (id: string, title: string) => {
+    if (!confirm(`Delete chart "${title}"? This can't be undone.`)) return;
+    setDeleting((s) => new Set(s).add(id));
+    try {
+      const res = await fetch(`/api/charts/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setCharts((cs) => cs.filter((c) => c.id !== id));
+    } catch (err) {
+      alert(`Failed to delete chart: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setDeleting((s) => {
+        const next = new Set(s);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  const deleteDashboard = async (id: string, title: string) => {
+    if (!confirm(`Delete dashboard "${title}" and all its charts? This can't be undone.`)) return;
+    setDeleting((s) => new Set(s).add(id));
+    try {
+      const res = await fetch(`/api/dashboards/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setDashboards((ds) => ds.filter((d) => d.id !== id));
+    } catch (err) {
+      alert(`Failed to delete dashboard: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setDeleting((s) => {
+        const next = new Set(s);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
 
   const isEmpty = !loading && charts.length === 0 && dashboards.length === 0;
 
@@ -81,13 +120,20 @@ export default function DashboardsPage() {
           <div className="space-y-8">
             {dashboards.map((d) => (
               <div key={d.id} className="card-elevated p-6">
-                <div className="mb-4">
-                  <h3 className="text-[18px] font-semibold text-text-primary font-heading">
-                    {d.title}
-                  </h3>
-                  {d.description && (
-                    <p className="mt-1 text-[13px] text-text-secondary">{d.description}</p>
-                  )}
+                <div className="mb-4 flex items-start justify-between gap-4">
+                  <div>
+                    <h3 className="text-[18px] font-semibold text-text-primary font-heading">
+                      {d.title}
+                    </h3>
+                    {d.description && (
+                      <p className="mt-1 text-[13px] text-text-secondary">{d.description}</p>
+                    )}
+                  </div>
+                  <DeleteButton
+                    onClick={() => deleteDashboard(d.id, d.title)}
+                    disabled={deleting.has(d.id)}
+                    ariaLabel={`Delete dashboard ${d.title}`}
+                  />
                 </div>
                 <div className="grid gap-4 md:grid-cols-2">
                   {d.charts.map((c, i) => (
@@ -107,7 +153,13 @@ export default function DashboardsPage() {
           </h2>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             {charts.map((c) => (
-              <ChartTile key={c.id} title={c.title} spec={c.spec} />
+              <ChartTile
+                key={c.id}
+                title={c.title}
+                spec={c.spec}
+                onDelete={() => deleteChart(c.id, c.title)}
+                deleting={deleting.has(c.id)}
+              />
             ))}
           </div>
         </section>
@@ -116,11 +168,28 @@ export default function DashboardsPage() {
   );
 }
 
-function ChartTile({ title, spec }: { title: string; spec: unknown }) {
+function ChartTile({
+  title,
+  spec,
+  onDelete,
+  deleting,
+}: {
+  title: string;
+  spec: unknown;
+  onDelete?: () => void;
+  deleting?: boolean;
+}) {
   return (
     <div className="card-elevated overflow-hidden">
-      <div className="border-b border-border px-4 py-2.5 text-[13px] font-medium text-text-primary">
-        {title}
+      <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2.5">
+        <div className="truncate text-[13px] font-medium text-text-primary">{title}</div>
+        {onDelete && (
+          <DeleteButton
+            onClick={onDelete}
+            disabled={!!deleting}
+            ariaLabel={`Delete chart ${title}`}
+          />
+        )}
       </div>
       <div className="p-3">
         <ReactECharts
@@ -130,5 +199,32 @@ function ChartTile({ title, spec }: { title: string; spec: unknown }) {
         />
       </div>
     </div>
+  );
+}
+
+/**
+ * Small, low-visual-weight delete icon button. Inline trash icon, no
+ * background until hover so it doesn't compete with the chart content.
+ * Disabled state grays it out during the round-trip.
+ */
+function DeleteButton({
+  onClick,
+  disabled,
+  ariaLabel,
+}: {
+  onClick: () => void;
+  disabled: boolean;
+  ariaLabel: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      className="shrink-0 rounded-md p-1.5 text-text-tertiary transition-colors hover:bg-[color:var(--status-error)]/10 hover:text-[color:var(--status-error)] disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      <TrashIcon />
+    </button>
   );
 }
