@@ -38,6 +38,59 @@ let _client: CloudSchedulerClient | null = null;
  */
 const LEGACY_REGION = "europe-west4";
 
+// ── Tolerant error matchers ────────────────────────────────────────
+//
+// The Cloud Scheduler client runs in REST fallback mode (see `scheduler()`
+// below — required because Vercel's serverless runtime can't reliably
+// establish HTTP/2 to GCP for gRPC). In REST mode, the gax library
+// normalises errors INCONSISTENTLY across versions: sometimes `err.code`
+// holds the gRPC code (number 5 for NOT_FOUND), sometimes the HTTP
+// status (number 404), occasionally the code as a string ("5"). The
+// original strict checks (`if (code === 5)`) silently misfired when
+// gax surfaced a different shape — the pause route would catch a real
+// NOT_FOUND but the `=== 5` strict-equality test would fail, the
+// catch block would re-throw, and the route would return 500 even
+// though the underlying server-side state was fine (job either gone
+// or successfully paused). Symptom in production: clicking Pause
+// produced "Couldn't pause" in the UI even when Cloud Scheduler
+// audit logs showed the API call succeeded.
+//
+// These helpers accept every shape gax has been observed to emit
+// and also fall back to a string-match on the error message. Slightly
+// looser than "exactly the gRPC code" but the cost is wrong: a real
+// non-NOT_FOUND error that happens to contain "not found" in its
+// message would silently no-op. Acceptable trade-off given the
+// scheduler operations here are intrinsically idempotent — pause /
+// resume / delete of a job that doesn't exist (or is already in the
+// target state) is the desired no-op behaviour regardless.
+
+function isNotFoundError(err: unknown): boolean {
+  const code = (err as { code?: unknown })?.code;
+  if (code === 5 || code === "5" || code === 404 || code === "404") return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /not\s*found/i.test(message);
+}
+
+function isAlreadyExistsError(err: unknown): boolean {
+  const code = (err as { code?: unknown })?.code;
+  if (code === 6 || code === "6" || code === 409 || code === "409") return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /already\s*exists/i.test(message);
+}
+
+function isAlreadyInTargetStateError(err: unknown): boolean {
+  // FAILED_PRECONDITION (gRPC 9 / HTTP 400 with specific reason) is what
+  // Cloud Scheduler returns when you pause an already-PAUSED job or
+  // resume an already-ENABLED one. Treating it as idempotent success
+  // is the whole point of the pause/resume helpers.
+  const code = (err as { code?: unknown })?.code;
+  if (code === 9 || code === "9" || code === 412 || code === "412") return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /failed[\s_]?precondition|already (paused|enabled|resumed|exists|in target state)/i.test(
+    message
+  );
+}
+
 async function scheduler(): Promise<CloudSchedulerClient> {
   await ensureGcpAuth();
   if (_client) return _client;
@@ -137,8 +190,7 @@ export async function upsertSyncJob(args: UpsertArgs): Promise<void> {
         name: jobResourceName(LEGACY_REGION, args.clientId, args.connectorId),
       });
     } catch (err) {
-      const code = (err as { code?: number })?.code;
-      if (code !== 5 /* NOT_FOUND */) {
+      if (!isNotFoundError(err)) {
         console.warn("[scheduler] legacy-region cleanup delete failed", {
           connectorId: args.connectorId,
           err: err instanceof Error ? err.message : String(err),
@@ -176,9 +228,8 @@ export async function upsertSyncJob(args: UpsertArgs): Promise<void> {
   try {
     await client.createJob({ parent, job });
   } catch (err) {
-    // 6 = ALREADY_EXISTS — switch to updateJob with full mask
-    const code = (err as { code?: number })?.code;
-    if (code === 6) {
+    // ALREADY_EXISTS — switch to updateJob with full mask.
+    if (isAlreadyExistsError(err)) {
       try {
         await client.updateJob({ job });
       } catch (updateErr) {
@@ -223,8 +274,7 @@ export async function deleteSyncJob(
     try {
       await client.deleteJob({ name });
     } catch (err) {
-      const code = (err as { code?: number })?.code;
-      if (code === 5) continue; // NOT_FOUND in this region — fine.
+      if (isNotFoundError(err)) continue; // NOT_FOUND in this region — fine.
       console.error("[scheduler] deleteJob failed", {
         name,
         err: err instanceof Error ? err.message : String(err),
@@ -265,11 +315,10 @@ export async function pauseSyncJob(
     try {
       await client.pauseJob({ name });
     } catch (err) {
-      const code = (err as { code?: number })?.code;
-      if (code === 5) continue; // NOT_FOUND in this region — fine.
-      // 9 = FAILED_PRECONDITION — job is already PAUSED. Idempotent
-      // goal: calling pause on an already-paused job is success.
-      if (code === 9) continue;
+      if (isNotFoundError(err)) continue; // NOT_FOUND in this region — fine.
+      // FAILED_PRECONDITION — job is already PAUSED. Idempotent goal:
+      // calling pause on an already-paused job is success.
+      if (isAlreadyInTargetStateError(err)) continue;
       console.error("[scheduler] pauseJob failed", {
         name,
         err: err instanceof Error ? err.message : String(err),
@@ -305,9 +354,8 @@ export async function resumeSyncJob(
     try {
       await client.resumeJob({ name });
     } catch (err) {
-      const code = (err as { code?: number })?.code;
-      if (code === 5) continue; // NOT_FOUND in this region — fine.
-      if (code === 9) continue; // FAILED_PRECONDITION — already ENABLED
+      if (isNotFoundError(err)) continue; // NOT_FOUND in this region — fine.
+      if (isAlreadyInTargetStateError(err)) continue; // already ENABLED
       console.error("[scheduler] resumeJob failed", {
         name,
         err: err instanceof Error ? err.message : String(err),
