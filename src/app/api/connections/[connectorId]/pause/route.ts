@@ -1,8 +1,10 @@
 import { FieldValue } from "@google-cloud/firestore";
 import { z } from "zod";
 import { requireWorkspaceContext, UnauthorizedError } from "@/lib/clients";
-import { connectorsIn, dbReady } from "@/lib/firestore";
+import { connectorsIn, dbReady, workspaceDoc } from "@/lib/firestore";
 import { pauseSyncJob, resumeSyncJob } from "@/lib/cloud-scheduler";
+import { cloudComputeRegionForResidency } from "@/lib/gcp";
+import { DEFAULT_BQ_LOCATION } from "@/lib/bigquery";
 import { logUsageEvent } from "@/lib/usage";
 
 export const runtime = "nodejs";
@@ -61,13 +63,27 @@ export async function POST(
   if (!snap.exists) {
     return Response.json({ error: "Connector not found" }, { status: 404 });
   }
-  const data = snap.data() as { type?: string };
+  const data = snap.data() as { type?: string; bqLocation?: "EU" | "US" };
+
+  // Resolve the Scheduler region the same way sync/route.ts does —
+  // connector.bqLocation → workspace.bqLocation → default. Then map
+  // residency → compute region (EU → europe-west1, US → us-central1).
+  // The lib helper also tries the legacy europe-west4 region as a
+  // fallback, so connectors that haven't migrated since regional
+  // routing landed still pause / resume correctly.
+  let location: "EU" | "US" = data.bqLocation ?? DEFAULT_BQ_LOCATION;
+  if (!data.bqLocation) {
+    const wsSnap = await workspaceDoc(ctx.clientId, ctx.workspaceId).get();
+    const wsLoc = (wsSnap.data() as { bqLocation?: "EU" | "US" })?.bqLocation;
+    location = wsLoc ?? location;
+  }
+  const { region } = cloudComputeRegionForResidency(location);
 
   try {
     if (body.paused) {
-      await pauseSyncJob(ctx.clientId, connectorId);
+      await pauseSyncJob(ctx.clientId, connectorId, region);
     } else {
-      await resumeSyncJob(ctx.clientId, connectorId);
+      await resumeSyncJob(ctx.clientId, connectorId, region);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

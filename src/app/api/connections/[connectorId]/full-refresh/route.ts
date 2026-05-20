@@ -4,7 +4,7 @@ import { connectorsIn, dbReady, workspaceDoc } from "@/lib/firestore";
 import { bqReady, DEFAULT_BQ_LOCATION } from "@/lib/bigquery";
 import { readConnectorSecret } from "@/lib/secret-manager";
 import { runConnectorJob } from "@/lib/cloud-run";
-import { gcp } from "@/lib/gcp";
+import { cloudComputeRegionForResidency, gcp } from "@/lib/gcp";
 import { buildTapEnv, UnsupportedConnectorTypeError } from "@/lib/connector-env";
 import { logUsageEvent } from "@/lib/usage";
 
@@ -117,9 +117,13 @@ export async function POST(
     });
 
     // ── 3. Trigger the Cloud Run Job (same logic as /sync) ─────────
+    // Regional routing: EU residency → europe-west1, US → us-central1.
+    // Job names take the matching `-eu` / `-us` suffix; Terraform
+    // declares both copies in infra/cloud-run.tf.
     step.current = "build sync env";
+    const { region, suffix } = cloudComputeRegionForResidency(location);
     const creds = await readConnectorSecret(ctx.clientId, connectorId);
-    const jobName = `connector-${data.type}-to-bq`;
+    const jobName = `connector-${data.type}-to-bq-${suffix}`;
     const env: Record<string, string> = {
       WORKSPACE_ID: ctx.clientId, // legacy var name in the connector image
       CLIENT_ID: ctx.clientId,
@@ -139,7 +143,7 @@ export async function POST(
     }
 
     step.current = "runConnectorJob";
-    const { executionName } = await runConnectorJob(jobName, env);
+    const { executionName } = await runConnectorJob(jobName, region, env);
 
     // ── 4. Firestore status update ─────────────────────────────────
     await ref.update({

@@ -247,24 +247,35 @@ export async function deleteSyncJob(
  */
 export async function pauseSyncJob(
   clientId: string,
-  connectorId: string
+  connectorId: string,
+  region: string
 ): Promise<void> {
   const client = await scheduler();
-  const name = jobResourceName(clientId, connectorId);
-  try {
-    await client.pauseJob({ name });
-  } catch (err) {
-    const code = (err as { code?: number })?.code;
-    if (code === 5) return; // NOT_FOUND
-    // 9 = FAILED_PRECONDITION — job is already PAUSED. Idempotent goal
-    // says "calling pause on an already-paused job is success", not
-    // an error to bubble up.
-    if (code === 9) return;
-    console.error("[scheduler] pauseJob failed", {
-      name,
-      err: err instanceof Error ? err.message : String(err),
-    });
-    throw err;
+
+  // Mirror deleteSyncJob's dual-region behaviour. A connector created
+  // before regional routing landed has its Scheduler job in europe-west4
+  // (LEGACY_REGION); newer connectors have it in their workspace's
+  // residency region. Without an extra Firestore lookup we don't know
+  // which, and both pause attempts are cheap + idempotent.
+  const targets =
+    region === LEGACY_REGION ? [region] : [region, LEGACY_REGION];
+
+  for (const r of targets) {
+    const name = jobResourceName(r, clientId, connectorId);
+    try {
+      await client.pauseJob({ name });
+    } catch (err) {
+      const code = (err as { code?: number })?.code;
+      if (code === 5) continue; // NOT_FOUND in this region — fine.
+      // 9 = FAILED_PRECONDITION — job is already PAUSED. Idempotent
+      // goal: calling pause on an already-paused job is success.
+      if (code === 9) continue;
+      console.error("[scheduler] pauseJob failed", {
+        name,
+        err: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
   }
 }
 
@@ -278,20 +289,30 @@ export async function pauseSyncJob(
  */
 export async function resumeSyncJob(
   clientId: string,
-  connectorId: string
+  connectorId: string,
+  region: string
 ): Promise<void> {
   const client = await scheduler();
-  const name = jobResourceName(clientId, connectorId);
-  try {
-    await client.resumeJob({ name });
-  } catch (err) {
-    const code = (err as { code?: number })?.code;
-    if (code === 5) return; // NOT_FOUND
-    if (code === 9) return; // FAILED_PRECONDITION — already ENABLED
-    console.error("[scheduler] resumeJob failed", {
-      name,
-      err: err instanceof Error ? err.message : String(err),
-    });
-    throw err;
+
+  // Same dual-region pattern as pauseSyncJob / deleteSyncJob — the
+  // job may live in either the new residency region or the legacy
+  // europe-west4. Resume both; NOT_FOUND on either is fine.
+  const targets =
+    region === LEGACY_REGION ? [region] : [region, LEGACY_REGION];
+
+  for (const r of targets) {
+    const name = jobResourceName(r, clientId, connectorId);
+    try {
+      await client.resumeJob({ name });
+    } catch (err) {
+      const code = (err as { code?: number })?.code;
+      if (code === 5) continue; // NOT_FOUND in this region — fine.
+      if (code === 9) continue; // FAILED_PRECONDITION — already ENABLED
+      console.error("[scheduler] resumeJob failed", {
+        name,
+        err: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
   }
 }
