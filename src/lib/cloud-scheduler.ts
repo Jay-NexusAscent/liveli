@@ -179,3 +179,66 @@ export async function deleteSyncJob(
     });
   }
 }
+
+/**
+ * Pause the Scheduler job — the job stays in the system with all its
+ * config intact (schedule, audience, body, OIDC token settings) but
+ * does not fire. Calling resumeSyncJob flips it back on.
+ *
+ * In-flight Cloud Run Job executions started by previous fires
+ * continue to completion — pause only affects future invocations.
+ *
+ * Idempotent — NOT_FOUND is treated as already-deleted (caller should
+ * have handled deletion via deleteSyncJob; we no-op here so callers
+ * don't have to special-case the race).
+ */
+export async function pauseSyncJob(
+  clientId: string,
+  connectorId: string
+): Promise<void> {
+  const client = await scheduler();
+  const name = jobResourceName(clientId, connectorId);
+  try {
+    await client.pauseJob({ name });
+  } catch (err) {
+    const code = (err as { code?: number })?.code;
+    if (code === 5) return; // NOT_FOUND
+    // 9 = FAILED_PRECONDITION — job is already PAUSED. Idempotent goal
+    // says "calling pause on an already-paused job is success", not
+    // an error to bubble up.
+    if (code === 9) return;
+    console.error("[scheduler] pauseJob failed", {
+      name,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
+}
+
+/**
+ * Resume a paused Scheduler job. Schedule + audience + body are
+ * preserved from when it was paused — resume just flips state back
+ * to ENABLED. The next cron tick fires normally.
+ *
+ * Idempotent — NOT_FOUND is no-op (treat as already-deleted), and
+ * FAILED_PRECONDITION on already-ENABLED jobs is also no-op.
+ */
+export async function resumeSyncJob(
+  clientId: string,
+  connectorId: string
+): Promise<void> {
+  const client = await scheduler();
+  const name = jobResourceName(clientId, connectorId);
+  try {
+    await client.resumeJob({ name });
+  } catch (err) {
+    const code = (err as { code?: number })?.code;
+    if (code === 5) return; // NOT_FOUND
+    if (code === 9) return; // FAILED_PRECONDITION — already ENABLED
+    console.error("[scheduler] resumeJob failed", {
+      name,
+      err: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
+}
