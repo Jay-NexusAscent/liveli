@@ -8,7 +8,7 @@ import {
 } from "@/lib/firestore";
 import { readConnectorSecret } from "@/lib/secret-manager";
 import { runConnectorJob } from "@/lib/cloud-run";
-import { gcp } from "@/lib/gcp";
+import { cloudComputeRegionForResidency, gcp } from "@/lib/gcp";
 import { DEFAULT_BQ_LOCATION } from "@/lib/bigquery";
 import {
   buildTapEnv,
@@ -144,10 +144,15 @@ export async function POST(
     location = (wsSnap.data() as { bqLocation?: string })?.bqLocation ?? location;
   }
 
+  // Compute region follows residency: EU → europe-west1, US → us-central1.
+  const { region, suffix } = cloudComputeRegionForResidency(
+    location === "US" || location === "EU" ? location : "EU"
+  );
+
   const creds = await readConnectorSecret(clientId, connectorId);
 
   // ── 5. Build env + trigger Cloud Run Job ───────────────────────
-  const jobName = `connector-${data.type}-to-bq`;
+  const jobName = `connector-${data.type}-to-bq-${suffix}`;
   const env: Record<string, string> = {
     WORKSPACE_ID: clientId, // legacy var name
     CLIENT_ID: clientId,
@@ -169,7 +174,7 @@ export async function POST(
 
   let executionName: string;
   try {
-    const r = await runConnectorJob(jobName, env);
+    const r = await runConnectorJob(jobName, region, env);
     executionName = r.executionName;
   } catch (err) {
     const technical = err instanceof Error ? err.message : String(err);

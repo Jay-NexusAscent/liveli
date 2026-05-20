@@ -77,6 +77,29 @@ export function vertexRegionForResidency(
   }
 }
 
+/**
+ * Map a workspace's data-residency choice to the GCP region the
+ * connector Cloud Run Jobs + their Cloud Scheduler triggers should
+ * live in. Same residency promise as vertexRegionForResidency, applied
+ * to compute (not inference).
+ *
+ * The `suffix` is used in Cloud Run Job names — `connector-<type>-to-bq-eu`
+ * vs `-us` — because the same job name can coexist across regions, but
+ * a single global naming scheme makes it unambiguous which residency
+ * footprint a job belongs to. Mirroring the vertex region (europe-west1
+ * for EU) keeps our entire EU footprint in one regional family —
+ * Vertex, Cloud Run, Scheduler all in europe-west1.
+ *
+ * EU → europe-west1
+ * US → us-central1 (matches us-central1 Vertex region)
+ */
+export function cloudComputeRegionForResidency(
+  bqLocation: "EU" | "US" | undefined
+): { region: string; suffix: "eu" | "us" } {
+  if (bqLocation === "US") return { region: "us-central1", suffix: "us" };
+  return { region: "europe-west1", suffix: "eu" };
+}
+
 function requireEnv(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`Missing required env var: ${name}`);
