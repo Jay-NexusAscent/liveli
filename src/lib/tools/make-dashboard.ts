@@ -46,13 +46,65 @@ const Input = z.object({
     .describe("Charts that compose this dashboard (1-8). Each is a full ECharts spec with title."),
 });
 
+/**
+ * Same defensive normalization as make-chart.ts: each chart inside a
+ * dashboard input gets its top-level ECharts keys moved into
+ * `echartsOption` if the model misplaced them. Common failure pattern:
+ *   { charts: [{ title, series, yAxis, echartsOption: { xAxis } }] }
+ * Should be:
+ *   { charts: [{ title, echartsOption: { xAxis, yAxis, series } }] }
+ */
+const CHART_ECHARTS_KEYS = [
+  "series",
+  "xAxis",
+  "yAxis",
+  "tooltip",
+  "legend",
+  "grid",
+] as const;
+
+function normalizeDashboardInput(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const r = { ...(raw as Record<string, unknown>) };
+  if (!Array.isArray(r.charts)) return r;
+  let anyMoved = false;
+  r.charts = (r.charts as unknown[]).map((c) => {
+    if (!c || typeof c !== "object" || Array.isArray(c)) return c;
+    const chart = { ...(c as Record<string, unknown>) };
+    const existing =
+      chart.echartsOption &&
+      typeof chart.echartsOption === "object" &&
+      !Array.isArray(chart.echartsOption)
+        ? { ...(chart.echartsOption as Record<string, unknown>) }
+        : {};
+    let moved = false;
+    for (const key of CHART_ECHARTS_KEYS) {
+      if (key in chart && !(key in existing)) {
+        existing[key] = chart[key];
+        delete chart[key];
+        moved = true;
+        anyMoved = true;
+      }
+    }
+    chart.echartsOption = existing;
+    void moved;
+    return chart;
+  });
+  if (anyMoved) {
+    console.warn(
+      "[make_dashboard] normalised top-level ECharts keys into chart.echartsOption — model misplaced fields"
+    );
+  }
+  return r;
+}
+
 export const makeDashboardTool: ToolDefinition = {
   name: "make_dashboard",
   description:
     "Create a dashboard composed of multiple charts in one call. Use this when the user asks for an overview, summary, or report covering several related metrics. The dashboard is saved immediately and visible on the Dashboards tab.",
   inputSchema: Input,
   handler: async (raw, ctx) => {
-    const { title, description, charts } = Input.parse(raw);
+    const { title, description, charts } = Input.parse(normalizeDashboardInput(raw));
     const docRef = dashboardsIn(ctx.clientId, ctx.workspaceId).doc();
     const chartSpecs = charts.map((c, i) => ({
       order: i,

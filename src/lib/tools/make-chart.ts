@@ -55,13 +55,60 @@ const Input = z.object({
   ),
 });
 
+/**
+ * ECharts field names the model sometimes puts at the TOP level of the
+ * tool input instead of inside `echartsOption`. Defensive normalization
+ * moves them into `echartsOption` so a common shape mistake doesn't
+ * cost a round-trip + correction turn. The system prompt also tells
+ * the model the correct shape; this is belt-and-braces.
+ *
+ * Observed failure pattern: model emits
+ *   { title, yAxis, series, echartsOption: { xAxis } }
+ * Should be:
+ *   { title, echartsOption: { xAxis, yAxis, series } }
+ */
+const ECHARTS_TOP_LEVEL_KEYS = [
+  "series",
+  "xAxis",
+  "yAxis",
+  "tooltip",
+  "legend",
+  "grid",
+] as const;
+
+function normalizeChartInput(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const r = { ...(raw as Record<string, unknown>) };
+  const existing =
+    r.echartsOption && typeof r.echartsOption === "object" && !Array.isArray(r.echartsOption)
+      ? { ...(r.echartsOption as Record<string, unknown>) }
+      : {};
+  let moved = false;
+  for (const key of ECHARTS_TOP_LEVEL_KEYS) {
+    if (key in r && !(key in existing)) {
+      existing[key] = r[key];
+      delete r[key];
+      moved = true;
+    }
+  }
+  if (moved) {
+    r.echartsOption = existing;
+    console.warn(
+      "[make_chart] normalised top-level ECharts keys into echartsOption — model misplaced fields"
+    );
+  } else {
+    r.echartsOption = existing;
+  }
+  return r;
+}
+
 export const makeChartTool: ToolDefinition = {
   name: "make_chart",
   description:
     "Render a chart inline in the chat. The result is shown to the user immediately. Use this whenever the answer to a question is better understood visually — comparisons, time series, distributions, rankings.",
   inputSchema: Input,
   handler: async (raw) => {
-    const { title, echartsOption } = Input.parse(raw);
+    const { title, echartsOption } = Input.parse(normalizeChartInput(raw));
     return {
       content: { ok: true, title },
       clientRender: { kind: "chart", spec: echartsOption, title },
