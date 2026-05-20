@@ -11,6 +11,7 @@ import {
   DashboardIcon,
   HamburgerIcon,
   CloseIcon,
+  HistoryIcon,
   InsightIcon,
   SettingsIcon,
 } from "@/components/icons";
@@ -19,6 +20,7 @@ import { cn } from "@/lib/utils";
 
 const navItems = [
   { label: "Chat", href: "/chat", icon: ChatIcon },
+  { label: "History", href: "/chat/history", icon: HistoryIcon },
   { label: "Insights", href: "/insights", icon: InsightIcon },
   { label: "Connections", href: "/connections", icon: ConnectIcon },
   { label: "Dashboards", href: "/dashboards", icon: DashboardIcon },
@@ -55,7 +57,18 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       <nav className="flex-1 px-3 pt-4">
         <ul className="flex flex-col gap-0.5">
           {navItems.map((item) => {
-            const isActive = pathname.startsWith(item.href);
+            // Active when the path matches this nav item AND no other
+            // nav item is a longer prefix of the path. Without the
+            // longest-match check, `/chat/history` would mark both
+            // "Chat" (/chat) and "History" (/chat/history) as active.
+            const isActive =
+              pathname.startsWith(item.href) &&
+              !navItems.some(
+                (other) =>
+                  other.href !== item.href &&
+                  other.href.length > item.href.length &&
+                  pathname.startsWith(other.href)
+              );
             return (
               <li key={item.href}>
                 <Link
