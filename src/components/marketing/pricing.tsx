@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { ArrowRightIcon, SparkleIcon } from "@/components/icons";
+import { ScrollReveal } from "./scroll-reveal";
 
 interface Tier {
   /** Display name */
@@ -101,24 +102,26 @@ function formatPrice(priceGbp: number | null): string {
 export function MarketingPricing() {
   return (
     <section id="pricing" className="container-page py-28 sm:py-32">
-      <div className="mx-auto mb-16 max-w-2xl text-center">
-        <span className="mb-4 inline-block rounded-full bg-accent-subtle px-3 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-accent">
-          Pricing
-        </span>
-        <h2 className="text-[36px] font-semibold leading-[1.1] tracking-[-0.02em] text-text-primary font-heading sm:text-[44px]">
-          Pricing that scales with you.
-        </h2>
-        <p className="mt-5 text-[16px] leading-[1.6] text-text-secondary sm:text-[17px]">
-          Start free. Upgrade when you outgrow the limits. No credit card to begin.
-        </p>
-      </div>
+      <ScrollReveal>
+        <div className="mx-auto mb-16 max-w-2xl text-center">
+          <span className="mb-4 inline-block rounded-full bg-accent-subtle px-3 py-1 text-[11px] font-medium uppercase tracking-[0.12em] text-accent">
+            Pricing
+          </span>
+          <h2 className="text-[36px] font-semibold leading-[1.1] tracking-[-0.02em] text-text-primary font-heading sm:text-[44px]">
+            Pricing that scales with you.
+          </h2>
+          <p className="mt-5 text-[16px] leading-[1.6] text-text-secondary sm:text-[17px]">
+            Start free. Upgrade when you outgrow the limits. No credit card to begin.
+          </p>
+        </div>
+      </ScrollReveal>
 
       <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-        {tiers.map((tier) => (
+        {tiers.map((tier, i) => (
+          <ScrollReveal key={tier.name} delay={i * 80}>
           <div
-            key={tier.name}
             className={cn(
-              "card flex flex-col p-6 transition-transform duration-300 hover:-translate-y-0.5",
+              "card flex h-full flex-col p-6 transition-transform duration-300 hover:-translate-y-0.5",
               tier.emphasis === "popular" &&
                 "ring-2 ring-accent shadow-[0_0_36px_var(--accent-glow-strong)] lg:-translate-y-3 lg:hover:-translate-y-4",
               tier.emphasis === "enterprise" && "bg-elevated"
@@ -172,6 +175,7 @@ export function MarketingPricing() {
               <ArrowRightIcon />
             </Link>
           </div>
+          </ScrollReveal>
         ))}
       </div>
 
