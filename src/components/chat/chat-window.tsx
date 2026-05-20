@@ -46,11 +46,16 @@ const PROMPT_SUGGESTIONS = [
   "Build me a dashboard with sales overview",
 ];
 
-export function ChatWindow() {
+export function ChatWindow({ initialChatId }: { initialChatId?: string } = {}) {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [chatId, setChatId] = useState<string | undefined>();
+  const [chatId, setChatId] = useState<string | undefined>(initialChatId);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  // True while loading messages from /api/chats/[id]/messages on
+  // resume. We render a loading state instead of the empty-state
+  // suggestion grid so the user doesn't briefly see "Ask anything…"
+  // before their past messages flash in.
+  const [loadingHistory, setLoadingHistory] = useState(!!initialChatId);
   // Map of bqDataset → connector friendly name. Used to substitute
   // technical dataset IDs in displayed SQL with the user's source name.
   // Fetched once on mount; empty map gracefully no-ops the substitution.
@@ -98,6 +103,56 @@ export function ChatWindow() {
       }
     })();
   }, []);
+
+  // Resume mode: load past messages for an existing chat and rebuild
+  // the UI's MessageBlock tree from the persisted Firestore toolBlocks.
+  // tool_use.input and tool_result.content are JSON-stringified at
+  // persist time (see agent.ts) — we parse + reconstruct chart / table
+  // / dashboard blocks here so a customer who opens an old chat sees
+  // exactly what they saw the first time.
+  useEffect(() => {
+    if (!initialChatId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/chats/${initialChatId}/messages`);
+        if (!res.ok) {
+          // 404 → chat doesn't exist (deleted, or cross-tenant). Start fresh.
+          if (res.status === 404) {
+            if (!cancelled) setLoadingHistory(false);
+            return;
+          }
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const json = (await res.json()) as {
+          chat: { id: string; title: string };
+          messages: PersistedMessage[];
+        };
+        if (cancelled) return;
+        setMessages(reconstructMessages(json.messages));
+        setChatId(json.chat.id);
+      } catch (err) {
+        if (cancelled) return;
+        setMessages([
+          {
+            id: "history-error",
+            role: "assistant",
+            blocks: [
+              {
+                type: "text",
+                text: `_Couldn't load this chat's history: ${err instanceof Error ? err.message : String(err)}_`,
+              },
+            ],
+          },
+        ]);
+      } finally {
+        if (!cancelled) setLoadingHistory(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [initialChatId]);
 
   const sendMessage = async (text: string) => {
     if (!text.trim() || streaming) return;
@@ -181,7 +236,12 @@ export function ChatWindow() {
       {/* Scrollable message area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-6 py-8">
-          {messages.length === 0 ? (
+          {loadingHistory ? (
+            <div className="flex items-center gap-2 text-[12px] text-text-tertiary">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+              Loading chat history…
+            </div>
+          ) : messages.length === 0 ? (
             <EmptyState onPick={sendMessage} />
           ) : (
             <div className="space-y-6">
@@ -551,3 +611,136 @@ function applyEvent(
     return;
   }
 }
+
+
+interface PersistedMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content?: string;
+  toolBlocks?: PersistedToolBlock[];
+}
+
+type PersistedToolBlock =
+  | { type: 'text'; text: string }
+  | { type: 'tool_use'; id: string; name: string; input: unknown }
+  | { type: 'tool_result'; tool_use_id: string; content: unknown };
+
+/**
+ * Rebuild the in-memory MessageBlock tree from Firestore-persisted
+ * messages. agent.ts stringifies tool_use.input and tool_result.content
+ * before write (Firestore-safety against nested arrays); we parse them
+ * back here.
+ *
+ * For each tool_use → tool_result pair we look at the input and
+ * reconstruct the chart / table / dashboard blocks that were yielded
+ * over SSE at the time. The persisted data has everything needed:
+ *   - run_sql        → table block (rows from tool_result.content)
+ *   - make_chart     → chart block (spec from tool_use.input.echartsOption)
+ *   - make_dashboard → dashboard block (charts from tool_use.input.charts)
+ *   - list_tables    → tool block only (no client-side render)
+ */
+function reconstructMessages(persisted: PersistedMessage[]): Message[] {
+  return persisted.map((m): Message => {
+    if (m.role === 'user') {
+      return {
+        id: m.id,
+        role: 'user',
+        blocks: [{ type: 'text', text: m.content ?? '' }],
+      };
+    }
+    const blocks: MessageBlock[] = [];
+    const toolUseInput = new Map<string, { name: string; input: unknown }>();
+    for (const b of m.toolBlocks ?? []) {
+      if (b.type === 'text') {
+        blocks.push({ type: 'text', text: b.text });
+      } else if (b.type === 'tool_use') {
+        const input = unwrapJsonField(b.input);
+        toolUseInput.set(b.id, { name: b.name, input });
+        blocks.push({
+          type: 'tool',
+          id: b.id,
+          name: b.name,
+          status: 'done',
+          input,
+        });
+      } else if (b.type === 'tool_result') {
+        const content = unwrapJsonField(b.content);
+        // Mutate the matching tool block (the one we just pushed) so
+        // its output renders; also push a chart / table / dashboard
+        // companion block if the tool's recorded input supports it.
+        const tool = blocks.find(
+          (x) => x.type === 'tool' && x.id === b.tool_use_id
+        );
+        if (tool && tool.type === 'tool') {
+          tool.output = content;
+        }
+        const meta = toolUseInput.get(b.tool_use_id);
+        if (!meta) continue;
+        const companion = reconstructCompanion(b.tool_use_id, meta, content);
+        if (companion) blocks.push(companion);
+      }
+    }
+    return { id: m.id, role: 'assistant', blocks };
+  });
+}
+
+function reconstructCompanion(
+  toolUseId: string,
+  meta: { name: string; input: unknown },
+  content: unknown
+): MessageBlock | null {
+  if (meta.name === 'run_sql') {
+    const rows = (content as { rows?: Record<string, unknown>[] })?.rows;
+    if (Array.isArray(rows)) {
+      return { type: 'table', id: toolUseId, rows };
+    }
+  }
+  if (meta.name === 'make_chart') {
+    const i = meta.input as { title?: string; echartsOption?: unknown } | null;
+    if (i?.title && i?.echartsOption) {
+      return {
+        type: 'chart',
+        id: toolUseId,
+        title: i.title,
+        spec: i.echartsOption,
+      };
+    }
+  }
+  if (meta.name === 'make_dashboard') {
+    const i = meta.input as
+      | {
+          title?: string;
+          description?: string;
+          charts?: Array<{ title?: string; echartsOption?: unknown }>;
+        }
+      | null;
+    const dashboardId = (content as { dashboardId?: string })?.dashboardId;
+    if (i?.title && Array.isArray(i.charts) && dashboardId) {
+      return {
+        type: 'dashboard',
+        id: toolUseId,
+        dashboardId,
+        title: i.title,
+        description: i.description,
+        charts: i.charts.map((c, order) => ({
+          order,
+          title: c.title ?? '',
+          spec: c.echartsOption,
+        })),
+      };
+    }
+  }
+  return null;
+}
+
+function unwrapJsonField(v: unknown): unknown {
+  if (typeof v === 'string') {
+    try {
+      return JSON.parse(v);
+    } catch {
+      return null;
+    }
+  }
+  return v;
+}
+
