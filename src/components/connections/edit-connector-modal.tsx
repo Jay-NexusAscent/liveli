@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Modal } from "@/components/ui/modal";
+import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { cn } from "@/lib/utils";
 
 type SyncFrequency = "5m" | "15m" | "30m" | "1h" | "6h" | "12h" | "24h";
@@ -32,7 +33,11 @@ interface ConnectorForEdit {
 interface Props {
   connector: ConnectorForEdit | null;
   onClose: () => void;
+  /** Fired after the regular save (name/schedule/credentials patch). */
   onSaved: () => void;
+  /** Fired after Danger Zone → Delete connector succeeds. Caller is
+   * expected to close this modal and refresh the connector list. */
+  onDeleted: () => void;
 }
 
 interface FormState {
@@ -56,10 +61,13 @@ interface FormState {
  *     credentials" section. Empty creds == leave existing secret in
  *     place. Full creds set == write new Secret Manager version.
  */
-export function EditConnectorModal({ connector, onClose, onSaved }: Props) {
+export function EditConnectorModal({ connector, onClose, onSaved, onDeleted }: Props) {
   const [form, setForm] = useState<FormState>(emptyForm());
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Which destructive action the user has clicked but not yet confirmed.
+   * Null when the danger-zone confirm modal is closed. */
+  const [pendingDanger, setPendingDanger] = useState<"refresh" | "delete" | null>(null);
 
   useEffect(() => {
     if (!connector) return;
@@ -115,6 +123,58 @@ export function EditConnectorModal({ connector, onClose, onSaved }: Props) {
       return;
     }
     update("host", trimmed);
+  };
+
+  /**
+   * Confirm handler for the Danger Zone actions. The action verb is
+   * captured in `pendingDanger` — this single function routes to the
+   * right endpoint and unifies the success path (close the modal +
+   * fire the appropriate callback).
+   */
+  const runDangerAction = async () => {
+    if (!connector || !pendingDanger) return;
+    setError(null);
+    try {
+      if (pendingDanger === "refresh") {
+        const res = await fetch(
+          `/api/connections/${connector.id}/full-refresh`,
+          { method: "POST" }
+        );
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(
+            data.errorMessage
+              ? `${data.error ?? "Fresh ingest failed"}\n${data.errorMessage}`
+              : data.error ?? `HTTP ${res.status}`
+          );
+        }
+        // Refresh starts a sync; let the parent know so its connector
+        // list reflects status=syncing immediately.
+        onSaved();
+        onClose();
+      } else {
+        const res = await fetch(`/api/connections/${connector.id}`, {
+          method: "DELETE",
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(
+            data.errorMessage
+              ? `${data.error ?? "Delete failed"}\n${data.errorMessage}`
+              : data.error ?? `HTTP ${res.status}`
+          );
+        }
+        onDeleted();
+      }
+      setPendingDanger(null);
+    } catch (err) {
+      // Keep the danger-confirm modal open so the user sees the error
+      // in context. ConfirmModal's `running` state will reset because
+      // we let the promise reject.
+      setError(err instanceof Error ? err.message : String(err));
+      setPendingDanger(null);
+      throw err;
+    }
   };
 
   const submit = async (e: React.FormEvent) => {
@@ -174,6 +234,7 @@ export function EditConnectorModal({ connector, onClose, onSaved }: Props) {
   };
 
   return (
+    <>
     <Modal
       open={!!connector}
       onClose={submitting ? () => {} : onClose}
@@ -312,8 +373,58 @@ export function EditConnectorModal({ connector, onClose, onSaved }: Props) {
           )}
         </div>
 
+        {/* ─── Danger zone ─────────────────────────────────────
+            Destructive actions live here, separated from the
+            save flow. Both use the shared ConfirmModal so they
+            require an extra deliberate click. */}
+        <div className="rounded-md border border-[color:var(--status-error)]/25 bg-[color:var(--status-error)]/5 p-4">
+          <div className="mb-3 text-[11px] font-medium uppercase tracking-wider text-[color:var(--status-error)]">
+            Danger zone
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] font-medium text-text-primary">Fresh ingest</div>
+                <p className="mt-0.5 text-[12px] text-text-secondary">
+                  Drops the replicated data and re-syncs from your source. Use
+                  after schema changes (renamed tables / dropped columns) or to
+                  recover from a corrupted state. Charts and dashboards that
+                  reference this connector will break until the resync completes.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPendingDanger("refresh")}
+                disabled={submitting}
+                className="shrink-0 rounded-md border border-border bg-elevated px-3 py-1.5 text-[12px] font-medium text-text-secondary transition-colors hover:border-[color:var(--status-error)]/40 hover:bg-[color:var(--status-error)]/10 hover:text-[color:var(--status-error)] disabled:opacity-60"
+              >
+                Wipe and re-ingest
+              </button>
+            </div>
+
+            <div className="flex items-start justify-between gap-3 border-t border-[color:var(--status-error)]/15 pt-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] font-medium text-text-primary">Delete connector</div>
+                <p className="mt-0.5 text-[12px] text-text-secondary">
+                  Permanently removes this connector, its credentials, and all
+                  replicated data. This cannot be undone.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPendingDanger("delete")}
+                disabled={submitting}
+                className="shrink-0 rounded-md border border-border bg-elevated px-3 py-1.5 text-[12px] font-medium text-text-secondary transition-colors hover:border-[color:var(--status-error)]/40 hover:bg-[color:var(--status-error)]/10 hover:text-[color:var(--status-error)] disabled:opacity-60"
+              >
+                Delete connector
+              </button>
+            </div>
+          </div>
+        </div>
+
         {error && (
-          <div className="rounded-md border border-[color:var(--status-error)]/30 bg-[color:var(--status-error)]/10 px-3 py-2 text-[12px] text-[color:var(--status-error)]">
+          <div className="rounded-md border border-[color:var(--status-error)]/30 bg-[color:var(--status-error)]/10 px-3 py-2 text-[12px] whitespace-pre-wrap text-[color:var(--status-error)]">
             {error}
           </div>
         )}
@@ -340,6 +451,77 @@ export function EditConnectorModal({ connector, onClose, onSaved }: Props) {
         </div>
       </form>
     </Modal>
+
+    {/* Confirm-on-top modal for both Danger Zone actions. The
+        ConfirmModal sits above the Edit modal in the stacking
+        context — Modal renders to a portal so this works
+        without any extra z-index gymnastics. */}
+    <ConfirmModal
+      open={pendingDanger === "refresh"}
+      title="Wipe and re-ingest?"
+      destructive
+      confirmLabel="Wipe and re-ingest"
+      cancelLabel="Cancel"
+      message={
+        <>
+          <p>
+            You&apos;re about to drop all replicated data for{" "}
+            <span className="font-medium text-text-primary">{connector.name}</span>{" "}
+            and resync from scratch.
+          </p>
+          <ul className="mt-3 ml-5 list-disc space-y-1 text-[13px]">
+            <li>The BigQuery dataset will be dropped and re-created.</li>
+            <li>
+              The current credentials and source schema will be re-read; any
+              new tables / columns in your source will be picked up.
+            </li>
+            <li>
+              <span className="font-medium text-text-primary">
+                Charts and dashboards using this connector will fail
+              </span>{" "}
+              until the new sync completes.
+            </li>
+          </ul>
+          <p className="mt-3 text-[12px] text-text-tertiary">
+            Use this after source-schema changes or to recover from a corrupted state.
+          </p>
+        </>
+      }
+      onConfirm={runDangerAction}
+      onCancel={() => setPendingDanger(null)}
+    />
+
+    <ConfirmModal
+      open={pendingDanger === "delete"}
+      title="Delete connector?"
+      destructive
+      confirmLabel="Delete connector"
+      cancelLabel="Cancel"
+      message={
+        <>
+          <p>
+            You&apos;re about to delete{" "}
+            <span className="font-medium text-text-primary">{connector.name}</span>
+            . This will:
+          </p>
+          <ul className="mt-3 ml-5 list-disc space-y-1 text-[13px]">
+            <li>Securely remove your stored connection credentials.</li>
+            <li>Stop any future syncs for this source.</li>
+            <li>
+              <span className="font-medium text-text-primary">
+                Permanently delete all replicated data
+              </span>{" "}
+              for this source — tables, history, and any charts that reference
+              them will no longer load.
+            </li>
+          </ul>
+          <p className="mt-3 text-[12px] text-text-tertiary">This action cannot be undone.</p>
+        </>
+      }
+      onConfirm={runDangerAction}
+      onCancel={() => setPendingDanger(null)}
+    />
+    </>
   );
 }
 

@@ -32,7 +32,10 @@ export type UsageEventType =
   | "dashboard.view"
   | "workspace.create"
   | "connector.create"
-  | "connector.delete";
+  | "connector.delete"
+  | "connector.pause"
+  | "connector.resume"
+  | "connector.full_refresh";
 
 export interface UsageEventBase {
   clientId: string;
