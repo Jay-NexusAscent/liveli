@@ -13,7 +13,6 @@ import { FacebookAdsWizard } from "@/components/connections/facebook-ads-wizard"
 import { SalesforceWizard } from "@/components/connections/salesforce-wizard";
 import { MailchimpWizard } from "@/components/connections/mailchimp-wizard";
 import { EditConnectorModal } from "@/components/connections/edit-connector-modal";
-import { ConfirmModal } from "@/components/ui/confirm-modal";
 
 interface ConnectorRecord {
   id: string;
@@ -22,6 +21,9 @@ interface ConnectorRecord {
   status: string;
   lastError?: string;
   syncFrequency?: "5m" | "15m" | "30m" | "1h" | "6h" | "12h" | "24h";
+  /** True when the Cloud Scheduler job is paused — recurring syncs
+   * suppressed. Manual "Sync now" and Fresh Ingest still work. */
+  paused?: boolean;
   /** Firestore Timestamp shape: { _seconds, _nanoseconds } when serialized. */
   lastSyncFinishedAt?: { _seconds: number; _nanoseconds?: number };
   /** Duration of the most recent successful sync, ms. (Tier 1) */
@@ -242,7 +244,9 @@ export default function ConnectionsPage() {
     refresh();
   };
   const [syncingId, setSyncingId] = useState<string | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<ConnectorRecord | null>(null);
+  /** Connector currently transitioning paused state — used to disable
+   * the Pause button while the API call is in flight. */
+  const [pausingId, setPausingId] = useState<string | null>(null);
   const [editing, setEditing] = useState<ConnectorRecord | null>(null);
   const [search, setSearch] = useState("");
   const [filterCategory, setFilterCategory] = useState<SourceCategory | "All">("All");
@@ -331,20 +335,25 @@ export default function ConnectionsPage() {
     }
   };
 
-  const confirmDelete = async () => {
-    if (!pendingDelete) return;
+  const togglePause = async (connectorId: string, paused: boolean) => {
+    setPausingId(connectorId);
     setError(null);
-    const res = await fetch(`/api/connections/${pendingDelete.id}`, { method: "DELETE" });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      setError(
-        data.errorMessage
-          ? `${data.error ?? "Delete failed"}\n${data.errorMessage}`
-          : data.error ?? `HTTP ${res.status}`
-      );
+    try {
+      const res = await fetch(`/api/connections/${connectorId}/pause`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paused }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPausingId(null);
     }
-    setPendingDelete(null);
-    await refresh();
   };
 
   return (
@@ -454,7 +463,17 @@ export default function ConnectionsPage() {
                       </div>
                     )}
                   </div>
-                  <StatusBadge status={c.status} />
+                  <div className="flex items-center gap-1.5">
+                    {c.paused && (
+                      <span
+                        className="rounded-full bg-[color:var(--surface-tertiary)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-text-secondary"
+                        title="Scheduled syncs are paused. Manual Sync now still works."
+                      >
+                        Paused
+                      </span>
+                    )}
+                    <StatusBadge status={c.status} />
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-end gap-1.5 border-t border-border pt-2">
@@ -467,6 +486,24 @@ export default function ConnectionsPage() {
                   </button>
                   <button
                     type="button"
+                    onClick={() => togglePause(c.id, !c.paused)}
+                    disabled={pausingId === c.id}
+                    className={cn(
+                      "rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text-primary",
+                      pausingId === c.id && "opacity-60"
+                    )}
+                    title={c.paused ? "Resume scheduled syncs" : "Pause scheduled syncs (manual sync still works)"}
+                  >
+                    {pausingId === c.id
+                      ? c.paused
+                        ? "Resuming…"
+                        : "Pausing…"
+                      : c.paused
+                        ? "Resume"
+                        : "Pause"}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => triggerSync(c.id)}
                     disabled={syncingId === c.id || c.status === "syncing"}
                     className={cn(
@@ -475,14 +512,6 @@ export default function ConnectionsPage() {
                     )}
                   >
                     {syncingId === c.id || c.status === "syncing" ? "Syncing…" : "Sync now"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setPendingDelete(c)}
-                    className="rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:border-[color:var(--status-error)]/40 hover:bg-[color:var(--status-error)]/10 hover:text-[color:var(--status-error)]"
-                    title="Delete connector"
-                  >
-                    Delete
                   </button>
                 </div>
               </div>
@@ -680,41 +709,10 @@ export default function ConnectionsPage() {
         onSaved={() => {
           refresh();
         }}
-      />
-
-      <ConfirmModal
-        open={pendingDelete !== null}
-        title="Delete connector?"
-        destructive
-        confirmLabel="Delete connector"
-        cancelLabel="Cancel"
-        message={
-          pendingDelete ? (
-            <>
-              <p>
-                You&apos;re about to delete{" "}
-                <span className="font-medium text-text-primary">
-                  {pendingDelete.name}
-                </span>
-                . This will:
-              </p>
-              <ul className="mt-3 ml-5 list-disc space-y-1 text-[13px]">
-                <li>Securely remove your stored connection credentials.</li>
-                <li>Stop any future syncs for this source.</li>
-                <li>
-                  <span className="font-medium text-text-primary">
-                    Permanently delete all replicated data
-                  </span>{" "}
-                  for this source — tables, history, and any charts that reference
-                  them will no longer load.
-                </li>
-              </ul>
-              <p className="mt-3 text-[12px] text-text-tertiary">This action cannot be undone.</p>
-            </>
-          ) : null
-        }
-        onConfirm={confirmDelete}
-        onCancel={() => setPendingDelete(null)}
+        onDeleted={() => {
+          setEditing(null);
+          refresh();
+        }}
       />
     </div>
   );

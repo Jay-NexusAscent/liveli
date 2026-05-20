@@ -232,3 +232,87 @@ export async function deleteSyncJob(
     }
   }
 }
+
+/**
+ * Pause the Scheduler job — the job stays in the system with all its
+ * config intact (schedule, audience, body, OIDC token settings) but
+ * does not fire. Calling resumeSyncJob flips it back on.
+ *
+ * In-flight Cloud Run Job executions started by previous fires
+ * continue to completion — pause only affects future invocations.
+ *
+ * Idempotent — NOT_FOUND is treated as already-deleted (caller should
+ * have handled deletion via deleteSyncJob; we no-op here so callers
+ * don't have to special-case the race).
+ */
+export async function pauseSyncJob(
+  clientId: string,
+  connectorId: string,
+  region: string
+): Promise<void> {
+  const client = await scheduler();
+
+  // Mirror deleteSyncJob's dual-region behaviour. A connector created
+  // before regional routing landed has its Scheduler job in europe-west4
+  // (LEGACY_REGION); newer connectors have it in their workspace's
+  // residency region. Without an extra Firestore lookup we don't know
+  // which, and both pause attempts are cheap + idempotent.
+  const targets =
+    region === LEGACY_REGION ? [region] : [region, LEGACY_REGION];
+
+  for (const r of targets) {
+    const name = jobResourceName(r, clientId, connectorId);
+    try {
+      await client.pauseJob({ name });
+    } catch (err) {
+      const code = (err as { code?: number })?.code;
+      if (code === 5) continue; // NOT_FOUND in this region — fine.
+      // 9 = FAILED_PRECONDITION — job is already PAUSED. Idempotent
+      // goal: calling pause on an already-paused job is success.
+      if (code === 9) continue;
+      console.error("[scheduler] pauseJob failed", {
+        name,
+        err: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  }
+}
+
+/**
+ * Resume a paused Scheduler job. Schedule + audience + body are
+ * preserved from when it was paused — resume just flips state back
+ * to ENABLED. The next cron tick fires normally.
+ *
+ * Idempotent — NOT_FOUND is no-op (treat as already-deleted), and
+ * FAILED_PRECONDITION on already-ENABLED jobs is also no-op.
+ */
+export async function resumeSyncJob(
+  clientId: string,
+  connectorId: string,
+  region: string
+): Promise<void> {
+  const client = await scheduler();
+
+  // Same dual-region pattern as pauseSyncJob / deleteSyncJob — the
+  // job may live in either the new residency region or the legacy
+  // europe-west4. Resume both; NOT_FOUND on either is fine.
+  const targets =
+    region === LEGACY_REGION ? [region] : [region, LEGACY_REGION];
+
+  for (const r of targets) {
+    const name = jobResourceName(r, clientId, connectorId);
+    try {
+      await client.resumeJob({ name });
+    } catch (err) {
+      const code = (err as { code?: number })?.code;
+      if (code === 5) continue; // NOT_FOUND in this region — fine.
+      if (code === 9) continue; // FAILED_PRECONDITION — already ENABLED
+      console.error("[scheduler] resumeJob failed", {
+        name,
+        err: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  }
+}
