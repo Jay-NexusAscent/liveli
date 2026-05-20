@@ -154,6 +154,17 @@ export function TrendDownIcon({ className }: IconProps) {
   );
 }
 
+export function ExpandIcon({ className }: IconProps) {
+  return (
+    <svg className={className} width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 8V3h5" />
+      <path d="M17 8V3h-5" />
+      <path d="M3 12v5h5" />
+      <path d="M17 12v5h-5" />
+    </svg>
+  );
+}
+
 export function TrashIcon({ className }: IconProps) {
   return (
     <svg className={className} width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

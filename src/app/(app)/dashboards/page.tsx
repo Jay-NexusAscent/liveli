@@ -2,7 +2,13 @@
 
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
-import { DashboardIcon, SparkleIcon, TrashIcon } from "@/components/icons";
+import {
+  DashboardIcon,
+  ExpandIcon,
+  SparkleIcon,
+  TrashIcon,
+} from "@/components/icons";
+import { FullscreenModal } from "@/components/dashboards/fullscreen-modal";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
@@ -20,6 +26,15 @@ interface SavedDashboard {
   charts: Array<{ order: number; title: string; spec: unknown }>;
 }
 
+type FullscreenContent =
+  | { kind: "chart"; title: string; spec: unknown }
+  | {
+      kind: "dashboard";
+      title: string;
+      description?: string | null;
+      charts: Array<{ order: number; title: string; spec: unknown }>;
+    };
+
 export default function DashboardsPage() {
   const [charts, setCharts] = useState<SavedChart[]>([]);
   const [dashboards, setDashboards] = useState<SavedDashboard[]>([]);
@@ -27,6 +42,9 @@ export default function DashboardsPage() {
   // Per-id pending state for delete actions — prevents double-clicks
   // and lets the trash icon dim while the DELETE round-trips.
   const [deleting, setDeleting] = useState<Set<string>>(new Set());
+  // Currently-fullscreened chart or dashboard, or null. Single piece of
+  // state so only one fullscreen view can be open at a time.
+  const [fullscreen, setFullscreen] = useState<FullscreenContent | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -129,15 +147,41 @@ export default function DashboardsPage() {
                       <p className="mt-1 text-[13px] text-text-secondary">{d.description}</p>
                     )}
                   </div>
-                  <DeleteButton
-                    onClick={() => deleteDashboard(d.id, d.title)}
-                    disabled={deleting.has(d.id)}
-                    ariaLabel={`Delete dashboard ${d.title}`}
-                  />
+                  <div className="flex shrink-0 items-center gap-1">
+                    <IconButton
+                      onClick={() =>
+                        setFullscreen({
+                          kind: "dashboard",
+                          title: d.title,
+                          description: d.description,
+                          charts: d.charts,
+                        })
+                      }
+                      ariaLabel={`View dashboard ${d.title} full screen`}
+                      variant="neutral"
+                    >
+                      <ExpandIcon />
+                    </IconButton>
+                    <IconButton
+                      onClick={() => deleteDashboard(d.id, d.title)}
+                      disabled={deleting.has(d.id)}
+                      ariaLabel={`Delete dashboard ${d.title}`}
+                      variant="danger"
+                    >
+                      <TrashIcon />
+                    </IconButton>
+                  </div>
                 </div>
                 <div className="grid gap-4 md:grid-cols-2">
                   {d.charts.map((c, i) => (
-                    <ChartTile key={i} title={c.title} spec={c.spec} />
+                    <ChartTile
+                      key={i}
+                      title={c.title}
+                      spec={c.spec}
+                      onExpand={() =>
+                        setFullscreen({ kind: "chart", title: c.title, spec: c.spec })
+                      }
+                    />
                   ))}
                 </div>
               </div>
@@ -157,6 +201,9 @@ export default function DashboardsPage() {
                 key={c.id}
                 title={c.title}
                 spec={c.spec}
+                onExpand={() =>
+                  setFullscreen({ kind: "chart", title: c.title, spec: c.spec })
+                }
                 onDelete={() => deleteChart(c.id, c.title)}
                 deleting={deleting.has(c.id)}
               />
@@ -164,6 +211,8 @@ export default function DashboardsPage() {
           </div>
         </section>
       )}
+
+      <FullscreenModal content={fullscreen} onClose={() => setFullscreen(null)} />
     </div>
   );
 }
@@ -171,11 +220,13 @@ export default function DashboardsPage() {
 function ChartTile({
   title,
   spec,
+  onExpand,
   onDelete,
   deleting,
 }: {
   title: string;
   spec: unknown;
+  onExpand?: () => void;
   onDelete?: () => void;
   deleting?: boolean;
 }) {
@@ -183,13 +234,27 @@ function ChartTile({
     <div className="card-elevated overflow-hidden">
       <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2.5">
         <div className="truncate text-[13px] font-medium text-text-primary">{title}</div>
-        {onDelete && (
-          <DeleteButton
-            onClick={onDelete}
-            disabled={!!deleting}
-            ariaLabel={`Delete chart ${title}`}
-          />
-        )}
+        <div className="flex shrink-0 items-center gap-1">
+          {onExpand && (
+            <IconButton
+              onClick={onExpand}
+              ariaLabel={`View chart ${title} full screen`}
+              variant="neutral"
+            >
+              <ExpandIcon />
+            </IconButton>
+          )}
+          {onDelete && (
+            <IconButton
+              onClick={onDelete}
+              disabled={!!deleting}
+              ariaLabel={`Delete chart ${title}`}
+              variant="danger"
+            >
+              <TrashIcon />
+            </IconButton>
+          )}
+        </div>
       </div>
       <div className="p-3">
         <ReactECharts
@@ -203,28 +268,38 @@ function ChartTile({
 }
 
 /**
- * Small, low-visual-weight delete icon button. Inline trash icon, no
- * background until hover so it doesn't compete with the chart content.
- * Disabled state grays it out during the round-trip.
+ * Compact icon-only action button. `variant`:
+ *   - neutral: subtle hover (used for fullscreen/expand)
+ *   - danger:  red hover (used for delete)
  */
-function DeleteButton({
+function IconButton({
   onClick,
   disabled,
   ariaLabel,
+  variant,
+  children,
 }: {
   onClick: () => void;
-  disabled: boolean;
+  disabled?: boolean;
   ariaLabel: string;
+  variant: "neutral" | "danger";
+  children: React.ReactNode;
 }) {
+  const base =
+    "shrink-0 rounded-md p-1.5 text-text-tertiary transition-colors disabled:cursor-not-allowed disabled:opacity-50";
+  const hover =
+    variant === "danger"
+      ? "hover:bg-[color:var(--status-error)]/10 hover:text-[color:var(--status-error)]"
+      : "hover:bg-hover hover:text-text-primary";
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
       aria-label={ariaLabel}
-      className="shrink-0 rounded-md p-1.5 text-text-tertiary transition-colors hover:bg-[color:var(--status-error)]/10 hover:text-[color:var(--status-error)] disabled:cursor-not-allowed disabled:opacity-50"
+      className={`${base} ${hover}`}
     >
-      <TrashIcon />
+      {children}
     </button>
   );
 }
