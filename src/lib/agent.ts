@@ -49,6 +49,41 @@ Current date: ${new Date().toISOString().split("T")[0]}.`;
 const MAX_TURNS = 8;
 
 /**
+ * Emit a single-line summary of an agent turn for production timing
+ * visibility. We bias toward one line per turn rather than many fine-
+ * grained logs because Vercel's runtime log MCP aggregates by request
+ * row and truncates content — a compact JSON summary survives that
+ * aggregation, individual sub-logs get hidden.
+ *
+ * Read the log when chats hang or feel slow: each turn's `totalMs`
+ * shows whether budget is going to Vertex (`vertexCallMs` + `streamMs`),
+ * tools (`toolsMs` + per-tool breakdown), or auth (`authMs`).
+ */
+function logTurnComplete(
+  turn: number,
+  turnStart: number,
+  metrics: {
+    authMs: number;
+    vertexCallMs: number;
+    streamMs: number;
+    toolsMs: number;
+    toolsExecuted: Array<{ name: string; ms: number; ok: boolean }>;
+  },
+  hasMoreTurns: boolean
+): void {
+  console.log("[agent] turn complete", {
+    turn,
+    totalMs: Date.now() - turnStart,
+    authMs: metrics.authMs,
+    vertexCallMs: metrics.vertexCallMs,
+    streamMs: metrics.streamMs,
+    toolsMs: metrics.toolsMs,
+    toolsExecuted: metrics.toolsExecuted,
+    hasMoreTurns,
+  });
+}
+
+/**
  * Walk an Error's `.cause` chain (and the SDK's custom `.stackTrace`
  * alias) and produce a single readable string covering every layer.
  *
@@ -230,8 +265,23 @@ export async function* runAgentTurn(
   while (turn < MAX_TURNS) {
     turn++;
 
+    // Per-turn timing — surfaced as one compact log line at end of
+    // each iteration so we can see where the 60s budget goes when a
+    // chat hangs. Vercel runtime log MCP truncates content but
+    // preserves whole-line JSON, so one summary line per turn is the
+    // most useful shape.
+    const turnStart = Date.now();
+    const turnMetrics = {
+      authMs: 0,
+      vertexCallMs: 0,
+      streamMs: 0,
+      toolsMs: 0,
+      toolsExecuted: [] as Array<{ name: string; ms: number; ok: boolean }>,
+    };
+
     // Wrap each external call with tagged try/catch so failures
     // surface their actual source.
+    const authStart = Date.now();
     try {
       await vertexReady(vertexRegion); // ensures ADC is written before the SDK reads it
     } catch (err) {
@@ -241,6 +291,7 @@ export async function* runAgentTurn(
       (wrapped as Error & { source?: string }).source = "vertexReady";
       throw wrapped;
     }
+    turnMetrics.authMs = Date.now() - authStart;
 
     // Build a fresh model per turn — systemInstruction lives here (not on
     // the per-request body) so the SDK uses its canonical wiring.
@@ -251,6 +302,7 @@ export async function* runAgentTurn(
     });
 
     let result;
+    const vertexCallStart = Date.now();
     try {
       console.log("[agent] generateContentStream", {
         region: vertexRegion,
@@ -266,7 +318,9 @@ export async function* runAgentTurn(
         contents: history,
         generationConfig: { maxOutputTokens: 4096 },
       });
+      turnMetrics.vertexCallMs = Date.now() - vertexCallStart;
     } catch (err) {
+      turnMetrics.vertexCallMs = Date.now() - vertexCallStart;
       const props: Record<string, unknown> = {};
       if (err && typeof err === "object") {
         for (const key of Object.getOwnPropertyNames(err)) {
@@ -318,6 +372,7 @@ export async function* runAgentTurn(
       throw wrapped;
     }
 
+    const streamStart = Date.now();
     try {
       for await (const chunk of streamIter) {
         const candidate = chunk.candidates?.[0] as GenerateContentCandidate | undefined;
@@ -342,7 +397,9 @@ export async function* runAgentTurn(
           totalTokensOut += usage.candidatesTokenCount ?? 0;
         }
       }
+      turnMetrics.streamMs = Date.now() - streamStart;
     } catch (err) {
+      turnMetrics.streamMs = Date.now() - streamStart;
       const props: Record<string, unknown> = {};
       if (err && typeof err === "object") {
         for (const key of Object.getOwnPropertyNames(err)) {
@@ -388,7 +445,10 @@ export async function* runAgentTurn(
     }
 
     // ── No function calls → we're done ──────────────────────────
-    if (turnFunctionCalls.length === 0) break;
+    if (turnFunctionCalls.length === 0) {
+      logTurnComplete(turn, turnStart, turnMetrics, false);
+      break;
+    }
 
     // ── Execute the function calls ──────────────────────────────
     const fnResultParts: Part[] = [];
@@ -414,6 +474,8 @@ export async function* runAgentTurn(
         input: fnArgs,
       });
 
+      const toolStart = Date.now();
+      let toolOk = true;
       try {
         const result = await executeTool(fnName, fnArgs, ctx);
 
@@ -452,6 +514,7 @@ export async function* runAgentTurn(
           content: result.content,
         });
       } catch (err) {
+        toolOk = false;
         const message = err instanceof Error ? err.message : String(err);
         yield { type: "tool_result", id: toolUseId, output: null, error: message };
         fnResultParts.push({
@@ -466,12 +529,24 @@ export async function* runAgentTurn(
           content: { error: message },
         });
       }
+      const toolMs = Date.now() - toolStart;
+      turnMetrics.toolsMs += toolMs;
+      turnMetrics.toolsExecuted.push({ name: fnName, ms: toolMs, ok: toolOk });
     }
 
     // Append all function responses as a single "user" turn (Gemini
     // semantics: tool outputs come from the user role, not assistant).
     history.push({ role: "user", parts: fnResultParts });
+
+    logTurnComplete(turn, turnStart, turnMetrics, true);
   }
+
+  console.log("[agent] runAgentTurn complete", {
+    turns: turn,
+    totalMs: Date.now() - turnStartedAt,
+    tokensIn: totalTokensIn,
+    tokensOut: totalTokensOut,
+  });
 
   yield { type: "message_stop" };
 
