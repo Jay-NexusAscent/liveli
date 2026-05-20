@@ -17,7 +17,16 @@ plugins:
       #   TAP_POSTGRES_FILTER_SCHEMAS (JSON array, overrides default below)
       config:
         ssl: true
-        ssl_mode: prefer
+        # ssl_mode: require — NOT `prefer`.
+        # `prefer` makes psycopg2 attempt a non-SSL handshake first and
+        # only fall back to SSL after the server refuses. Neon's pooler
+        # rejects the non-SSL attempt with `connection is insecure (try
+        # using sslmode=require)` — visible in Cloud Run Job logs even
+        # when the eventual SSL retry succeeds. Most managed Postgres
+        # providers (Neon, Supabase, RDS with rds.force_ssl) refuse
+        # non-SSL connections outright, so `require` is the only mode
+        # that works against all of them without a noisy first round-trip.
+        ssl_mode: require
         # Default to user schema only. Without this the tap discovers
         # pg_catalog + information_schema and target-bigquery crashes
         # creating tables like "information_schema__pg_..." because BQ

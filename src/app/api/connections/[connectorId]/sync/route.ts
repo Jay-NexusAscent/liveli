@@ -3,7 +3,7 @@ import { requireWorkspaceContext, UnauthorizedError } from "@/lib/clients";
 import { connectorsIn, dbReady, workspaceDoc } from "@/lib/firestore";
 import { readConnectorSecret } from "@/lib/secret-manager";
 import { runConnectorJob } from "@/lib/cloud-run";
-import { gcp } from "@/lib/gcp";
+import { cloudComputeRegionForResidency, gcp } from "@/lib/gcp";
 import { DEFAULT_BQ_LOCATION } from "@/lib/bigquery";
 import {
   buildTapEnv,
@@ -50,9 +50,16 @@ export async function POST(
     location = (wsSnap.data() as { bqLocation?: string })?.bqLocation ?? location;
   }
 
+  // Compute region follows residency: EU → europe-west1, US → us-central1.
+  // The `-eu`/`-us` suffix scopes the job name to the region (Terraform
+  // declares both copies in infra/cloud-run.tf).
+  const { region, suffix } = cloudComputeRegionForResidency(
+    location === "US" || location === "EU" ? location : "EU"
+  );
+
   const creds = await readConnectorSecret(ctx.clientId, connectorId);
 
-  const jobName = `connector-${data.type}-to-bq`;
+  const jobName = `connector-${data.type}-to-bq-${suffix}`;
 
   // Per-invocation env overrides. Cloud Run encrypts in transit; values
   // exist only in the container's process env for the run's lifetime.
@@ -77,7 +84,7 @@ export async function POST(
 
   let executionName: string;
   try {
-    const r = await runConnectorJob(jobName, env);
+    const r = await runConnectorJob(jobName, region, env);
     executionName = r.executionName;
   } catch (err) {
     const technical = err instanceof Error ? err.message : String(err);

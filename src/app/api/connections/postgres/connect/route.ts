@@ -8,7 +8,7 @@ import {
   connectorDatasetId,
   DEFAULT_BQ_LOCATION,
 } from "@/lib/bigquery";
-import { gcp } from "@/lib/gcp";
+import { cloudComputeRegionForResidency, gcp } from "@/lib/gcp";
 import { logUsageEvent } from "@/lib/usage";
 import { upsertSyncJob, deleteSyncJob } from "@/lib/cloud-scheduler";
 import { deleteConnectorSecret } from "@/lib/secret-manager";
@@ -58,7 +58,7 @@ export async function POST(req: Request) {
     bqDataset: null as string | null,
     secret: null as { connectorId: string } | null,
     firestoreDoc: null as FirebaseFirestore.DocumentReference | null,
-    schedulerJob: null as { connectorId: string } | null,
+    schedulerJob: null as { connectorId: string; region: string } | null,
   };
 
   const step = { current: "init" };
@@ -132,13 +132,15 @@ export async function POST(req: Request) {
     // here are logged but never block the connector save — manual
     // "Sync now" still works without the scheduled trigger.
     step.current = "upsertSyncJob (Cloud Scheduler)";
+    const { region: schedulerRegion } = cloudComputeRegionForResidency(bqLocation);
     await upsertSyncJob({
       clientId: ctx.clientId,
       workspaceId: ctx.workspaceId,
       connectorId,
       syncFrequency: body.syncFrequency,
+      region: schedulerRegion,
     });
-    created.schedulerJob = { connectorId };
+    created.schedulerJob = { connectorId, region: schedulerRegion };
 
     logUsageEvent({
       clientId: ctx.clientId,
@@ -163,7 +165,11 @@ export async function POST(req: Request) {
 
     if (created.schedulerJob) {
       try {
-        await deleteSyncJob(ctx.clientId, created.schedulerJob.connectorId);
+        await deleteSyncJob(
+          ctx.clientId,
+          created.schedulerJob.connectorId,
+          created.schedulerJob.region
+        );
       } catch (cleanupErr) {
         cleanupErrors.push(
           `scheduler: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`

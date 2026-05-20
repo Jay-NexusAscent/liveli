@@ -35,7 +35,11 @@ Rules:
 - **Never \`SELECT *\`** — explicitly list the columns the user cares about. Tables often have noisy sync-metadata columns (anything starting with an underscore like \`_sdc_*\`) that are filtered out anyway, but listing real columns also keeps results tidy.
 - **Do NOT re-emit run_sql rows as a markdown table in your reply.** The client renders the result rows in a dedicated table UI automatically — repeating them as markdown is duplicate and clutters the response. Comment on what the data shows, don't reproduce it.
 - For charts: pick the right type (bar for ranking, line for time series, pie for share-of-total, scatter for correlation). Always set a title. When the user asks for a chart, prefer \`make_chart\` over reciting numbers.
-- Write conversationally. Don't say "I will now call the run_sql tool" — just call it and present the result.
+- **Chart data shape**: \`series[].data\` is a **flat array of numbers**, never a 2D array of [date, value] pairs. Put the dates / category labels in \`xAxis.data\` as strings, aligned by index. Example for a time series:
+    \`xAxis: { type: "category", data: ["2026-05-01", "2026-05-02", "2026-05-03"] }\`
+    \`series: [{ type: "line", data: [120, 145, 132] }]\`
+- **For \`make_dashboard\`**: run ALL the SQL queries you need first, build the complete chart specs in memory, then call \`make_dashboard\` **once** with every chart fully populated. Do NOT call \`make_dashboard\` first with an empty placeholder and try to fill it in later — there's no way to update an existing dashboard from chat.
+- Write conversationally and **keep markdown minimal**: short paragraphs, occasional bold for emphasis, simple bullet lists when listing items. Avoid headings (\`#\`), nested bullets, or markdown tables. Don't say "I will now call the run_sql tool" — just call it and present the result.
 - If the result is empty or unexpected, say so plainly.
 - Use the current date for any "last quarter / this month / YTD" references.
 
@@ -422,6 +426,15 @@ export async function* runAgentTurn(
           };
         } else if (result.clientRender?.kind === "table") {
           yield { type: "table", id: toolUseId, rows: result.clientRender.rows };
+        } else if (result.clientRender?.kind === "dashboard") {
+          yield {
+            type: "dashboard",
+            id: toolUseId,
+            dashboardId: result.clientRender.dashboardId,
+            title: result.clientRender.title,
+            description: result.clientRender.description,
+            charts: result.clientRender.charts,
+          };
         }
 
         yield { type: "tool_result", id: toolUseId, output: result.content };
@@ -463,10 +476,29 @@ export async function* runAgentTurn(
   yield { type: "message_stop" };
 
   // ── Persist the full assistant message ──────────────────────────
+  // Stringify tool_use.input and tool_result.content before writing to
+  // Firestore. Why: Firestore rejects documents containing array-of-array
+  // values ("Property array contains an invalid nested entity"). Tool
+  // inputs/outputs are model-generated payloads that can include
+  // arbitrarily nested shapes (e.g. ECharts series.data was a 2D array
+  // before we normalized it to flat numbers + xAxis labels, and the
+  // failed-validation case still pushes the original tool_use to
+  // toolBlocks). Stringifying the variable-shape fields makes the
+  // persisted doc Firestore-safe regardless of what the model emitted.
+  // blocksToGeminiTurns / msgContentToGeminiPart parse on replay.
+  const persistableToolBlocks = finalToolBlocks.map((b) => {
+    if (b.type === "tool_use") {
+      return { ...b, input: JSON.stringify(b.input ?? null) };
+    }
+    if (b.type === "tool_result") {
+      return { ...b, content: JSON.stringify(b.content ?? null) };
+    }
+    return b;
+  });
   await assistantMsgRef.set({
     role: "assistant",
     content: assistantText.join(""),
-    toolBlocks: finalToolBlocks,
+    toolBlocks: persistableToolBlocks,
     createdAt: FieldValue.serverTimestamp(),
   });
 
@@ -492,16 +524,39 @@ function msgContentToGeminiPart(
 ): Part {
   if (block.type === "text") return { text: block.text };
   if (block.type === "tool_use") {
-    return { functionCall: { name: block.name, args: block.input as Record<string, unknown> } };
+    return { functionCall: { name: block.name, args: unwrapJsonField(block.input) } };
   }
-  // tool_result — but the model wraps these as functionResponse, with no
-  // tool_use_id in the Gemini shape. We just pass the content.
+  // tool_result — Gemini wraps as functionResponse, no tool_use_id in
+  // its shape, we just pass the content.
   return {
     functionResponse: {
       name: "tool_result",
-      response: block.content as Record<string, unknown>,
+      response: unwrapJsonField(block.content),
     },
   };
+}
+
+/**
+ * Persisted toolBlocks may have `input`/`content` either as raw objects
+ * (legacy / in-memory) or as JSON strings (post-stringification at
+ * persist time, see assistantMsgRef.set above). Accept both forms so
+ * old chats remain replayable.
+ */
+function unwrapJsonField(v: unknown): Record<string, unknown> {
+  if (typeof v === "string") {
+    try {
+      const parsed = JSON.parse(v);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch {
+      return {};
+    }
+  }
+  if (v && typeof v === "object" && !Array.isArray(v)) {
+    return v as Record<string, unknown>;
+  }
+  return {};
 }
 
 /**

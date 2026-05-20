@@ -37,11 +37,6 @@ async function execsClient(): Promise<ExecutionsClient> {
   return _execs;
 }
 
-// Region the connector Cloud Run Jobs live in. Override via GCP_REGION
-// (default europe-west4) — must match the region the deploy-connectors
-// workflow pushes images to.
-const CLOUD_RUN_REGION = process.env.GCP_REGION ?? "europe-west4";
-
 export interface JobEnv {
   [key: string]: string;
 }
@@ -49,6 +44,13 @@ export interface JobEnv {
 /**
  * Trigger a Cloud Run Job execution with per-invocation env overrides.
  * Returns the EXECUTION resource name (not the LRO operation name).
+ *
+ * The `region` parameter MUST come from
+ * `cloudComputeRegionForResidency(workspace.bqLocation)` — never a global
+ * env var. Connector jobs are deployed in BOTH europe-west1 and
+ * us-central1, suffixed `-eu`/`-us`; routing the call to the wrong
+ * region returns NOT_FOUND. Pinning to workspace residency keeps EU
+ * customer data + compute inside europe-west1 (matches Vertex region).
  *
  * Subtle pitfall: client.runJob() returns a long-running operation
  * (LRO). `operation.name` is the LRO name (".../operations/<id>"),
@@ -63,10 +65,11 @@ export interface JobEnv {
  */
 export async function runConnectorJob(
   jobName: string,
+  region: string,
   env: JobEnv
 ): Promise<{ executionName: string }> {
   const client = await jobsClient();
-  const parent = `projects/${gcp.projectId}/locations/${CLOUD_RUN_REGION}/jobs/${jobName}`;
+  const parent = `projects/${gcp.projectId}/locations/${region}/jobs/${jobName}`;
 
   const [operation] = await client.runJob({
     name: parent,

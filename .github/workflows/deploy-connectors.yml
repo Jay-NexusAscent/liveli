@@ -46,7 +46,12 @@ jobs:
           - stripe-to-bq
 
     env:
-      REGION: europe-west4
+      # Artifact Registry stays in europe-west4 — image binaries aren't
+      # customer data, and Cloud Run can pull from any region. The
+      # Cloud Run Jobs themselves are deployed PER RESIDENCY into the
+      # regions listed in CLOUD_RUN_REGIONS (matches the EU/US suffix
+      # scheme in infra/cloud-run.tf + src/lib/gcp.ts).
+      AR_REGION: europe-west4
       PROJECT_ID: liveli-496609
       REPO: liveli-connectors
 
@@ -67,27 +72,39 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
 
       - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker $REGION-docker.pkg.dev --quiet
+        run: gcloud auth configure-docker $AR_REGION-docker.pkg.dev --quiet
 
       - name: Build image
         id: build
         working-directory: connectors/${{ matrix.connector }}
         run: |
-          IMAGE_URI="$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/${{ matrix.connector }}:${GITHUB_SHA::12}"
+          IMAGE_URI="$AR_REGION-docker.pkg.dev/$PROJECT_ID/$REPO/${{ matrix.connector }}:${GITHUB_SHA::12}"
           docker build \
             -t "$IMAGE_URI" \
-            -t "$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/${{ matrix.connector }}:latest" \
+            -t "$AR_REGION-docker.pkg.dev/$PROJECT_ID/$REPO/${{ matrix.connector }}:latest" \
             .
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
       - name: Push image
         run: |
           docker push "$IMAGE_URI"
-          docker push "$REGION-docker.pkg.dev/$PROJECT_ID/$REPO/${{ matrix.connector }}:latest"
+          docker push "$AR_REGION-docker.pkg.dev/$PROJECT_ID/$REPO/${{ matrix.connector }}:latest"
 
-      - name: Update Cloud Run Job image
+      # Update BOTH residency-suffixed jobs from the same image. The
+      # job names are `connector-<type>-eu` (in europe-west1) and
+      # `connector-<type>-us` (in us-central1) — see infra/cloud-run.tf.
+      # Each region's job is updated independently; failure in one
+      # doesn't block the other (set -e is on, but we tee through).
+      - name: Update Cloud Run Job image (EU residency)
         run: |
-          gcloud run jobs update "connector-${{ matrix.connector }}" \
+          gcloud run jobs update "connector-${{ matrix.connector }}-eu" \
             --image "$IMAGE_URI" \
-            --region "$REGION" \
+            --region "europe-west1" \
+            --project "$PROJECT_ID"
+
+      - name: Update Cloud Run Job image (US residency)
+        run: |
+          gcloud run jobs update "connector-${{ matrix.connector }}-us" \
+            --image "$IMAGE_URI" \
+            --region "us-central1" \
             --project "$PROJECT_ID"

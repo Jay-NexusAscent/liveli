@@ -27,8 +27,16 @@ let _client: CloudSchedulerClient | null = null;
  * scheduled trigger is the only thing that's missing.
  */
 
-// Same region as our Cloud Run Jobs. Override via GCP_REGION.
-const REGION = process.env.GCP_REGION ?? "europe-west4";
+/**
+ * Legacy region the FIRST iteration of the Scheduler integration wrote
+ * jobs to. New jobs route per-workspace via cloudComputeRegionForResidency
+ * (europe-west1 for EU, us-central1 for US), but jobs created before that
+ * change still exist in europe-west4. On every upsert/delete we issue a
+ * best-effort delete in this legacy region so customers self-migrate as
+ * they save changes; once all pre-existing jobs have been touched, this
+ * constant + the cleanup can be removed.
+ */
+const LEGACY_REGION = "europe-west4";
 
 async function scheduler(): Promise<CloudSchedulerClient> {
   await ensureGcpAuth();
@@ -50,8 +58,12 @@ export function syncJobName(clientId: string, connectorId: string): string {
   return `liveli-sync-${slug(clientId)}-${slug(connectorId)}`;
 }
 
-function jobResourceName(clientId: string, connectorId: string): string {
-  return `projects/${gcp.projectId}/locations/${REGION}/jobs/${syncJobName(clientId, connectorId)}`;
+function jobResourceName(
+  region: string,
+  clientId: string,
+  connectorId: string
+): string {
+  return `projects/${gcp.projectId}/locations/${region}/jobs/${syncJobName(clientId, connectorId)}`;
 }
 
 export function cronFromFrequency(freq: SyncFrequency): string {
@@ -71,6 +83,14 @@ interface UpsertArgs {
   workspaceId: string;
   connectorId: string;
   syncFrequency: SyncFrequency;
+  /**
+   * Region the Scheduler job should live in — must come from
+   * cloudComputeRegionForResidency(workspace.bqLocation). EU workspaces
+   * get europe-west1; US workspaces get us-central1. This keeps the
+   * Scheduler job in the same residency footprint as the Cloud Run Job
+   * it triggers.
+   */
+  region: string;
 }
 
 /**
@@ -106,8 +126,29 @@ function schedulerSaEmail(): string {
  */
 export async function upsertSyncJob(args: UpsertArgs): Promise<void> {
   const client = await scheduler();
-  const parent = `projects/${gcp.projectId}/locations/${REGION}`;
-  const name = jobResourceName(args.clientId, args.connectorId);
+
+  // Drain any legacy job in europe-west4 — see LEGACY_REGION comment. The
+  // delete is best-effort and is intentionally not the same code path as
+  // a region-change delete, because the user's residency isn't changing,
+  // only our implementation. NOT_FOUND is the happy path here.
+  if (args.region !== LEGACY_REGION) {
+    try {
+      await client.deleteJob({
+        name: jobResourceName(LEGACY_REGION, args.clientId, args.connectorId),
+      });
+    } catch (err) {
+      const code = (err as { code?: number })?.code;
+      if (code !== 5 /* NOT_FOUND */) {
+        console.warn("[scheduler] legacy-region cleanup delete failed", {
+          connectorId: args.connectorId,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
+  const parent = `projects/${gcp.projectId}/locations/${args.region}`;
+  const name = jobResourceName(args.region, args.clientId, args.connectorId);
   const targetUrl = `${targetBaseUrl()}/api/connections/${args.connectorId}/scheduled-sync`;
 
   const job = {
@@ -164,18 +205,114 @@ export async function upsertSyncJob(args: UpsertArgs): Promise<void> {
  */
 export async function deleteSyncJob(
   clientId: string,
-  connectorId: string
+  connectorId: string,
+  region: string
 ): Promise<void> {
   const client = await scheduler();
-  const name = jobResourceName(clientId, connectorId);
-  try {
-    await client.deleteJob({ name });
-  } catch (err) {
-    const code = (err as { code?: number })?.code;
-    if (code === 5) return; // NOT_FOUND
-    console.error("[scheduler] deleteJob failed", {
-      name,
-      err: err instanceof Error ? err.message : String(err),
-    });
+
+  // On delete, try BOTH the current-region job AND the legacy europe-west4
+  // job. A connector created before regional routing existed has a job in
+  // europe-west4 only; one created after has a job in the workspace's
+  // residency region. We don't know which without an extra lookup, and
+  // both deletes are cheap + idempotent.
+  const targets =
+    region === LEGACY_REGION ? [region] : [region, LEGACY_REGION];
+
+  for (const r of targets) {
+    const name = jobResourceName(r, clientId, connectorId);
+    try {
+      await client.deleteJob({ name });
+    } catch (err) {
+      const code = (err as { code?: number })?.code;
+      if (code === 5) continue; // NOT_FOUND in this region — fine.
+      console.error("[scheduler] deleteJob failed", {
+        name,
+        err: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+}
+
+/**
+ * Pause the Scheduler job — the job stays in the system with all its
+ * config intact (schedule, audience, body, OIDC token settings) but
+ * does not fire. Calling resumeSyncJob flips it back on.
+ *
+ * In-flight Cloud Run Job executions started by previous fires
+ * continue to completion — pause only affects future invocations.
+ *
+ * Idempotent — NOT_FOUND is treated as already-deleted (caller should
+ * have handled deletion via deleteSyncJob; we no-op here so callers
+ * don't have to special-case the race).
+ */
+export async function pauseSyncJob(
+  clientId: string,
+  connectorId: string,
+  region: string
+): Promise<void> {
+  const client = await scheduler();
+
+  // Mirror deleteSyncJob's dual-region behaviour. A connector created
+  // before regional routing landed has its Scheduler job in europe-west4
+  // (LEGACY_REGION); newer connectors have it in their workspace's
+  // residency region. Without an extra Firestore lookup we don't know
+  // which, and both pause attempts are cheap + idempotent.
+  const targets =
+    region === LEGACY_REGION ? [region] : [region, LEGACY_REGION];
+
+  for (const r of targets) {
+    const name = jobResourceName(r, clientId, connectorId);
+    try {
+      await client.pauseJob({ name });
+    } catch (err) {
+      const code = (err as { code?: number })?.code;
+      if (code === 5) continue; // NOT_FOUND in this region — fine.
+      // 9 = FAILED_PRECONDITION — job is already PAUSED. Idempotent
+      // goal: calling pause on an already-paused job is success.
+      if (code === 9) continue;
+      console.error("[scheduler] pauseJob failed", {
+        name,
+        err: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  }
+}
+
+/**
+ * Resume a paused Scheduler job. Schedule + audience + body are
+ * preserved from when it was paused — resume just flips state back
+ * to ENABLED. The next cron tick fires normally.
+ *
+ * Idempotent — NOT_FOUND is no-op (treat as already-deleted), and
+ * FAILED_PRECONDITION on already-ENABLED jobs is also no-op.
+ */
+export async function resumeSyncJob(
+  clientId: string,
+  connectorId: string,
+  region: string
+): Promise<void> {
+  const client = await scheduler();
+
+  // Same dual-region pattern as pauseSyncJob / deleteSyncJob — the
+  // job may live in either the new residency region or the legacy
+  // europe-west4. Resume both; NOT_FOUND on either is fine.
+  const targets =
+    region === LEGACY_REGION ? [region] : [region, LEGACY_REGION];
+
+  for (const r of targets) {
+    const name = jobResourceName(r, clientId, connectorId);
+    try {
+      await client.resumeJob({ name });
+    } catch (err) {
+      const code = (err as { code?: number })?.code;
+      if (code === 5) continue; // NOT_FOUND in this region — fine.
+      if (code === 9) continue; // FAILED_PRECONDITION — already ENABLED
+      console.error("[scheduler] resumeJob failed", {
+        name,
+        err: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
   }
 }

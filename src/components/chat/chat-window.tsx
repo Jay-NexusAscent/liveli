@@ -1,10 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { SparkleIcon } from "@/components/icons";
 import { ChartBlock } from "./chart-block";
 import { ToolCallBlock } from "./tool-call-block";
 import { TableBlock } from "./table-block";
+import { DashboardBlock } from "./dashboard-block";
+
+type DashboardChart = { order: number; title: string; spec: unknown };
 
 type MessageBlock =
   | { type: "text"; text: string }
@@ -18,7 +23,15 @@ type MessageBlock =
       error?: string;
     }
   | { type: "chart"; id: string; title: string; spec: unknown }
-  | { type: "table"; id: string; rows: Record<string, unknown>[] };
+  | { type: "table"; id: string; rows: Record<string, unknown>[] }
+  | {
+      type: "dashboard";
+      id: string;
+      dashboardId: string;
+      title: string;
+      description?: string;
+      charts: DashboardChart[];
+    };
 
 interface Message {
   id: string;
@@ -285,14 +298,7 @@ function MessageItem({
     <div className="space-y-1">
       {message.blocks.map((b, i) => {
         if (b.type === "text") {
-          return (
-            <div
-              key={i}
-              className="whitespace-pre-wrap text-[14px] leading-relaxed text-text-primary"
-            >
-              {b.text}
-            </div>
-          );
+          return <AssistantText key={i} text={b.text} />;
         }
         if (b.type === "tool") {
           return (
@@ -321,8 +327,70 @@ function MessageItem({
         if (b.type === "table") {
           return <TableBlock key={i} rows={b.rows} />;
         }
+        if (b.type === "dashboard") {
+          return (
+            <DashboardBlock
+              key={i}
+              dashboardId={b.dashboardId}
+              title={b.title}
+              description={b.description}
+              charts={b.charts}
+            />
+          );
+        }
         return null;
       })}
+    </div>
+  );
+}
+
+/**
+ * Render assistant text as Markdown. The agent emits bold/lists/code
+ * spans naturally; before this component the text rendered as raw
+ * `* **Total Sales:**` literals which read as broken UI.
+ *
+ * GFM is enabled for `~~strikethrough~~` and pipe-tables (the latter
+ * are discouraged by the system prompt — run_sql results render
+ * separately — but if the model emits one we render it cleanly).
+ *
+ * Class overrides tighten the default markdown spacing for chat
+ * density and re-apply our typography tokens so light/dark themes
+ * stay consistent.
+ */
+function AssistantText({ text }: { text: string }) {
+  return (
+    <div className="text-[14px] leading-relaxed text-text-primary">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          p: ({ children }) => <p className="my-2 first:mt-0 last:mb-0">{children}</p>,
+          ul: ({ children }) => <ul className="my-2 list-disc space-y-1 pl-5">{children}</ul>,
+          ol: ({ children }) => <ol className="my-2 list-decimal space-y-1 pl-5">{children}</ol>,
+          li: ({ children }) => <li className="text-text-primary">{children}</li>,
+          strong: ({ children }) => <strong className="font-semibold text-text-primary">{children}</strong>,
+          em: ({ children }) => <em className="italic">{children}</em>,
+          code: ({ children }) => (
+            <code className="rounded bg-elevated px-1 py-0.5 font-mono text-[12px] text-text-secondary">
+              {children}
+            </code>
+          ),
+          a: ({ href, children }) => (
+            <a
+              href={href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-accent underline underline-offset-2 hover:text-accent-strong"
+            >
+              {children}
+            </a>
+          ),
+          h1: ({ children }) => <h3 className="my-2 text-[16px] font-semibold">{children}</h3>,
+          h2: ({ children }) => <h3 className="my-2 text-[16px] font-semibold">{children}</h3>,
+          h3: ({ children }) => <h3 className="my-2 text-[15px] font-semibold">{children}</h3>,
+        }}
+      >
+        {text}
+      </ReactMarkdown>
     </div>
   );
 }
@@ -342,6 +410,9 @@ function applyEvent(
     spec?: unknown;
     rows?: Record<string, unknown>[];
     chatId?: string;
+    dashboardId?: string;
+    description?: string;
+    charts?: DashboardChart[];
   },
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>,
   setChatId: React.Dispatch<React.SetStateAction<string | undefined>>
@@ -443,6 +514,37 @@ function applyEvent(
       msgs.map((m) =>
         m.id === assistantId
           ? { ...m, blocks: [...m.blocks, { type: "table", id, rows }] }
+          : m
+      )
+    );
+    return;
+  }
+
+  // Dashboard from make_dashboard — renders a mini-grid of the
+  // composed charts inline. Previously the agent yielded a `chart`
+  // event with an empty spec and the chat showed a blank card.
+  if (
+    event.type === "dashboard" &&
+    event.id &&
+    event.dashboardId &&
+    event.title &&
+    Array.isArray(event.charts)
+  ) {
+    const id = event.id;
+    const dashboardId = event.dashboardId;
+    const title = event.title;
+    const description = event.description;
+    const charts = event.charts;
+    setMessages((msgs) =>
+      msgs.map((m) =>
+        m.id === assistantId
+          ? {
+              ...m,
+              blocks: [
+                ...m.blocks,
+                { type: "dashboard", id, dashboardId, title, description, charts },
+              ],
+            }
           : m
       )
     );
