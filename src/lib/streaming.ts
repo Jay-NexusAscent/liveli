@@ -9,7 +9,14 @@ export type ChatStreamEvent =
   | { type: "tool_result"; id: string; output: unknown; error?: string }
   | { type: "chart"; id: string; title: string; spec: unknown }
   | { type: "table"; id: string; rows: unknown[] }
-  | { type: "dashboard"; id: string; dashboardId: string; title: string }
+  | {
+      type: "dashboard";
+      id: string;
+      dashboardId: string;
+      title: string;
+      description?: string;
+      charts: Array<{ order: number; title: string; spec: unknown }>;
+    }
   | { type: "message_start"; chatId: string; messageId: string }
   | { type: "message_stop" }
   | { type: "error"; error: string }
