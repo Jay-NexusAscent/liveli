@@ -53,6 +53,11 @@ export const runSqlTool: ToolDefinition = {
     // both pollutes the chat UI's table render and tempts the model
     // to comment on or chart them.
     const rows = result.rows.map(stripSyncMetadata);
+    // Single-value result (1 row × 1 column) — let the model's prose
+    // carry the answer. A table for one number is noise. The model
+    // still receives the value via `content.rows` for its reply.
+    const isSingleValue =
+      rows.length === 1 && rows[0] && Object.keys(rows[0]).length === 1;
     return {
       content: {
         rows,
@@ -60,7 +65,7 @@ export const runSqlTool: ToolDefinition = {
         bytesScanned: result.bytesScanned,
         truncated: result.truncated,
       },
-      clientRender: { kind: "table", rows },
+      ...(isSingleValue ? {} : { clientRender: { kind: "table" as const, rows } }),
     };
   },
 };
