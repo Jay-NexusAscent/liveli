@@ -242,11 +242,21 @@ export interface WorkspaceTable {
 
 /**
  * List every table the agent can see for a (clientId, workspaceId).
- * Iterates all connectors in the workspace, opens their dataset,
- * returns flat list with `dataset.table` keys.
+ * Iterates all connectors, opens each dataset, returns flat list with
+ * `dataset.table` keys.
  *
- * Replaces the old single-dataset listWorkspaceTables(orgId) which
- * assumed one shared dataset per workspace.
+ * Performance: every BQ round-trip (dataset.getTables + per-table
+ * getMetadata) runs in parallel via Promise.all. With N connectors and
+ * M tables-per-connector, the serial version was O(N + N*M) sequential
+ * round-trips — easily 30-50s for an 8-connector / 5-tables-each
+ * workspace and would hit the chat route's 60s maxDuration. Parallel
+ * version is O(max round-trip time) ≈ a few seconds regardless of
+ * connector count.
+ *
+ * No `dataset.exists()` precheck — we just call getTables() and treat
+ * a NOT_FOUND error as "no tables yet" (e.g. a connector that hasn't
+ * had its first sync). Saves one round-trip per connector and is
+ * idempotent vs. the explicit exists call.
  */
 export async function listWorkspaceTables(
   clientId: string,
@@ -254,32 +264,51 @@ export async function listWorkspaceTables(
   connectorIds: { id: string; name?: string; type?: string }[]
 ): Promise<WorkspaceTable[]> {
   const client = await bqReady();
-  const out: WorkspaceTable[] = [];
+  const startedAt = Date.now();
 
-  for (const conn of connectorIds) {
-    const datasetId = connectorDatasetId(clientId, workspaceId, conn.id);
-    const [exists] = await client.dataset(datasetId).exists();
-    if (!exists) continue;
+  const perConnector = await Promise.all(
+    connectorIds.map(async (conn) => {
+      const datasetId = connectorDatasetId(clientId, workspaceId, conn.id);
+      let tables;
+      try {
+        [tables] = await client.dataset(datasetId).getTables();
+      } catch (err) {
+        const code = (err as { code?: number }).code;
+        // 404 = dataset doesn't exist (connector hasn't synced yet).
+        // Anything else, surface so we don't silently hide real BQ errors.
+        if (code === 404) return [] as WorkspaceTable[];
+        throw err;
+      }
+      const rows = await Promise.all(
+        tables.map(async (t) => {
+          const [meta] = await t.getMetadata();
+          return {
+            qualifiedName: `${datasetId}.${t.id ?? ""}`,
+            dataset: datasetId,
+            table: t.id ?? "",
+            connectorName: conn.name,
+            connectorType: conn.type,
+            rowCount: Number(meta.numRows ?? 0),
+            columns: (meta.schema?.fields ?? []).map(
+              (f: { name: string; type: string }) => ({
+                name: f.name,
+                type: f.type,
+              })
+            ),
+          } satisfies WorkspaceTable;
+        })
+      );
+      return rows;
+    })
+  );
 
-    const [tables] = await client.dataset(datasetId).getTables();
-    for (const t of tables) {
-      const [meta] = await t.getMetadata();
-      out.push({
-        qualifiedName: `${datasetId}.${t.id ?? ""}`,
-        dataset: datasetId,
-        table: t.id ?? "",
-        connectorName: conn.name,
-        connectorType: conn.type,
-        rowCount: Number(meta.numRows ?? 0),
-        columns: (meta.schema?.fields ?? []).map(
-          (f: { name: string; type: string }) => ({
-            name: f.name,
-            type: f.type,
-          })
-        ),
-      });
-    }
-  }
-
+  const out = perConnector.flat();
+  console.log("[listWorkspaceTables] done", {
+    clientId,
+    workspaceId,
+    connectorCount: connectorIds.length,
+    tableCount: out.length,
+    durationMs: Date.now() - startedAt,
+  });
   return out;
 }
