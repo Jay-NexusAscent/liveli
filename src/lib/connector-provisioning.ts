@@ -7,7 +7,7 @@ import {
 import { upsertSyncJob } from "@/lib/cloud-scheduler";
 import type { WorkspaceContext } from "@/lib/clients";
 import { connectorsIn, dbReady, workspaceDoc } from "@/lib/firestore";
-import { gcp } from "@/lib/gcp";
+import { cloudComputeRegionForResidency, gcp } from "@/lib/gcp";
 import { storeConnectorSecret } from "@/lib/secret-manager";
 import { logUsageEvent } from "@/lib/usage";
 
@@ -124,11 +124,13 @@ export async function provisionConnector(
   // scheduler (manual sync still works), so don't block the save on
   // Cloud Scheduler hiccups — but do log them.
   try {
+    const { region: schedulerRegion } = cloudComputeRegionForResidency(bqLocation);
     await upsertSyncJob({
       clientId: ctx.clientId,
       workspaceId: ctx.workspaceId,
       connectorId,
       syncFrequency,
+      region: schedulerRegion,
     });
   } catch (err) {
     console.error("[provisionConnector] upsertSyncJob failed", {
