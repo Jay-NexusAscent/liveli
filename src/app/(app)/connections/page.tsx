@@ -346,7 +346,17 @@ export default function ConnectionsPage() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error ?? `HTTP ${res.status}`);
+        // Server returns BOTH a friendly `error` ("Couldn't pause...")
+        // and the technical `errorMessage` (the underlying SDK error).
+        // Display both when they differ — saves a round trip through
+        // GCP audit logs to figure out what went wrong.
+        const friendly = data.error as string | undefined;
+        const technical = data.errorMessage as string | undefined;
+        const composed =
+          friendly && technical && friendly !== technical
+            ? `${friendly}\n${technical}`
+            : friendly ?? technical ?? `HTTP ${res.status}`;
+        throw new Error(composed);
       }
       await refresh();
     } catch (err) {
