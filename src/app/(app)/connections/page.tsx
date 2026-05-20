@@ -467,23 +467,31 @@ export default function ConnectionsPage() {
                         </div>
                       </div>
                     )}
-                    {c.lastError && (
+                    {/* Suppress lastError while paused — the connector
+                        is intentionally not running, so the previous
+                        failure isn't actionable until the user resumes.
+                        Firestore still holds it; it'll re-appear once
+                        the connector is resumed and (if it errors
+                        again) the sync route writes a fresh lastError. */}
+                    {c.lastError && !c.paused && (
                       <div className="mt-2 line-clamp-2 text-[11px] text-[color:var(--status-error)]">
                         {c.lastError}
                       </div>
                     )}
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    {c.paused && (
-                      <span
-                        className="rounded-full bg-[color:var(--surface-tertiary)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-text-secondary"
-                        title="Scheduled syncs are paused. Manual Sync now still works."
-                      >
-                        Paused
-                      </span>
-                    )}
-                    <StatusBadge status={c.status} />
-                  </div>
+                  {/* Paused IS the status while paused — replace the
+                      synced/error badge rather than rendering alongside.
+                      The connector's underlying `status` field (synced /
+                      error / etc.) is preserved in Firestore and shows
+                      again the moment it's resumed. */}
+                  <StatusBadge
+                    status={c.paused ? "paused" : c.status}
+                    title={
+                      c.paused
+                        ? "Scheduled syncs are paused. Click Resume to re-enable, or Sync now to run a one-off."
+                        : undefined
+                    }
+                  />
                 </div>
 
                 <div className="flex items-center justify-end gap-1.5 border-t border-border pt-2">
@@ -728,16 +736,35 @@ export default function ConnectionsPage() {
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({
+  status,
+  title,
+}: {
+  status: string;
+  /** Optional hover tooltip — used by the "paused" variant to explain
+   * the state ("scheduled syncs paused…") without taking up space in
+   * the card chrome. */
+  title?: string;
+}) {
   const map: Record<string, { label: string; classes: string }> = {
     synced: { label: "Synced", classes: "bg-[color:var(--status-success)]/15 text-[color:var(--status-success)]" },
     syncing: { label: "Syncing", classes: "bg-accent-muted text-accent" },
     configured: { label: "Configured", classes: "bg-hover text-text-secondary" },
     error: { label: "Error", classes: "bg-[color:var(--status-error)]/15 text-[color:var(--status-error)]" },
+    // Paused is a first-class status, not a sub-state — it replaces
+    // synced/error/etc. on the badge while c.paused is true, and the
+    // lastError text is suppressed alongside (see the card body above).
+    // Visual: muted background (the connector is intentionally idle, not
+    // failing), distinct from `configured` only by label. The Pause /
+    // Resume button on the card disambiguates intent.
+    paused: { label: "Paused", classes: "bg-hover text-text-secondary" },
   };
   const v = map[status] ?? { label: status, classes: "bg-hover text-text-secondary" };
   return (
-    <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider", v.classes)}>
+    <span
+      title={title}
+      className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider", v.classes)}
+    >
       {v.label}
     </span>
   );
