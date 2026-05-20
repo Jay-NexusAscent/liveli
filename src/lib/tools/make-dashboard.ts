@@ -54,20 +54,31 @@ export const makeDashboardTool: ToolDefinition = {
   handler: async (raw, ctx) => {
     const { title, description, charts } = Input.parse(raw);
     const docRef = dashboardsIn(ctx.clientId, ctx.workspaceId).doc();
+    const chartSpecs = charts.map((c, i) => ({
+      order: i,
+      title: c.title,
+      spec: c.echartsOption as unknown,
+    }));
     await docRef.set({
       title,
       description: description ?? null,
-      charts: charts.map((c, i) => ({
-        order: i,
-        title: c.title,
-        spec: c.echartsOption,
-      })),
+      charts: chartSpecs,
       createdBy: ctx.userId,
       createdAt: FieldValue.serverTimestamp(),
     });
     return {
       content: { ok: true, dashboardId: docRef.id, title, chartCount: charts.length },
-      clientRender: { kind: "chart", spec: { title, dashboardId: docRef.id }, title },
+      // Real dashboard render — passes the full chart specs to the
+      // client so the chat preview can show a working mini-grid of
+      // charts inline. Previously this was a `kind: "chart"` stub with
+      // an empty ECharts spec, which rendered as a blank card.
+      clientRender: {
+        kind: "dashboard",
+        dashboardId: docRef.id,
+        title,
+        description: description ?? undefined,
+        charts: chartSpecs,
+      },
     };
   },
 };

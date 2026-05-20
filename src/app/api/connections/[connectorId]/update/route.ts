@@ -5,6 +5,7 @@ import { connectorsIn, dbReady } from "@/lib/firestore";
 import { storeConnectorSecret } from "@/lib/secret-manager";
 import { logUsageEvent } from "@/lib/usage";
 import { upsertSyncJob, type SyncFrequency } from "@/lib/cloud-scheduler";
+import { cloudComputeRegionForResidency } from "@/lib/gcp";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -77,6 +78,7 @@ export async function PATCH(
     type: string;
     secretRef?: string;
     syncFrequency?: SyncFrequency;
+    bqLocation?: "EU" | "US";
   };
 
   // Build the Firestore patch.
@@ -129,11 +131,18 @@ export async function PATCH(
   // short of delete+recreate. upsertSyncJob is idempotent.
   const effectiveFrequency: SyncFrequency =
     body.syncFrequency ?? existing.syncFrequency ?? "1h";
+  // Residency-aware region: pre-existing connectors have bqLocation
+  // recorded at create time. If somehow missing (very old docs), default
+  // to EU which matches the legacy behaviour.
+  const { region: schedulerRegion } = cloudComputeRegionForResidency(
+    existing.bqLocation
+  );
   await upsertSyncJob({
     clientId: ctx.clientId,
     workspaceId: ctx.workspaceId,
     connectorId,
     syncFrequency: effectiveFrequency,
+    region: schedulerRegion,
   });
 
   logUsageEvent({

@@ -32,7 +32,14 @@ export interface ToolResult {
   /** Optional client-side render hint (e.g. for charts) */
   clientRender?:
     | { kind: "chart"; spec: unknown; title?: string }
-    | { kind: "table"; rows: unknown[] };
+    | { kind: "table"; rows: unknown[] }
+    | {
+        kind: "dashboard";
+        dashboardId: string;
+        title: string;
+        description?: string;
+        charts: Array<{ order: number; title: string; spec: unknown }>;
+      };
 }
 
 export interface ToolDefinition {
