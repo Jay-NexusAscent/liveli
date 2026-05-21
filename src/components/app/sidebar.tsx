@@ -22,8 +22,8 @@ const navItems = [
   { label: "Chat", href: "/chat", icon: ChatIcon },
   { label: "History", href: "/chat/history", icon: HistoryIcon },
   { label: "Insights", href: "/insights", icon: InsightIcon },
-  { label: "Connections", href: "/connections", icon: ConnectIcon },
   { label: "Dashboards", href: "/dashboards", icon: DashboardIcon },
+  { label: "Connections", href: "/connections", icon: ConnectIcon },
   { label: "Settings", href: "/settings", icon: SettingsIcon },
 ];
 

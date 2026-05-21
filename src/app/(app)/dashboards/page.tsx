@@ -25,9 +25,10 @@ interface SavedDashboard {
 }
 
 type FullscreenContent =
-  | { kind: "chart"; title: string; spec: unknown }
+  | { kind: "chart"; id: string; title: string; spec: unknown }
   | {
       kind: "dashboard";
+      id: string;
       title: string;
       description?: string | null;
       charts: Array<{ order: number; title: string; spec: unknown }>;
@@ -150,6 +151,7 @@ export default function DashboardsPage() {
                       onClick={() =>
                         setFullscreen({
                           kind: "dashboard",
+                          id: d.id,
                           title: d.title,
                           description: d.description,
                           charts: d.charts,
@@ -177,7 +179,17 @@ export default function DashboardsPage() {
                       title={c.title}
                       spec={c.spec}
                       onExpand={() =>
-                        setFullscreen({ kind: "chart", title: c.title, spec: c.spec })
+                        setFullscreen({
+                          kind: "chart",
+                          // Synthetic id for charts inside a dashboard —
+                          // the chart isn't a standalone saved-chart doc,
+                          // it lives as a subdoc on the dashboard. The
+                          // share link still resolves (anchor maps to the
+                          // tile within the dashboard view).
+                          id: `${d.id}-${i}`,
+                          title: c.title,
+                          spec: c.spec,
+                        })
                       }
                     />
                   ))}
@@ -200,7 +212,12 @@ export default function DashboardsPage() {
                 title={c.title}
                 spec={c.spec}
                 onExpand={() =>
-                  setFullscreen({ kind: "chart", title: c.title, spec: c.spec })
+                  setFullscreen({
+                    kind: "chart",
+                    id: c.id,
+                    title: c.title,
+                    spec: c.spec,
+                  })
                 }
                 onDelete={() => deleteChart(c.id, c.title)}
                 deleting={deleting.has(c.id)}

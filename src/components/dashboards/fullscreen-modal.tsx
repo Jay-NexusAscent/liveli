@@ -1,14 +1,15 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { CloseIcon } from "@/components/icons";
+import { CheckIcon, CloseIcon, ShareIcon } from "@/components/icons";
 import { ChartRenderer } from "@/components/chat/chart-renderer";
 
 type FullscreenContent =
-  | { kind: "chart"; title: string; spec: unknown }
+  | { kind: "chart"; id: string; title: string; spec: unknown }
   | {
       kind: "dashboard";
+      id: string;
       title: string;
       description?: string | null;
       charts: Array<{ order: number; title: string; spec: unknown }>;
@@ -36,9 +37,12 @@ interface FullscreenModalProps {
  * layouts (sidebar, padding, overflow).
  */
 export function FullscreenModal({ content, onClose }: FullscreenModalProps) {
+  const [shareState, setShareState] = useState<"idle" | "copied" | "error">("idle");
+
   // Bind Esc + lock body scroll while open. Cleanup removes both.
   useEffect(() => {
     if (!content) return;
+    setShareState("idle");
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
@@ -52,6 +56,19 @@ export function FullscreenModal({ content, onClose }: FullscreenModalProps) {
   }, [content, onClose]);
 
   if (!content || typeof window === "undefined") return null;
+
+  const shareUrl = `${window.location.origin}/dashboards#${content.kind}-${content.id}`;
+
+  const handleShare = async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setShareState("copied");
+      window.setTimeout(() => setShareState("idle"), 2000);
+    } catch {
+      setShareState("error");
+      window.setTimeout(() => setShareState("idle"), 2000);
+    }
+  };
 
   return createPortal(
     <div
@@ -75,14 +92,41 @@ export function FullscreenModal({ content, onClose }: FullscreenModalProps) {
               <p className="mt-0.5 text-[13px] text-text-secondary">{content.description}</p>
             )}
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="shrink-0 rounded-md p-1.5 text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
-          >
-            <CloseIcon />
-          </button>
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={handleShare}
+              aria-label={
+                shareState === "copied"
+                  ? "Copied to clipboard"
+                  : "Copy share link"
+              }
+              className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[12px] font-medium transition-colors ${
+                shareState === "copied"
+                  ? "bg-[color:var(--status-success)]/12 text-[color:var(--status-success)]"
+                  : shareState === "error"
+                    ? "bg-[color:var(--status-error)]/12 text-[color:var(--status-error)]"
+                    : "text-text-secondary hover:bg-hover hover:text-text-primary"
+              }`}
+            >
+              {shareState === "copied" ? <CheckIcon /> : <ShareIcon />}
+              <span>
+                {shareState === "copied"
+                  ? "Link copied"
+                  : shareState === "error"
+                    ? "Copy failed"
+                    : "Share"}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close"
+              className="rounded-md p-1.5 text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
+            >
+              <CloseIcon />
+            </button>
+          </div>
         </header>
 
         <div className="flex-1 overflow-auto p-6">
