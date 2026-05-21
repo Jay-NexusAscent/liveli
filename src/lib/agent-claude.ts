@@ -532,118 +532,232 @@ export async function* runAgentTurn(
     const provider = getProvider(vertexRegion);
     const model = provider(routing.modelId);
 
-    const result = streamText({
-      model,
-      system: systemPromptText,
-      messages: history,
-      tools,
-      stopWhen: stepCountIs(MAX_STEPS),
-      // Anthropic prompt caching — mark the system prompt as ephemeral
-      // so repeated context (system rules + edit preamble) is cached
-      // on Anthropic's side. ~90% input-token reduction on cache hits.
-      // Requires >= 1024 tokens of cached content; our system prompt
-      // is ~3-5k so comfortably above the threshold.
-      providerOptions: {
-        anthropic: {
-          cacheControl: { type: "ephemeral" },
-        },
-      },
-      // AI SDK default is 2 retries with backoff — bump for transient
-      // 429s in EU region where Anthropic capacity is tighter than US.
-      maxRetries: 4,
-    });
+    // ── Outer continuation loop ───────────────────────────────────
+    //
+    // AI SDK's `streamText` with `stopWhen: stepCountIs(N)` already
+    // handles multi-step tool loops within ONE call. But it terminates
+    // the moment the model returns a step with no tool calls — even if
+    // that's a mid-workflow narration like "Here's the data:" or "Your
+    // tables look sparse." instead of completing the requested chart /
+    // dashboard.
+    //
+    // This is the same failure mode as the Gemini path (LIVELI-99,
+    // LIVELI-105). The fix is the same architecturally: detect a
+    // mid-workflow text-only termination by inspecting what the model
+    // just produced, inject a continuation prompt, and call streamText
+    // again with the augmented history. AI SDK can't natively be told
+    // to "continue past a text-only step" — but we can call it again
+    // ourselves.
+    //
+    // The discriminator: after a streamText call completes, if the
+    // last assistant turn is text-only AND the conversation has tool
+    // results in it (i.e., we're past the first conversational
+    // exchange), we know the model gave up before completing. Inject
+    // a continuation and re-call.
+    //
+    // Capped at MAX_TEXT_ONLY_CONTINUATIONS to prevent infinite
+    // back-and-forth with a stuck model. After the cap, surface a
+    // user-facing "I ran out of steps" message (mirrors LIVELI-105).
+    const MAX_TEXT_ONLY_CONTINUATIONS = 3;
+    let textOnlyContinuations = 0;
+    let gaveUp = false;
 
-    // ── Stream loop: translate AI SDK fullStream chunks → our SSE events
-    for await (const chunk of result.fullStream) {
-      switch (chunk.type) {
-        case "text-delta": {
-          const text = chunk.text;
-          assistantText.push(text);
-          yield { type: "text_delta", text };
-          break;
+    while (true) {
+      const result = streamText({
+        model,
+        system: systemPromptText,
+        messages: history,
+        tools,
+        stopWhen: stepCountIs(MAX_STEPS),
+        // Anthropic prompt caching — mark the system prompt as ephemeral
+        // so repeated context (system rules + edit preamble) is cached
+        // on Anthropic's side. ~90% input-token reduction on cache hits.
+        providerOptions: {
+          anthropic: {
+            cacheControl: { type: "ephemeral" },
+          },
+        },
+        // AI SDK default is 2 retries with backoff — bump for transient
+        // 429s in EU region where Anthropic capacity is tighter than US.
+        maxRetries: 4,
+      });
+
+      // Track whether this streamText call resulted in any tool use.
+      // If yes, the model engaged with the workflow; if no, it produced
+      // only text — which we then check for mid-flow context below.
+      let toolCallsThisCall = 0;
+
+      // ── Stream loop: translate AI SDK fullStream chunks → our SSE events
+      for await (const chunk of result.fullStream) {
+        switch (chunk.type) {
+          case "text-delta": {
+            const text = chunk.text;
+            assistantText.push(text);
+            yield { type: "text_delta", text };
+            break;
+          }
+          case "tool-input-start": {
+            // Tool call started — emit the tool_use event now so the
+            // client renders the "Querying your data" indicator while
+            // execute() runs server-side.
+            yield {
+              type: "tool_use",
+              id: chunk.id,
+              name: chunk.toolName,
+              input: {},
+            };
+            break;
+          }
+          case "tool-call": {
+            toolCallsThisCall++;
+            // Tool call args finalised. Update the registry entry with
+            // real input, and re-emit a refined tool_use event so the
+            // client UI can show the actual args.
+            const registered = toolCallRegistry.get(chunk.toolCallId);
+            const input = registered?.input ?? chunk.input;
+            finalToolBlocks.push({
+              type: "tool_use",
+              id: chunk.toolCallId,
+              name: chunk.toolName,
+              input,
+            });
+            yield {
+              type: "tool_use",
+              id: chunk.toolCallId,
+              name: chunk.toolName,
+              input,
+            };
+            break;
+          }
+          case "tool-result": {
+            // Drain any clientRender events the tool produced.
+            for (const ev of renderQueue.drain()) yield ev;
+            finalToolBlocks.push({
+              type: "tool_result",
+              tool_use_id: chunk.toolCallId,
+              content: chunk.output,
+            });
+            yield {
+              type: "tool_result",
+              id: chunk.toolCallId,
+              output: chunk.output,
+            };
+            break;
+          }
+          case "tool-error": {
+            for (const ev of renderQueue.drain()) yield ev;
+            const message =
+              chunk.error instanceof Error ? chunk.error.message : String(chunk.error);
+            finalToolBlocks.push({
+              type: "tool_result",
+              tool_use_id: chunk.toolCallId,
+              content: { error: message },
+            });
+            yield {
+              type: "tool_result",
+              id: chunk.toolCallId,
+              output: null,
+              error: message,
+            };
+            break;
+          }
+          case "error": {
+            const message = flattenErrorChain(chunk.error);
+            console.error("[agent-claude] stream error", { message });
+            yield { type: "error", error: message };
+            break;
+          }
+          case "finish": {
+            const u = chunk.totalUsage;
+            // Accumulate — each streamText call in the continuation
+            // loop reports its own usage; we want the total for the
+            // whole user-message-cycle.
+            totalTokensIn += u?.inputTokens ?? 0;
+            totalTokensOut += u?.outputTokens ?? 0;
+            break;
+          }
+          default:
+            // Other chunk types (step-start, step-finish, reasoning,
+            // source, tool-input-delta, etc.) we don't need to surface
+            // to the client. Drop silently.
+            break;
         }
-        case "tool-input-start": {
-          // Tool call started — emit the tool_use event now so the
-          // client renders the "Querying your data" indicator while
-          // execute() runs server-side.
-          yield {
-            type: "tool_use",
-            id: chunk.id,
-            name: chunk.toolName,
-            input: {},
-          };
-          break;
-        }
-        case "tool-call": {
-          // Tool call args finalised. Update the registry entry with
-          // real input, and re-emit a refined tool_use event so the
-          // client UI can show the actual args.
-          const registered = toolCallRegistry.get(chunk.toolCallId);
-          const input = registered?.input ?? chunk.input;
-          finalToolBlocks.push({
-            type: "tool_use",
-            id: chunk.toolCallId,
-            name: chunk.toolName,
-            input,
-          });
-          yield {
-            type: "tool_use",
-            id: chunk.toolCallId,
-            name: chunk.toolName,
-            input,
-          };
-          break;
-        }
-        case "tool-result": {
-          // Drain any clientRender events the tool produced.
-          for (const ev of renderQueue.drain()) yield ev;
-          finalToolBlocks.push({
-            type: "tool_result",
-            tool_use_id: chunk.toolCallId,
-            content: chunk.output,
-          });
-          yield {
-            type: "tool_result",
-            id: chunk.toolCallId,
-            output: chunk.output,
-          };
-          break;
-        }
-        case "tool-error": {
-          for (const ev of renderQueue.drain()) yield ev;
-          const message =
-            chunk.error instanceof Error ? chunk.error.message : String(chunk.error);
-          finalToolBlocks.push({
-            type: "tool_result",
-            tool_use_id: chunk.toolCallId,
-            content: { error: message },
-          });
-          yield {
-            type: "tool_result",
-            id: chunk.toolCallId,
-            output: null,
-            error: message,
-          };
-          break;
-        }
-        case "error": {
-          const message = flattenErrorChain(chunk.error);
-          console.error("[agent-claude] stream error", { message });
-          yield { type: "error", error: message };
-          break;
-        }
-        case "finish": {
-          const u = chunk.totalUsage;
-          totalTokensIn = u?.inputTokens ?? 0;
-          totalTokensOut = u?.outputTokens ?? 0;
-          break;
-        }
-        default:
-          // Other chunk types (step-start, step-finish, reasoning,
-          // source, tool-input-delta, etc.) we don't need to surface
-          // to the client. Drop silently.
-          break;
       }
+
+      // After the stream drains, fetch the model's response messages
+      // and append to history. AI SDK gives us back model + tool turns
+      // in CoreMessage shape, which is what subsequent streamText
+      // calls expect.
+      const finalResponse = await result.response;
+      history.push(...finalResponse.messages);
+
+      // ── Detect mid-workflow text-only termination ───────────────
+      //
+      // If this streamText call produced ZERO tool calls but the
+      // conversation already contains tool-results from earlier turns,
+      // the model gave up mid-flow. Inject a continuation prompt and
+      // re-call streamText. The user-facing prose the model just
+      // emitted has already been streamed; the continuation should
+      // produce the actual chart/dashboard/table on the next pass.
+      const sessionHasToolResults = history.some((m) => m.role === "tool");
+
+      if (
+        toolCallsThisCall === 0 &&
+        sessionHasToolResults &&
+        textOnlyContinuations < MAX_TEXT_ONLY_CONTINUATIONS
+      ) {
+        textOnlyContinuations++;
+        const continuationPrompt =
+          "[System intervention] You produced reply text without calling a tool. " +
+          "The workflow is incomplete — the customer is waiting for the final " +
+          "output (chart / dashboard / table / summary). Do ONE of the following NOW:\n" +
+          "  - If a chart was requested but not yet rendered: call make_chart.\n" +
+          "  - If a dashboard was requested but not yet rendered: call make_dashboard.\n" +
+          "  - If editing a chart/dashboard: call update_chart / update_dashboard.\n" +
+          "  - If you need more data first: call run_sql.\n" +
+          "  - If the data is genuinely insufficient (e.g. tables are empty or have 1 row), call make_chart / make_dashboard ANYWAY with what's there AND in the resulting prose explain that the data is sparse. Do NOT silently stop without producing the requested output.\n" +
+          "Do NOT narrate further or repeat your previous text — call the appropriate tool now.";
+        history.push({
+          role: "user",
+          content: continuationPrompt,
+        });
+        console.warn(
+          "[agent-claude] forced continuation after text-only mid-workflow termination",
+          {
+            continuationsUsed: textOnlyContinuations,
+            maxContinuations: MAX_TEXT_ONLY_CONTINUATIONS,
+          }
+        );
+        continue;
+      }
+
+      // Either:
+      //  - Tools were called (workflow progressed normally; AI SDK
+      //    would have looped internally; we're done)
+      //  - No prior tool results in session (legit conversational reply)
+      //  - Continuations exhausted (give up and surface what we have)
+      if (
+        toolCallsThisCall === 0 &&
+        sessionHasToolResults &&
+        textOnlyContinuations >= MAX_TEXT_ONLY_CONTINUATIONS
+      ) {
+        gaveUp = true;
+        console.warn("[agent-claude] gave up forcing continuation", {
+          continuationsUsed: textOnlyContinuations,
+        });
+      }
+      break;
+    }
+
+    // If we burned through every continuation attempt and the model
+    // still wouldn't complete the workflow, stream a clean recovery
+    // message to the customer rather than leaving them with whatever
+    // partial output they saw + silence.
+    if (gaveUp) {
+      const truncationMsg =
+        "\n\nI ran out of steps before I could finish that. Try asking for a smaller scope (one chart at a time, or a narrower dashboard) and I'll have plenty of room.";
+      assistantText.push(truncationMsg);
+      yield { type: "text_delta", text: truncationMsg };
     }
 
     yield { type: "message_stop" };
