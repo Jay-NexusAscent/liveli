@@ -177,6 +177,24 @@ function formatCell(value: unknown): string {
       ).format(d);
     }
   }
+  // Numeric formatting: round IEEE-754 noise to 2 decimals max, then
+  // apply locale thousands separator. Examples:
+  //   18197.840000000004 → "18,197.84"
+  //   15825.520000000002 → "15,825.52"
+  //   16596.27           → "16,596.27"
+  //   1000000            → "1,000,000"
+  //   42                 → "42"
+  // Integer-valued floats render without decimals; fractional values
+  // keep up to 2 decimal places (matches typical financial display
+  // conventions). We do NOT abbreviate (M/K/B) here because table
+  // cells should be precise — abbreviation is for KPI tiles only.
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const isInteger = Number.isInteger(value);
+    return value.toLocaleString(undefined, {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: isInteger ? 0 : 2,
+    });
+  }
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
 }

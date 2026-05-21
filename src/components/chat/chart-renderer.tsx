@@ -73,8 +73,19 @@ export function ChartRenderer({ spec, height = 320 }: ChartRendererProps) {
 }
 
 /**
- * Render a KPI tile: large headline number, optional unit/format,
- * optional delta with up/down arrow + caption. Theme-token aware.
+ * Render a KPI tile: large headline number (centre-aligned, auto-
+ * abbreviated when large), optional unit/format, optional delta with
+ * up/down arrow + caption.
+ *
+ * Why centre-aligned: matches every other analytics product's KPI
+ * pattern (Datadog, Looker, Mixpanel). Left-aligned numbers in a
+ * dashboard tile read as data points, not headlines.
+ *
+ * Why auto-abbreviation: a ¼-width tile in a 4-column grid is too
+ * narrow for £6,960,836.71 (12 chars at 44px font = overflows into
+ * the adjacent tile). £6.96M (5 chars) fits and reads faster anyway.
+ * Abbreviation kicks in above 10,000; smaller numbers show full
+ * thousand-separated form for precision.
  */
 function KpiTile({ series, height }: { series: SeriesLike; height: number }) {
   const value = typeof series.data?.[0] === "number" ? (series.data[0] as number) : 0;
@@ -86,19 +97,29 @@ function KpiTile({ series, height }: { series: SeriesLike; height: number }) {
     hasDelta && series.format === "percent"
       ? `${(series.delta as number) > 0 ? "+" : ""}${(series.delta as number).toFixed(1)}%`
       : hasDelta
-      ? `${(series.delta as number) > 0 ? "+" : ""}${(series.delta as number).toLocaleString()}`
+      ? `${(series.delta as number) > 0 ? "+" : ""}${abbreviateNumber(series.delta as number)}`
       : null;
 
   return (
     <div
-      className="flex w-full flex-col items-start justify-center"
+      // Centre everything horizontally + vertically. min-w-0 + overflow
+      // hidden on the inner number prevents bleed-into-adjacent-tile
+      // even if abbreviation isn't enough (very long unit strings, etc).
+      className="flex w-full flex-col items-center justify-center text-center"
       style={{ minHeight: height }}
     >
-      <div className="text-[44px] font-semibold tracking-tight text-text-primary font-heading tabular-nums leading-none">
+      <div
+        className="w-full max-w-full truncate text-[36px] font-semibold tracking-tight text-text-primary font-heading tabular-nums leading-none"
+        // title attribute exposes the full unformatted number for
+        // accessibility / user hover-to-verify use cases.
+        title={value.toLocaleString()}
+      >
         {formatted}
       </div>
       {series.name && (
-        <div className="mt-2 text-[13px] text-text-secondary">{series.name}</div>
+        <div className="mt-2 max-w-full truncate text-[13px] text-text-secondary">
+          {series.name}
+        </div>
       )}
       {hasDelta && deltaFormatted && (
         <div
@@ -121,6 +142,31 @@ function KpiTile({ series, height }: { series: SeriesLike; height: number }) {
   );
 }
 
+/**
+ * Abbreviate a number for compact display. Threshold tuned so values
+ * below 10K still show full thousand-separated form (precise enough
+ * to read at a glance), and above 10K we collapse to M / K / B form.
+ *
+ *   6_960_836  → "6.96M"
+ *   37_113     → "37.1K"
+ *   124_630    → "125K"
+ *   8_632      → "8,632"     (below threshold, full form)
+ *   1_500_000  → "1.50M"
+ *   1_500_000_000 → "1.50B"
+ *
+ * Decimal count varies by magnitude — bigger values get 1 decimal
+ * (124.6K reads cleaner than 124K), smaller chunky values get 2
+ * (6.96M is more precise than 7M).
+ */
+function abbreviateNumber(n: number): string {
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
+  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (abs >= 100_000) return `${Math.round(n / 1_000).toLocaleString()}K`;
+  if (abs >= 10_000) return `${(n / 1_000).toFixed(1)}K`;
+  return n.toLocaleString();
+}
+
 function formatKpiValue(
   value: number,
   format?: "number" | "currency" | "percent",
@@ -129,11 +175,11 @@ function formatKpiValue(
   if (format === "percent") {
     return `${value.toFixed(1)}%`;
   }
+  const abbreviated = abbreviateNumber(value);
   if (format === "currency") {
-    return `£${value.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+    return `£${abbreviated}`;
   }
-  const base = value.toLocaleString();
-  return unit ? `${base}${unit}` : base;
+  return unit ? `${abbreviated}${unit}` : abbreviated;
 }
 
 /**

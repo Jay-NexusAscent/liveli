@@ -70,6 +70,16 @@ Rules:
 - **\`make_chart\` argument shape — STRICT.** The function takes \`{ title, echartsOption }\`. Every ECharts field (xAxis, yAxis, series, tooltip, legend, grid) goes INSIDE \`echartsOption\`. Do NOT put \`series\` or \`yAxis\` at the top level alongside \`title\`. Correct:
     \`{ "title": "...", "echartsOption": { "xAxis": {...}, "yAxis": {...}, "series": [...] } }\`
 - **For \`make_dashboard\`**: run ALL the SQL queries you need first, build the complete chart specs in memory, then call \`make_dashboard\` **once** with every chart fully populated. Do NOT call \`make_dashboard\` first with an empty placeholder and try to fill it in later — there's no way to update an existing dashboard from chat.
+- **Dashboard CONTENT FLOOR — a dashboard is not just a KPI strip.** When the user asks for a "dashboard", "overview", "report", "summary", or anything implying a multi-perspective business view: ship a COMPLETE picture, not just totals. Minimum content:
+  1. **KPI strip** — 3-5 small (\`colSpan: small\`) KPI tiles at the top with headline totals.
+  2. **At least one TIME-SERIES chart** — line or area chart showing how the headline metric trends over the relevant period. The customer cannot judge "is the business healthy?" from totals alone; they need to see the shape of recent activity.
+  3. **At least one BREAKDOWN chart** — top-N or category split (top products by revenue, orders by channel, sessions by source, etc.). Same reasoning: totals don't show the composition.
+  4. Optional but valuable: period-over-period comparison (this month vs. last month).
+  Shipping only a KPI strip when the user said "dashboard" is broken — it's a strip, not a dashboard. The customer will be disappointed and (correctly) ask you to add the missing charts. Save them the round-trip — ship the full picture first time.
+- **Do NOT re-emit data values in your reply.** This applies to:
+  - run_sql result rows (already covered above — the client renders the table)
+  - **Dashboard tile values** — if you just emitted a make_dashboard / update_dashboard call, the customer already sees the rendered dashboard with all its numbers. Repeating "Total Revenue: £X, Total Orders: Y, …" as a bulleted list in your reply text is duplicate and clutters the response. Comment on what the data SHOWS (trends, outliers, surprises) — don't reproduce the numbers.
+  - Chart values — same principle. Don't list "the bars are 120, 145, 132" — the chart shows that.
 - **CRITICAL — text-only turns end the workflow.** Liveli's agent loop terminates the moment you emit reply text without ALSO calling a tool in the same turn. For multi-step work — especially dashboards — this means: emit ZERO prose between tool calls. Stack the tool calls back-to-back; save ALL narration for one final summary AFTER the last tool call (\`make_dashboard\` / \`make_chart\`) has succeeded. If you write "Here's the data…" or "Let me gather more…" mid-flow, the customer sees that text and nothing renders — broken UX.
 - **Never narrate intent. Just act.** Banned phrasings (these are text-only turns disguised as plans): "First, let me…", "I'll now…", "Let's gather…", "Here's the data for your dashboard:" (before the dashboard actually exists). If you catch yourself about to write one of those, replace it with the actual tool call.
 - **Empty results → silently widen the range.** If a query returns 0 rows for the requested time period, immediately re-issue with a wider / more recent range (last month, last quarter). Do NOT explain the empty result first — that's a text-only turn that ends the workflow. The customer doesn't need to see the dead end; they just want the dashboard.
@@ -393,6 +403,12 @@ export async function* runAgentTurn(
   try {
 
   // ── Agentic loop ────────────────────────────────────────────────
+  // Cap on how many times we'll inject a continuation prompt after the
+  // model produces a text-only turn mid-workflow. See the handler at
+  // the bottom of each loop iteration for context. Prevents an infinite
+  // back-and-forth if the model is stuck and refuses to call tools.
+  const MAX_TEXT_ONLY_CONTINUATIONS = 3;
+  let textOnlyContinuations = 0;
   let turn = 0;
   while (turn < MAX_TURNS) {
     turn++;
@@ -586,8 +602,76 @@ export async function* runAgentTurn(
       history.push({ role: "model", parts: turnParts });
     }
 
-    // ── No function calls → we're done ──────────────────────────
+    // ── No function calls → check whether mid-workflow or genuinely done ──
+    //
+    // The naive interpretation ("text without tools = the agent's final
+    // answer, break") is wrong for multi-step workflows. The model often
+    // emits narration like "Here's the data:" or "First, let's gather…"
+    // between tool calls. Breaking on those turns terminates the workflow
+    // prematurely — the customer sees half-finished output and silence.
+    //
+    // The discriminator: was the IMMEDIATELY PRIOR history entry a tool
+    // result? If yes → we're mid-workflow → inject a continuation prompt
+    // and re-loop (capped at MAX_TEXT_ONLY_CONTINUATIONS). If no →
+    // this is a legitimate conversational reply (e.g. user asked a yes/no
+    // question that needed no tools) → break normally.
+    //
+    // Why this is server-side and not just a prompt rule: prose rules
+    // ("don't narrate mid-workflow") are advisory. The model can still
+    // emit text-only turns when confused. A server-side guard makes it
+    // architecturally impossible to terminate mid-workflow regardless
+    // of model behaviour.
     if (turnFunctionCalls.length === 0) {
+      const prevEntry = history[history.length - 2];
+      const prevWasToolResult =
+        prevEntry?.role === "user" &&
+        Array.isArray(prevEntry.parts) &&
+        prevEntry.parts.some(
+          (p: Part) => "functionResponse" in p && p.functionResponse !== undefined
+        );
+
+      if (prevWasToolResult && textOnlyContinuations < MAX_TEXT_ONLY_CONTINUATIONS) {
+        textOnlyContinuations++;
+        // Continuation prompt is appended as a "user" turn (Gemini's
+        // convention — tool results are user-role, so are system
+        // interventions). Phrased to give the model multiple escape
+        // hatches so it can't get stuck.
+        const continuationPrompt =
+          "[System intervention] You produced reply text without calling a tool. " +
+          "The workflow is incomplete — the customer is waiting for the final " +
+          "output (chart / dashboard / table / summary). Do ONE of the following NOW:\n" +
+          "  - If a chart was requested but not yet rendered: call make_chart.\n" +
+          "  - If a dashboard was requested but not yet rendered: call make_dashboard.\n" +
+          "  - If you are editing a chart/dashboard: call update_chart / update_dashboard.\n" +
+          "  - If you need more data first: call run_sql.\n" +
+          "  - If the workflow is genuinely complete: output your final summary in your next message AND ensure the user-facing tool (make_chart / make_dashboard / table from run_sql) has already been emitted.\n" +
+          "Do NOT narrate further or repeat your previous text — call the appropriate tool now.";
+        history.push({
+          role: "user",
+          parts: [{ text: continuationPrompt }],
+        });
+        console.warn("[agent] forced continuation after text-only mid-workflow turn", {
+          turn,
+          continuationsUsed: textOnlyContinuations,
+          maxContinuations: MAX_TEXT_ONLY_CONTINUATIONS,
+        });
+        logTurnComplete(turn, turnStart, turnMetrics, true);
+        continue;
+      }
+
+      // Either this is a legitimate conversational reply (no prior tool
+      // results in this user message) OR continuation attempts are
+      // exhausted. Either way, exit the loop. If exhausted, the
+      // MAX_TURNS-style truncation message below the loop fires too.
+      if (prevWasToolResult) {
+        console.warn(
+          "[agent] gave up forcing continuation; surfacing partial output",
+          {
+            turn,
+            continuationsUsed: textOnlyContinuations,
+          }
+        );
+      }
       logTurnComplete(turn, turnStart, turnMetrics, false);
       break;
     }
@@ -688,12 +772,20 @@ export async function* runAgentTurn(
   // otherwise see whatever partial output the agent produced and then
   // silence. Surface a brief, voice-consistent message so they know to
   // try a smaller scope rather than wonder if the product hung.
-  if (turn >= MAX_TURNS) {
+  //
+  // Also fires when the text-only-turn continuation handler exhausted
+  // its retries (textOnlyContinuations >= cap) — same symptom from the
+  // customer's POV (silent partial output), same recovery instruction.
+  if (turn >= MAX_TURNS || textOnlyContinuations >= MAX_TEXT_ONLY_CONTINUATIONS) {
     const truncationMsg =
       "\n\nI ran out of steps before I could finish that. Try asking for a smaller scope (one chart at a time, or a narrower dashboard) and I'll have plenty of room.";
     assistantText.push(truncationMsg);
     yield { type: "text_delta", text: truncationMsg };
-    console.warn("[agent] MAX_TURNS exhausted", { turns: turn });
+    console.warn("[agent] gave up before completion", {
+      turns: turn,
+      maxTurnsHit: turn >= MAX_TURNS,
+      textOnlyContinuationsHit: textOnlyContinuations >= MAX_TEXT_ONLY_CONTINUATIONS,
+    });
   }
 
   console.log("[agent] runAgentTurn complete", {
