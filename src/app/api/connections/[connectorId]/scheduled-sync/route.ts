@@ -133,6 +133,7 @@ export async function POST(
     /** Auto-detected per-stream replication strategy. See sync/route.ts for the shape. */
     replicationConfig?: {
       streams: Record<string, unknown>;
+      excludedStreams?: string[];
       detected?: unknown[];
     };
   };
@@ -179,6 +180,7 @@ export async function POST(
       env,
       buildTapEnv(data.type, creds, {
         replicationConfig: data.replicationConfig?.streams,
+        excludedStreams: data.replicationConfig?.excludedStreams,
       })
     );
   } catch (err) {
