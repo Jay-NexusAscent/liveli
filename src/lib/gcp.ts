@@ -63,6 +63,23 @@ export const gcp = {
    * vertexRegionForResidency() still drives which endpoint is used.
    */
   vertexModel: process.env.VERTEX_AI_MODEL ?? "claude-sonnet-4-6",
+  /**
+   * Optional light/cheap model for routing simple queries away from
+   * the primary model. When set, the Claude agent path classifies the
+   * incoming user message; "simple" queries (single-value lookups,
+   * short single-table questions, no edit context, no analytics
+   * trigger words) route to this model; "complex" queries (dashboards,
+   * comparisons, edits) stay on the primary.
+   *
+   * Recommended value: `claude-haiku-4-5@20251001` — ~10× cheaper than
+   * Sonnet, plenty capable for simple Q&A. Leaving unset disables
+   * routing entirely (everything uses `vertexModel`), which is the
+   * safe default until baseline cost/quality data exists.
+   *
+   * The classification logic in agent-claude.ts is deterministic and
+   * runs in microseconds — no extra LLM call, no added latency.
+   */
+  vertexModelLight: process.env.VERTEX_AI_MODEL_LIGHT,
 };
 
 /**
