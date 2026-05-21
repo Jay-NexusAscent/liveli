@@ -104,7 +104,9 @@ const SampleRowsInput = z.object({
     .min(1)
     .max(50)
     .optional()
-    .describe("Rows to return. Default 20. Max 50."),
+    .describe(
+      "Rows to return. Default 10 (enough to infer column semantics for almost any column). Max 50, but rarely useful to go above 20 — bigger samples just inflate input tokens without improving description quality.",
+    ),
 });
 
 // Validate table names match BQ's allowed identifier shape before
@@ -126,7 +128,7 @@ const sampleRowsTool: MetadataToolDefinition = {
     "Return a small sample of rows from a table. Sensitive values (anything matching common PII patterns) are server-side redacted before you see them. Use this to ground your descriptions in what the data actually looks like.",
   inputSchema: SampleRowsInput,
   handler: async (raw, ctx): Promise<MetadataToolResult> => {
-    const { table, n = 20 } = SampleRowsInput.parse(raw);
+    const { table, n = 10 } = SampleRowsInput.parse(raw);
     assertSafeIdentifier(table, "table");
 
     // TABLESAMPLE SYSTEM is BigQuery's cheap block-level sampler. The

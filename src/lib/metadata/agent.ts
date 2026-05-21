@@ -16,20 +16,31 @@ import {
 } from "./tools";
 
 /**
- * Per-run cap. Each table-and-column pair the agent describes takes
- * roughly 2-3 tool calls (sample → optional profile → write), so a
- * 30-call budget covers ~10 columns per run comfortably. Bigger
- * datasets get progressively enriched across successive syncs — the
+ * Per-run cap on individual tool invocations. The agent typically
+ * writes 5-15 column descriptions per table, plus one sample_rows
+ * and one write_table_description per table — call it ~12 tool calls
+ * per table on average. A 100-call budget therefore covers ~8 tables
+ * per run, which is enough to fully enrich the Postgres demo schema
+ * (~12 tables, ~138 columns) in one or two sync cycles.
+ *
+ * Larger schemas still progress across successive syncs — the
  * pre-flight gate re-runs each time and only the remaining uncovered
- * columns appear in the next worklist.
+ * columns appear in the next worklist, so the cost is bounded by
+ * schema size, not by how many syncs it takes to converge.
  */
-const MAX_TOOL_CALLS = 30;
+const MAX_TOOL_CALLS = 100;
 
 /**
- * Hard limit on Gemini round trips. Each iteration is one
- * generateContent call. 15 keeps a confused agent from spinning.
+ * Hard limit on Gemini round-trips. Each round-trip is one
+ * generateContent call (~2-3s end-to-end with streaming + tool
+ * execution). 50 turns × 3s = ~150s — well inside the 300s function
+ * `maxDuration`, with headroom for slow days.
+ *
+ * Above ~80 we'd start risking timeouts on the function lifetime
+ * (`maxDuration` in /api/connectors), so don't push this much higher
+ * without bumping that too.
  */
-const MAX_TURNS = 15;
+const MAX_TURNS = 50;
 
 const SYSTEM_PROMPT_TEMPLATE = `You are the Liveli Metadata Enrichment Agent.
 
@@ -41,27 +52,30 @@ Connector context:
 - type: {{CONNECTOR_TYPE}}
 - dataset: {{DATASET_NAME}}
 
-Workflow:
+Workflow — work strictly table-by-table:
+
 1. Call list_uncovered_columns ONCE to scope your work.
-2. For each table in the worklist:
-   a. Call sample_rows({ table }) to see what the data looks like.
-   b. For columns whose meaning isn't obvious from name + sample, call column_profile({ table, column }) for distinct count, null %, top values.
-   c. For each uncovered column, call write_column_description with a one-sentence description grounded in what you observed.
-   d. Once the table's columns are done, call write_table_description with a one-sentence description of what the table represents.
-3. Call finish({ reason }) when the worklist is empty or when you've used your tool budget.
+2. Pick the first table in the worklist. Call sample_rows({ table }) — once.
+3. IMMEDIATELY write descriptions for ALL of that table's uncovered columns. Emit ALL write_column_description calls for the table in a SINGLE response — Gemini supports parallel function calls in one turn, and batching them this way is essential for staying inside the turn budget.
+4. After the column writes, call write_table_description for that same table.
+5. ONLY THEN move to the next table. Do NOT call sample_rows for table B before all writes for table A are issued.
+6. Use column_profile sparingly — only for genuinely ambiguous columns (e.g., an opaque numeric column where you can't tell from name + samples whether it's a PK, an FK, or a measure). Skip it on obvious columns like "email", "created_at", "first_name".
+7. Call finish({ reason: "all-columns-described" }) when the worklist is empty, or finish({ reason: "tool-budget-exhausted" }) if you've used your budget.
+
+The most common failure mode is sampling multiple tables before writing any descriptions — that burns through turns reading data without producing any output. Don't do it. Finish each table completely before touching the next.
 
 Rules:
 - Be concrete, not generic.
     BAD: "Stores customer data."
     GOOD: "One row per customer; includes email, signup date, and current plan."
-- Ground descriptions in observed data. Use samples and profiles, don't guess.
+- Ground descriptions in observed data. Use samples, don't guess.
 - ONE sentence per description. Max 400 chars.
-- If samples are ambiguous even after profiling, say so honestly: "Numeric ID, monotonically increasing from 1 — likely a sequential primary key" beats "Stores ID values".
-- Never invent semantics. If a column's purpose is still unclear after sampling and profiling, write "Purpose unclear; <distinct count> distinct values; examples: <a, b, c>" and move on.
+- If samples are ambiguous, say so honestly: "Numeric ID, monotonically increasing from 1 — likely a sequential primary key" beats "Stores ID values".
+- Never invent semantics. If a column's purpose is still unclear after sampling, write "Purpose unclear; <distinct count> distinct values; examples: <a, b, c>" and move on.
 - Sample values may contain "<redacted>" placeholders — this is server-side PII protection. Describe the column from its name + the unredacted values you can see.
 - Singer/Meltano internal columns (_sdc_*) are filtered out before you see them. Do not ask about them.
 - Your tools take a bare table name and column name. The dataset is bound to your context — never include it as an argument.
-- Hard budget: ${MAX_TOOL_CALLS} tool calls per run. If you exhaust it, call finish with reason "tool-budget-exhausted".
+- Hard budget: ${MAX_TOOL_CALLS} tool calls and ${MAX_TURNS} turns per run. If you exhaust either, call finish with reason "tool-budget-exhausted".
 
 Current date: {{CURRENT_DATE}}.`;
 
