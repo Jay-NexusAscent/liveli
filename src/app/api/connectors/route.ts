@@ -2,9 +2,14 @@ import { FieldValue } from "@google-cloud/firestore";
 import { requireWorkspaceContext, UnauthorizedError } from "@/lib/clients";
 import { connectorsIn, dbReady } from "@/lib/firestore";
 import { getExecutionStatus } from "@/lib/cloud-run";
+import { dispatchMetadataEnrichment } from "@/lib/metadata/dispatcher";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+// 300s budget covers the post-response metadata-agent run scheduled
+// via `after()` from the dispatcher. The HTTP response itself still
+// returns in <5s; the extended budget is spent in the background
+// while the agent enriches a freshly-synced connector.
+export const maxDuration = 300;
 
 interface ConnectorDoc {
   status?: string;
@@ -15,6 +20,8 @@ interface ConnectorDoc {
   lastSyncDurationMs?: number;
   typicalSyncDurationMs?: number;
   recentSyncDurationsMs?: number[];
+  bqDataset?: string;
+  bqLocation?: string;
   [k: string]: unknown;
 }
 
@@ -106,7 +113,10 @@ export async function GET() {
   const results = await Promise.all(
     snap.docs.map(async (d) => {
       const data = d.data() as ConnectorDoc;
-      const reconciled = await reconcileStatus(col, d.id, data);
+      const reconciled = await reconcileStatus(col, d.id, data, {
+        clientId: ctx.clientId,
+        workspaceId: ctx.workspaceId,
+      });
       if (reconciled === null) return null;
       return { id: d.id, ...reconciled };
     })
@@ -125,7 +135,8 @@ export async function GET() {
 async function reconcileStatus(
   col: FirebaseFirestore.CollectionReference,
   connectorId: string,
-  data: ConnectorDoc
+  data: ConnectorDoc,
+  ctx: { clientId: string; workspaceId: string }
 ): Promise<ConnectorDoc | null> {
   if (data.status !== "syncing" || !data.lastExecutionName) {
     return data;
@@ -201,6 +212,23 @@ async function reconcileStatus(
     ...durationPatch,
   });
   if (!ok) return null;
+
+  // Sync just transitioned to "synced" on this request. Hand off to the
+  // metadata enrichment dispatcher — it runs the free INFORMATION_SCHEMA
+  // pre-flight gate and, in dry-run mode, logs what would happen. The
+  // dispatcher swallows its own errors so a metadata-pipeline glitch
+  // never breaks the connector list. Awaited (not fire-and-forget)
+  // because the gate is metadata-only and adds <1s; switch to
+  // waitUntil() when live-mode Cloud Run dispatch lands.
+  await dispatchMetadataEnrichment({
+    clientId: ctx.clientId,
+    workspaceId: ctx.workspaceId,
+    connectorId,
+    connectorType: data.type ?? "",
+    bqDataset: data.bqDataset,
+    bqLocation: data.bqLocation,
+  });
+
   return { ...data, status: "synced", lastError: undefined, ...durationPatch };
 }
 
