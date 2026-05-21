@@ -106,8 +106,52 @@ export function TableBlock({ rows }: TableBlockProps) {
   );
 }
 
+/**
+ * Strict ISO-8601 matcher — date-only or full timestamp with optional
+ * fractional seconds and optional Z/+HH:MM offset. Anchored on both
+ * sides so arbitrary strings that contain a date-looking substring
+ * (e.g. log lines, descriptions) don't get rewritten.
+ */
+const ISO_DATE_RE =
+  /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?)?$/;
+
+/**
+ * Cell renderer. Turns raw run_sql values into a customer-friendly
+ * string:
+ *   - ISO timestamps get formatted via Intl.DateTimeFormat in the
+ *     user's locale (avoids showing raw "2026-05-18T11:55:00.000Z"
+ *     to non-technical users)
+ *   - Date-only ISO ("2026-05-18") drops the time portion
+ *   - null/undefined become an em-dash
+ *   - Objects/arrays JSON-stringify (rare; sanitizeBqValue usually
+ *     primitivises ahead of us)
+ *
+ * The Intl format is intentionally locale-aware (`undefined` for the
+ * first arg) — UK users see "18 May 2026, 11:55", US users see
+ * "May 18, 2026, 11:55". Seconds and milliseconds are dropped on
+ * purpose: in 99% of agent-generated tables the second-level
+ * precision is noise, and dropping it keeps cells narrow.
+ */
 function formatCell(value: unknown): string {
   if (value === null || value === undefined) return "—";
+  if (typeof value === "string" && ISO_DATE_RE.test(value)) {
+    const d = new Date(value);
+    if (!Number.isNaN(d.getTime())) {
+      const isDateOnly = !value.includes("T");
+      return new Intl.DateTimeFormat(
+        undefined,
+        isDateOnly
+          ? { year: "numeric", month: "short", day: "numeric" }
+          : {
+              year: "numeric",
+              month: "short",
+              day: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            }
+      ).format(d);
+    }
+  }
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
 }
