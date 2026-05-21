@@ -38,9 +38,28 @@ import { Client } from "pg";
  *     UI handles these (separate PR).
  */
 
-// Replication-key column-name preference order. First match wins.
-// Lower-cased here; we match `column_name.toLowerCase()` against this.
-const TIMESTAMP_KEY_CANDIDATES = [
+// Replication-key column-name preference order, in two tiers.
+//
+// TIER 1 — "update-aware" timestamps. These columns advance whenever
+// the row mutates (the app updates the column on every write). Using
+// one as the replication key means incremental sync captures BOTH
+// inserts AND updates: when a row in source changes, its updated_at
+// advances, the sync sees `WHERE updated_at > bookmark`, and the row
+// re-flows to BQ. This is the correct semantic for tables that mutate.
+//
+// TIER 2 — "insert-only" timestamps. These are set when the row is
+// created and do NOT change afterwards (created_at, placed_at,
+// signup_date, started_at, etc.). They make a fine replication key
+// for tables that are genuinely insert-only (sessions, audit_log,
+// events). BUT — and this is the gotcha — if the source app DOES
+// update existing rows but doesn't have an `updated_at` column,
+// picking an insert-only key here will SILENTLY MISS those updates
+// in the agent's view of the data. The rationale field warns about
+// this explicitly so the customer can see what they're getting.
+//
+// First match within each tier wins. We exhaust TIER 1 before
+// considering TIER 2.
+const UPDATE_AWARE_TIMESTAMP_KEYS = [
   "updated_at",
   "modified_at",
   "last_modified",
@@ -50,6 +69,30 @@ const TIMESTAMP_KEY_CANDIDATES = [
   "last_changed",
   "updated_dt",
   "mod_dt",
+];
+
+const INSERT_ONLY_TIMESTAMP_KEYS = [
+  // Generic "this row was created at" — most common fallback
+  "created_at",
+  "create_dt",
+  // Order / event lifecycle
+  "placed_at",
+  "started_at",
+  "occurred_at",
+  "happened_at",
+  "event_at",
+  // Logistics / state-change anchors. These ARE update-aware in spirit
+  // (they advance when the entity transitions through a state) but
+  // they don't advance on EVERY mutation — only on the specific
+  // transition that sets them. Still better than picking the PK.
+  "shipped_at",
+  "delivered_at",
+  "processed_at",
+  "requested_at",
+  "completed_at",
+  // Customer / subscription
+  "signup_date",
+  "registered_at",
 ];
 
 // Postgres timestamp-ish data types we'll accept as a replication key.
@@ -222,23 +265,31 @@ export async function introspectPostgresSchema(
       // `<schema>-<table>` (dash, not dot or underscore).
       const streamName = `${table_schema}-${table_name}`;
 
-      // Step 1 — look for a timestamp-named column we recognize, prefer
-      // the first match in TIMESTAMP_KEY_CANDIDATES order. Validate the
-      // column's actual type is timestamp-ish (a column named updated_at
-      // that's somehow a varchar would break the tap's comparison logic).
+      // Step 1 — look for a timestamp-named column we recognise.
+      // Two tiers: prefer "update-aware" (updated_at-family) over
+      // "insert-only" (created_at-family). Validate the actual data
+      // type is timestamp-ish — a column named updated_at that's
+      // somehow a varchar would break the tap's comparison logic.
       const tsCandidate = findTimestampKey(columns);
       if (tsCandidate) {
         streams[streamName] = {
           "replication-method": "INCREMENTAL",
-          "replication-key": tsCandidate.column_name,
+          "replication-key": tsCandidate.column.column_name,
         };
+        // Rationale differs by tier so the customer sees the trade-off.
+        // Update-aware keys = full insert+update coverage.
+        // Insert-only keys = inserts only, updates silently missed.
+        const rationale =
+          tsCandidate.tier === "update-aware"
+            ? `Incremental by \`${tsCandidate.column.column_name}\` (${tsCandidate.column.data_type}). Captures inserts and updates — this is the column the source bumps whenever a row changes.`
+            : `Incremental by \`${tsCandidate.column.column_name}\` (${tsCandidate.column.data_type}). No \`updated_at\`-style column found, so this is the next best bookmark: captures inserts but won't catch updates to existing rows. Use Full Refresh to resync after schema-only changes.`;
         detected.push({
           schema: table_schema,
           table: table_name,
           method: "INCREMENTAL",
-          key: tsCandidate.column_name,
-          keyType: tsCandidate.data_type,
-          rationale: `Incremental by \`${tsCandidate.column_name}\` (${tsCandidate.data_type}). Captures inserts and updates.`,
+          key: tsCandidate.column.column_name,
+          keyType: tsCandidate.column.data_type,
+          rationale,
         });
         continue;
       }
@@ -296,19 +347,42 @@ export async function introspectPostgresSchema(
 }
 
 /**
- * Find the first column whose lowercased name matches our timestamp
- * candidate list AND whose data type is one we trust as a bookmark.
+ * Find the first column whose lowercased name matches a known
+ * timestamp candidate AND whose data type is one we trust as a
+ * bookmark. Returns both the column and which tier matched, so the
+ * caller can emit a tier-specific rationale message (update-aware
+ * keys capture updates; insert-only keys don't).
+ *
+ * Search order:
+ *   1. All UPDATE_AWARE keys, in their declared order.
+ *   2. All INSERT_ONLY keys, in their declared order.
+ *
+ * Returns undefined if no recognised name matches with a valid type.
  */
-function findTimestampKey(columns: PgColumn[]): PgColumn | undefined {
+type TimestampKeyMatch = {
+  column: PgColumn;
+  tier: "update-aware" | "insert-only";
+};
+
+function findTimestampKey(columns: PgColumn[]): TimestampKeyMatch | undefined {
   const byLowerName = new Map<string, PgColumn>();
   for (const col of columns) {
     byLowerName.set(col.column_name.toLowerCase(), col);
   }
-  for (const candidateName of TIMESTAMP_KEY_CANDIDATES) {
-    const col = byLowerName.get(candidateName);
+
+  for (const name of UPDATE_AWARE_TIMESTAMP_KEYS) {
+    const col = byLowerName.get(name);
     if (col && TIMESTAMP_DATA_TYPES.has(col.data_type)) {
-      return col;
+      return { column: col, tier: "update-aware" };
     }
   }
+
+  for (const name of INSERT_ONLY_TIMESTAMP_KEYS) {
+    const col = byLowerName.get(name);
+    if (col && TIMESTAMP_DATA_TYPES.has(col.data_type)) {
+      return { column: col, tier: "insert-only" };
+    }
+  }
+
   return undefined;
 }
