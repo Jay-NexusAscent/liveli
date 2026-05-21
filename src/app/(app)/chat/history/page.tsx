@@ -36,19 +36,30 @@ export default function ChatHistoryPage() {
   const [renameDraft, setRenameDraft] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
 
+  // Mount-only fetch. The setState calls all happen AFTER `await`
+  // (inside async callbacks), which the react-hooks/set-state-in-effect
+  // rule explicitly allows — what it forbids is setState in the
+  // synchronous body of the effect. A `cancelled` flag guards against
+  // setState-after-unmount in StrictMode's dev double-mount.
   useEffect(() => {
-    void load();
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/chats");
+        if (cancelled) return;
+        if (res.ok) {
+          const json = await res.json();
+          if (cancelled) return;
+          setChats(json.items ?? []);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
-
-  async function load() {
-    setLoading(true);
-    try {
-      const res = await fetch("/api/chats");
-      if (res.ok) setChats((await res.json()).items ?? []);
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function deleteChat(id: string, title: string) {
     if (!confirm(`Delete "${title}"? All messages will be removed. This can't be undone.`)) return;
