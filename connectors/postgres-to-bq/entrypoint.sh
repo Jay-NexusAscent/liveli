@@ -38,44 +38,65 @@ export MELTANO_STATE_BACKEND_URI="${MELTANO_STATE_BACKEND_URI:-gs://liveli-melta
 # still be stored, just under the legacy path).
 STATE_ID="${CLIENT_ID:-$WORKSPACE_ID}/${LIVELI_WORKSPACE_ID:-default}/${CONNECTOR_ID}"
 
-# ── Optional per-stream replication overrides ──────────────────────
-# LIVELI_REPLICATION_CONFIG is a JSON object mapping Meltano stream
-# names (`<schema>-<table>`) to {replication-method, replication-key}
-# config. Generated at connect time by lib/postgres-introspection.ts
-# based on which tables have `updated_at`-family columns or single-
-# column integer PKs.
+# ── Per-stream replication overrides + exclusion list ─────────────
+# Two related env vars from the app, both auto-generated at connect
+# time by lib/postgres-introspection.ts:
 #
-# We merge it into meltano.yml's extractor `metadata:` block using
-# Python's yaml module — far more bullet-proof than awk/sed against
-# the YAML structure, and Python is already in the meltano base image.
-# When the env var is unset (older connectors before introspection
-# shipped, or non-postgres connectors), this step is skipped and
-# every stream falls back to Meltano's default (FULL_TABLE).
-if [ -n "${LIVELI_REPLICATION_CONFIG:-}" ]; then
-  echo "→ merging per-stream replication config into meltano.yml"
+#   LIVELI_REPLICATION_CONFIG — JSON object mapping stream name
+#     (`<schema>-<table>`) → { replication-method, replication-key }.
+#     Drives the `metadata:` block of meltano.yml.
+#
+#   LIVELI_EXCLUDED_STREAMS — JSON array of stream names to EXCLUDE
+#     from sync entirely. These are tables without a single-column
+#     primary key — incompatible with the loader's `upsert: true`
+#     MERGE step (would silently corrupt). Drives the `select:`
+#     filter of meltano.yml as `!<stream>.*` exclusions.
+#
+# Merged into meltano.yml using Python's yaml module (already in the
+# meltano base image) — more robust than awk/sed against the YAML
+# structure. When both env vars are unset (legacy connectors), every
+# discovered stream syncs with Meltano's default replication method
+# (FULL_TABLE) — still safe under upsert because tap-postgres emits
+# key_properties from real PKs.
+if [ -n "${LIVELI_REPLICATION_CONFIG:-}" ] || [ -n "${LIVELI_EXCLUDED_STREAMS:-}" ]; then
+  echo "→ merging replication config + exclusions into meltano.yml"
   python3 <<'PY'
 import json, os, yaml
 
 with open("/project/meltano.yml") as f:
     cfg = yaml.safe_load(f)
 
-overrides = json.loads(os.environ["LIVELI_REPLICATION_CONFIG"])
-
 extractor = cfg["plugins"]["extractors"][0]
-# Merge with anything already in meltano.yml (today: nothing — but
-# future static defaults could live there).
-existing = extractor.get("metadata", {}) or {}
-existing.update(overrides)
-extractor["metadata"] = existing
+
+# 1) Per-stream replication metadata (INCREMENTAL vs FULL_TABLE + key).
+overrides = json.loads(os.environ.get("LIVELI_REPLICATION_CONFIG", "{}"))
+if overrides:
+    existing = extractor.get("metadata", {}) or {}
+    existing.update(overrides)
+    extractor["metadata"] = existing
+
+# 2) Exclude no-PK streams via a select-filter denylist. Meltano's
+#    select syntax: ["*.*"] includes everything by default; prepend
+#    "!<stream>.*" entries to subtract specific streams. We build the
+#    full filter explicitly so a missing default doesn't accidentally
+#    leave the denylist empty.
+excluded = json.loads(os.environ.get("LIVELI_EXCLUDED_STREAMS", "[]"))
+if excluded:
+    select = ["*.*"]
+    for stream in excluded:
+        select.append(f"!{stream}.*")
+    extractor["select"] = select
 
 with open("/project/meltano.yml", "w") as f:
     yaml.safe_dump(cfg, f, sort_keys=False)
 
-# Echo summary so Cloud Run Job logs surface what mode each stream is in.
+# Echo summary so Cloud Run Job logs surface what each stream is doing.
 for stream, conf in overrides.items():
     method = conf.get("replication-method", "?")
     key = conf.get("replication-key", "")
     print(f"   {stream}: {method}{(' by ' + key) if key else ''}")
+for stream in excluded:
+    print(f"   {stream}: EXCLUDED (no single-column PK — incompatible with upsert MERGE)")
 PY
 fi
 
