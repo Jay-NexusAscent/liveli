@@ -73,7 +73,7 @@ export function TableBlock({ rows }: TableBlockProps) {
                     className="cursor-pointer border-b border-border px-3 py-2 text-left font-medium text-text-secondary hover:text-text-primary"
                   >
                     <span className="inline-flex items-center gap-1">
-                      {col}
+                      {formatHeader(col)}
                       {isSorted && (
                         <span className="text-text-tertiary">{sortDir === "asc" ? "↑" : "↓"}</span>
                       )}
@@ -104,6 +104,31 @@ export function TableBlock({ rows }: TableBlockProps) {
       </div>
     </div>
   );
+}
+
+/**
+ * Convert a snake_case (or already-spaced) SQL column name into a
+ * customer-friendly Title Case header. Examples:
+ *   time_bucket     → "Time Bucket"
+ *   order_count     → "Order Count"
+ *   five_min_window → "Five Min Window"
+ *
+ * The agent writes snake_case aliases in SQL by convention (SQL
+ * identifiers don't take spaces without backtick-quoting). Rather
+ * than try to force the agent to emit display-friendly aliases
+ * (fragile, and produces ugly SQL), we do the cosmetic conversion
+ * one-time at render time. Every current and future table benefits.
+ *
+ * Empty/falsy values pass through unchanged. Mid-word casing is
+ * preserved (so `customerID` stays `CustomerID`, not `Customerid`).
+ */
+function formatHeader(col: string): string {
+  if (!col) return col;
+  return col
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
 }
 
 /**

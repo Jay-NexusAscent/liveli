@@ -49,9 +49,14 @@ export function ChartRenderer({ spec, height = 320 }: ChartRendererProps) {
     return <KpiTile series={firstSeries} height={height} />;
   }
 
-  const echartsOption = firstSeries?.type === "donut"
-    ? toDonutOption(chartSpec)
-    : chartSpec;
+  // Apply universal polish to every non-KPI spec: smooth defaults on
+  // line/area series + ISO-timestamp formatting on category-axis
+  // labels. Donut translation runs after so it operates on a spec
+  // that already has the polish baked in.
+  const polished = polishChartSpec(chartSpec);
+  const echartsOption = polished.series?.[0]?.type === "donut"
+    ? toDonutOption(polished)
+    : polished;
 
   const isLightTheme =
     typeof document !== "undefined" &&
@@ -129,6 +134,104 @@ function formatKpiValue(
   }
   const base = value.toLocaleString();
   return unit ? `${base}${unit}` : base;
+}
+
+/**
+ * Strict ISO-8601 matcher — same regex as table-block.tsx. Anchored
+ * so a category label that happens to contain a date-looking
+ * substring (e.g. "Order 2026-04-01") isn't mis-detected.
+ */
+const ISO_DATE_RE =
+  /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})?)?$/;
+
+/**
+ * Render-time spec polish — applied to every non-KPI chart so the
+ * agent can stay focused on data shape while presentation niceties
+ * land uniformly across new and previously-saved charts.
+ *
+ * Two transformations:
+ *
+ * 1. Line / area series default to `smooth: true`. Curved lines read
+ *    better than zig-zag polylines, especially for noisy time-series.
+ *    Only sets when the series doesn't already declare a value, so an
+ *    explicit `smooth: false` still wins.
+ *
+ * 2. Category-axis labels that look like ISO timestamps get a
+ *    formatter installed so they display as "Apr 1, 00:00" instead of
+ *    "2026-04-01T00:00:00.000Z", plus `hideOverlap: true` so ECharts
+ *    drops crowded labels rather than rendering them on top of each
+ *    other. The underlying xAxis.data stays as ISO strings — this is
+ *    purely a display-layer change, so sorting / data joins still
+ *    work on the raw values.
+ *
+ * Pure function: returns a new spec, doesn't mutate. The polish is
+ * runtime-only (the `formatter` is a function, which doesn't
+ * round-trip through JSON.stringify) — that's fine because we run
+ * this at render time on every load, not at save time.
+ */
+function polishChartSpec(spec: ChartSpecLike): ChartSpecLike {
+  const out: ChartSpecLike = { ...spec };
+
+  // 1. Smooth-line defaults
+  if (Array.isArray(out.series)) {
+    out.series = out.series.map((s) => {
+      const isLineish = s.type === "line" || s.type === "area";
+      if (isLineish && (s as { smooth?: unknown }).smooth === undefined) {
+        return { ...s, smooth: true };
+      }
+      return s;
+    });
+  }
+
+  // 2. ISO-timestamp axis labels
+  const xAxis = out.xAxis as
+    | { type?: string; data?: unknown[]; axisLabel?: Record<string, unknown> }
+    | undefined;
+  if (xAxis && Array.isArray(xAxis.data)) {
+    const hasIsoData = xAxis.data.some(
+      (v) => typeof v === "string" && ISO_DATE_RE.test(v)
+    );
+    if (hasIsoData) {
+      out.xAxis = {
+        ...xAxis,
+        axisLabel: {
+          ...(xAxis.axisLabel ?? {}),
+          formatter: formatIsoAxisLabel,
+          hideOverlap: true,
+        },
+      };
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Compact axis-label format for ISO-timestamp categories. Drops the
+ * year (most time-series live inside a single year and the tooltip
+ * still carries full context); drops seconds and milliseconds (noise
+ * at chart-axis granularity). Locale-aware so users get their natural
+ * month-name conventions ("Apr" en-US vs "Apr" en-GB happen to match,
+ * but other locales differ).
+ *
+ * Bails out on non-strings or non-ISO values — anything that doesn't
+ * match the strict regex passes through unchanged so non-time
+ * category axes (product names, country codes, etc.) aren't touched.
+ */
+function formatIsoAxisLabel(value: unknown): string {
+  if (typeof value !== "string" || !ISO_DATE_RE.test(value)) {
+    return String(value);
+  }
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  // Date-only string → just show "Apr 1"; full timestamp → "Apr 1, 00:00".
+  const isDateOnly = !value.includes("T");
+  return new Intl.DateTimeFormat(
+    undefined,
+    isDateOnly
+      ? { month: "short", day: "numeric" }
+      : { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }
+  ).format(d);
 }
 
 /**

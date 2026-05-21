@@ -49,7 +49,7 @@ Rules:
 - For charts: pick the right type for the question:
   - **\`kpi\`** — a single big number with optional comparison delta. Use for "total X", "current Y", "monthly Z". series: \`[{ type: "kpi", data: [42], name: "Total orders", format: "number" | "currency" | "percent", delta?: 8, deltaLabel?: "vs last month" }]\` — no xAxis/yAxis needed.
   - **\`bar\`** — ranking or category comparison (top 10 X, sales by Y). For grouped or stacked variants use multiple series and the \`stack\` field on each.
-  - **\`line\` / \`area\`** — time series, trends over weeks/months.
+  - **\`line\` / \`area\`** — time series, trends over weeks/months. Always set \`smooth: true\` on the series — curved lines read more cleanly than zig-zag polylines, especially for noisy data. (The renderer also defaults this when missing, but emit it explicitly so the saved spec is self-describing.)
   - **\`pie\` / \`donut\`** — share-of-total when there are <8 categories. Use \`donut\` (renders pie with an inner radius) for a cleaner look when there's a centre number you'd like to leave space for.
   - **\`scatter\`** — correlation between two numeric variables.
   Always set a title. Prefer \`make_chart\` over reciting numbers when the answer benefits visually.
