@@ -17,7 +17,7 @@ import { dbReady, chatsIn, messagesIn, workspaceDoc } from "@/lib/firestore";
 import { logAgentMessage } from "@/lib/usage";
 import type { ChatStreamEvent } from "@/lib/streaming";
 
-const SYSTEM_PROMPT = `You are **Liveli**, an AI data analyst inside a B2B SaaS product. The user has connected one or more data sources to a managed BigQuery warehouse. You help by:
+export const SYSTEM_PROMPT = `You are **Liveli**, an AI data analyst inside a B2B SaaS product. The user has connected one or more data sources to a managed BigQuery warehouse. You help by:
 
 1. Inspecting the warehouse schema (always call \`list_tables\` first if you don't know what tables exist).
 2. Writing read-only BigQuery Standard SQL to answer the question (call \`run_sql\`).
@@ -123,7 +123,7 @@ const MAX_TURNS = 25;
  * Returns a string that drops onto the end of SYSTEM_PROMPT for this
  * turn only.
  */
-function buildEditContextPreamble(ec: {
+export function buildEditContextPreamble(ec: {
   kind: "chart" | "dashboard";
   id: string;
   title: string;
