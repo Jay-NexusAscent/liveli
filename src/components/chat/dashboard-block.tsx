@@ -4,17 +4,34 @@ import Link from "next/link";
 import { ArrowRightIcon } from "@/components/icons";
 import { ChartRenderer } from "./chart-renderer";
 
+type ColSpan = "small" | "medium" | "large";
+
+// Mirror of the dashboards-page mapping. Each col-span class is
+// written as a full literal so Tailwind's content scanner picks it
+// up — never compose with concatenation.
+const COL_SPAN_CLASSES: Record<ColSpan, string> = {
+  small: "md:col-span-1",
+  medium: "md:col-span-2",
+  large: "md:col-span-4",
+};
+
 interface DashboardBlockProps {
   title: string;
   description?: string;
   dashboardId: string;
-  charts: Array<{ order: number; title: string; spec: unknown }>;
+  charts: Array<{ order: number; title: string; spec: unknown; colSpan?: ColSpan }>;
 }
 
 /**
  * Inline dashboard preview rendered in chat after `make_dashboard`
  * succeeds. Shows every chart in the dashboard at a smaller height so
  * the user sees the actual result, not just a confirmation.
+ *
+ * Honours per-chart colSpan so the inline preview matches what the
+ * user will see at /dashboards (the agent picks Small/Medium/Large
+ * sensibly per chart type; users can override via the size picker
+ * on the dashboards page). Missing colSpan → Medium, matching
+ * legacy 2-col behaviour.
  *
  * The full dashboard with edit affordances lives at /dashboards — we
  * link there from the header. Each individual chart shown here also
@@ -42,11 +59,13 @@ export function DashboardBlock({ title, description, dashboardId, charts }: Dash
           <ArrowRightIcon className="h-3 w-3" />
         </Link>
       </div>
-      <div className="grid gap-3 p-3 md:grid-cols-2">
+      <div className="grid gap-3 p-3 md:grid-cols-4">
         {sortedCharts.map((chart, i) => (
           <div
             key={i}
-            className="rounded-md border border-border bg-background/40 p-3"
+            className={`rounded-md border border-border bg-background/40 p-3 ${
+              COL_SPAN_CLASSES[chart.colSpan ?? "medium"]
+            }`}
           >
             <div className="mb-2 text-[12px] font-medium text-text-secondary">
               {chart.title}

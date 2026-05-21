@@ -35,6 +35,10 @@ const EChartsOption = z.object({
 const ChartSpec = z.object({
   title: z.string().min(1).max(120),
   echartsOption: EChartsOption,
+  // See make-dashboard.ts for full colSpan semantics. Same enum; the
+  // model can revise sizes per chart when the user asks ("make the
+  // revenue chart full-width").
+  colSpan: z.enum(["small", "medium", "large"]).optional(),
 });
 
 const Input = z.object({
@@ -100,6 +104,7 @@ export const updateDashboardTool: ToolDefinition = {
       order: i,
       title: c.title,
       spec: c.echartsOption as unknown,
+      ...(c.colSpan ? { colSpan: c.colSpan } : {}),
     }));
     await ref.update({
       title,

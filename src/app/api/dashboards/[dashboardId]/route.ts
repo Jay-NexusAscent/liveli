@@ -14,6 +14,9 @@ const PatchBody = z.object({
         order: z.number().optional(),
         title: z.string(),
         spec: z.unknown(),
+        // Optional per-tile size hint. See make-dashboard.ts for the
+        // small/medium/large → 1/4 / 1/2 / full mapping.
+        colSpan: z.enum(["small", "medium", "large"]).optional(),
       })
     )
     .min(1)
@@ -80,6 +83,9 @@ export async function PATCH(
       order: c.order ?? i,
       title: c.title,
       spec: c.spec,
+      // Only include colSpan when explicitly set so we don't write a
+      // null over existing data when the caller didn't touch sizing.
+      ...(c.colSpan ? { colSpan: c.colSpan } : {}),
     }));
   }
   await ref.update(update);

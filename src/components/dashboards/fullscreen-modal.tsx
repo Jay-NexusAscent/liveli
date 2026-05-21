@@ -6,6 +6,18 @@ import { toPng } from "html-to-image";
 import { CheckIcon, CloseIcon, CopyIcon, PencilIcon } from "@/components/icons";
 import { ChartRenderer } from "@/components/chat/chart-renderer";
 
+type ColSpan = "small" | "medium" | "large";
+
+// Mirror of the page's COL_SPAN_CLASSES — written out as full
+// literal strings for Tailwind JIT detection. lg:col-span here
+// because the fullscreen grid hits the lg breakpoint (not md),
+// matching the existing `lg:grid-cols-4` below.
+const COL_SPAN_CLASSES: Record<ColSpan, string> = {
+  small: "lg:col-span-1",
+  medium: "lg:col-span-2",
+  large: "lg:col-span-4",
+};
+
 type FullscreenContent =
   | { kind: "chart"; id: string; title: string; spec: unknown }
   | {
@@ -13,7 +25,7 @@ type FullscreenContent =
       id: string;
       title: string;
       description?: string | null;
-      charts: Array<{ order: number; title: string; spec: unknown }>;
+      charts: Array<{ order: number; title: string; spec: unknown; colSpan?: ColSpan }>;
     };
 
 interface FullscreenModalProps {
@@ -205,11 +217,16 @@ export function FullscreenModal({ content, onClose, onEdit }: FullscreenModalPro
           {content.kind === "chart" ? (
             <ChartRenderer spec={content.spec} height={window.innerHeight - 200} />
           ) : (
-            <div className="grid gap-4 lg:grid-cols-2">
+            <div className="grid gap-4 lg:grid-cols-4">
               {[...content.charts]
                 .sort((a, b) => a.order - b.order)
                 .map((c, i) => (
-                  <div key={i} className="rounded-md border border-border bg-background/40 p-4">
+                  <div
+                    key={i}
+                    className={`rounded-md border border-border bg-background/40 p-4 ${
+                      COL_SPAN_CLASSES[c.colSpan ?? "medium"]
+                    }`}
+                  >
                     <div className="mb-2 text-[13px] font-medium text-text-primary">
                       {c.title}
                     </div>
