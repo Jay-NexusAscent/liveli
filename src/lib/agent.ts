@@ -61,6 +61,61 @@ Current date: ${new Date().toISOString().split("T")[0]}.`;
 const MAX_TURNS = 8;
 
 /**
+ * Build the per-turn edit-context preamble that gets appended to
+ * SYSTEM_PROMPT when the customer is editing an existing chart or
+ * dashboard via chat. Tight prose + concrete instructions on which
+ * update tool to call with which id. The current spec is embedded
+ * verbatim so the model has a faithful starting point.
+ *
+ * Returns a string that drops onto the end of SYSTEM_PROMPT for this
+ * turn only.
+ */
+function buildEditContextPreamble(ec: {
+  kind: "chart" | "dashboard";
+  id: string;
+  title: string;
+  spec?: unknown;
+  description?: string | null;
+  charts?: Array<{ order?: number; title: string; spec?: unknown }>;
+}): string {
+  if (ec.kind === "chart") {
+    return [
+      `─── EDIT MODE ───`,
+      `You are editing an EXISTING saved chart. The user will describe changes; apply them by calling \`update_chart\` (NOT make_chart) with the same id.`,
+      ``,
+      `chartId: ${ec.id}`,
+      `title: ${ec.title}`,
+      `current spec:`,
+      "```json",
+      JSON.stringify(ec.spec ?? null),
+      "```",
+      ``,
+      `Rules:`,
+      `- ALWAYS call update_chart with chartId="${ec.id}" — never make_chart, never a different id.`,
+      `- The spec you pass REPLACES the existing one — include every field that should be on the chart after the edit.`,
+      `- Don't call list_tables / run_sql unless the edit actually needs different data; most edits (chart type swap, colour, title) re-use the existing spec.`,
+    ].join("\n");
+  }
+  return [
+    `─── EDIT MODE ───`,
+    `You are editing an EXISTING saved dashboard. The user will describe changes; apply them by calling \`update_dashboard\` (NOT make_dashboard) with the same id.`,
+    ``,
+    `dashboardId: ${ec.id}`,
+    `title: ${ec.title}`,
+    `description: ${ec.description ?? "(none)"}`,
+    `current charts (in order):`,
+    "```json",
+    JSON.stringify(ec.charts ?? [], null, 0),
+    "```",
+    ``,
+    `Rules:`,
+    `- ALWAYS call update_dashboard with dashboardId="${ec.id}".`,
+    `- The \`charts\` array REPLACES the existing list. Include EVERY chart that should be on the dashboard after the edit — adds, removes, reorders, and edits all flow through this one call.`,
+    `- Don't call list_tables / run_sql unless the edit actually needs different data.`,
+  ].join("\n");
+}
+
+/**
  * Emit a single-line summary of an agent turn for production timing
  * visibility. We bias toward one line per turn rather than many fine-
  * grained logs because Vercel's runtime log MCP aggregates by request
@@ -134,12 +189,34 @@ function flattenErrorChain(e: unknown, maxDepth = 8): string {
   return parts.join(" ↳ ");
 }
 
+/**
+ * Edit-context payload. When the user clicked Edit on a chart or
+ * dashboard, the client carries this through every chat-API call for
+ * the session. We use it to:
+ *   1. Inject an "you are editing X with spec Y" preamble into the
+ *      system prompt for this turn only (NOT persisted to history),
+ *      so the model knows to call update_chart / update_dashboard
+ *      with the provided id, instead of make_chart / make_dashboard.
+ *   2. Keep working with the chart across multiple user messages
+ *      ("change to bar" → "now make the bars green") without
+ *      re-injecting from the user side every time.
+ */
+export interface AgentEditContext {
+  kind: "chart" | "dashboard";
+  id: string;
+  title: string;
+  spec?: unknown;
+  description?: string | null;
+  charts?: Array<{ order?: number; title: string; spec?: unknown }>;
+}
+
 export interface AgentTurnInput {
   clientId: string;
   workspaceId: string;
   userId: string;
   chatId?: string;
   userMessage: string;
+  editContext?: AgentEditContext;
 }
 
 /**
@@ -307,9 +384,19 @@ export async function* runAgentTurn(
 
     // Build a fresh model per turn — systemInstruction lives here (not on
     // the per-request body) so the SDK uses its canonical wiring.
+    //
+    // When the customer is editing a chart/dashboard via chat, append a
+    // tight edit-context preamble to the system prompt so the model
+    // calls update_chart / update_dashboard with the right id instead
+    // of make_chart / make_dashboard. This is NOT persisted to history
+    // — it's per-turn context, derived from the editContext that the
+    // client sends with every chat-API call in the edit session.
     const fnDecls = geminiFunctionDeclarations();
+    const systemPromptText = input.editContext
+      ? `${SYSTEM_PROMPT}\n\n${buildEditContextPreamble(input.editContext)}`
+      : SYSTEM_PROMPT;
     const model = buildModel(vertexRegion, {
-      systemInstruction: { role: "system", parts: [{ text: SYSTEM_PROMPT }] },
+      systemInstruction: { role: "system", parts: [{ text: systemPromptText }] },
       tools: [{ functionDeclarations: fnDecls }],
     });
 
