@@ -1,8 +1,8 @@
 "use client";
 
-import ReactECharts from "echarts-for-react";
 import Link from "next/link";
 import { ArrowRightIcon } from "@/components/icons";
+import { ChartRenderer } from "./chart-renderer";
 
 interface DashboardBlockProps {
   title: string;
@@ -21,10 +21,6 @@ interface DashboardBlockProps {
  * exists on the Dashboards page; this block is read-only on purpose.
  */
 export function DashboardBlock({ title, description, dashboardId, charts }: DashboardBlockProps) {
-  const isLightTheme =
-    typeof document !== "undefined" &&
-    document.documentElement.getAttribute("data-theme") === "light";
-
   const sortedCharts = [...charts].sort((a, b) => a.order - b.order);
 
   return (
@@ -55,12 +51,7 @@ export function DashboardBlock({ title, description, dashboardId, charts }: Dash
             <div className="mb-2 text-[12px] font-medium text-text-secondary">
               {chart.title}
             </div>
-            <ReactECharts
-              option={chart.spec as object}
-              style={{ height: 220, width: "100%" }}
-              theme={isLightTheme ? "default" : "dark"}
-              opts={{ renderer: "svg" }}
-            />
+            <ChartRenderer spec={chart.spec} height={220} />
           </div>
         ))}
       </div>

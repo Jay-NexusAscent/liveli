@@ -13,10 +13,23 @@ import type { ToolDefinition } from "./types";
  */
 const SeriesSchema = z.object({
   name: z.string().optional(),
-  type: z.enum(["bar", "line", "pie", "scatter", "area"]),
+  type: z.enum(["bar", "line", "pie", "donut", "scatter", "area", "kpi"]),
   data: z.array(z.number()).max(10_000),
   smooth: z.boolean().optional(),
   stack: z.string().optional(),
+  /**
+   * KPI hints — only meaningful when type === "kpi". The renderer
+   * shows data[0] as a single large number with optional unit, plus
+   * an optional delta line below ("+8% vs last month").
+   *   format:     numeric formatting (number / currency-£ / percent)
+   *   unit:       short suffix, e.g. "%", "$"
+   *   delta:      comparison number (positive = up, negative = down)
+   *   deltaLabel: caption for the delta ("vs last month")
+   */
+  format: z.enum(["number", "currency", "percent"]).optional(),
+  unit: z.string().max(8).optional(),
+  delta: z.number().optional(),
+  deltaLabel: z.string().max(40).optional(),
 });
 
 const AxisSchema = z.object({

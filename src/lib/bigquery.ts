@@ -258,6 +258,30 @@ export interface WorkspaceTable {
  * had its first sync). Saves one round-trip per connector and is
  * idempotent vs. the explicit exists call.
  */
+/**
+ * Singer/Meltano target-bigquery writes each sync to a versioned
+ * staging table named `<canonical>__<14-digit-timestamp>__<uuid>` and
+ * (currently) doesn't promote into the canonical table. The result is
+ * a dataset with one canonical table + N stale staging copies, growing
+ * every sync.
+ *
+ * For the agent's purposes, only the canonical table is a meaningful
+ * surface — the staging copies are an ingestion artifact, not user
+ * data. We filter them out here so list_tables returns a clean list.
+ *
+ * ⚠️ Known follow-up: when the canonical table never receives the
+ * loaded rows (sync misconfiguration), the customer's real data ends
+ * up stranded in the staging copies that this filter now hides. The
+ * fix is on the loader side — target-bigquery needs to be configured
+ * to APPEND or MERGE into the canonical, not just write staging. See
+ * the new Linear ticket on sync data promotion.
+ */
+const STAGING_TABLE_SUFFIX = /__\d{14}__[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+function isStagingTableName(tableId: string): boolean {
+  return STAGING_TABLE_SUFFIX.test(tableId);
+}
+
 export async function listWorkspaceTables(
   clientId: string,
   workspaceId: string,
@@ -279,8 +303,11 @@ export async function listWorkspaceTables(
         if (code === 404) return [] as WorkspaceTable[];
         throw err;
       }
+      // Filter Singer/Meltano staging copies before fetching metadata —
+      // saves a getMetadata round-trip per excluded table.
+      const filteredTables = tables.filter((t) => !isStagingTableName(t.id ?? ""));
       const rows = await Promise.all(
-        tables.map(async (t) => {
+        filteredTables.map(async (t) => {
           const [meta] = await t.getMetadata();
           return {
             qualifiedName: `${datasetId}.${t.id ?? ""}`,

@@ -1,11 +1,9 @@
 "use client";
 
 import { useEffect } from "react";
-import dynamic from "next/dynamic";
 import { createPortal } from "react-dom";
 import { CloseIcon } from "@/components/icons";
-
-const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
+import { ChartRenderer } from "@/components/chat/chart-renderer";
 
 type FullscreenContent =
   | { kind: "chart"; title: string; spec: unknown }
@@ -55,8 +53,6 @@ export function FullscreenModal({ content, onClose }: FullscreenModalProps) {
 
   if (!content || typeof window === "undefined") return null;
 
-  const isLightTheme = document.documentElement.getAttribute("data-theme") === "light";
-
   return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/70 backdrop-blur-sm"
@@ -91,12 +87,7 @@ export function FullscreenModal({ content, onClose }: FullscreenModalProps) {
 
         <div className="flex-1 overflow-auto p-6">
           {content.kind === "chart" ? (
-            <ReactECharts
-              option={content.spec as object}
-              style={{ height: "calc(100vh - 200px)", width: "100%" }}
-              theme={isLightTheme ? "default" : "dark"}
-              opts={{ renderer: "svg" }}
-            />
+            <ChartRenderer spec={content.spec} height={window.innerHeight - 200} />
           ) : (
             <div className="grid gap-4 lg:grid-cols-2">
               {[...content.charts]
@@ -106,12 +97,7 @@ export function FullscreenModal({ content, onClose }: FullscreenModalProps) {
                     <div className="mb-2 text-[13px] font-medium text-text-primary">
                       {c.title}
                     </div>
-                    <ReactECharts
-                      option={c.spec as object}
-                      style={{ height: 360, width: "100%" }}
-                      theme={isLightTheme ? "default" : "dark"}
-                      opts={{ renderer: "svg" }}
-                    />
+                    <ChartRenderer spec={c.spec} height={360} />
                   </div>
                 ))}
             </div>

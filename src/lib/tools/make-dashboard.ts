@@ -10,10 +10,15 @@ import type { ToolDefinition } from "./types";
  */
 const SeriesSchema = z.object({
   name: z.string().optional(),
-  type: z.enum(["bar", "line", "pie", "scatter", "area"]),
+  type: z.enum(["bar", "line", "pie", "donut", "scatter", "area", "kpi"]),
   data: z.array(z.number()).max(10_000),
   smooth: z.boolean().optional(),
   stack: z.string().optional(),
+  // KPI hints — see make-chart.ts for full doc.
+  format: z.enum(["number", "currency", "percent"]).optional(),
+  unit: z.string().max(8).optional(),
+  delta: z.number().optional(),
+  deltaLabel: z.string().max(40).optional(),
 });
 
 const AxisSchema = z.object({
