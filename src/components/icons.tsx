@@ -154,6 +154,19 @@ export function TrendDownIcon({ className }: IconProps) {
   );
 }
 
+export function GripIcon({ className }: IconProps) {
+  return (
+    <svg className={className} width="16" height="16" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+      <circle cx="7" cy="5" r="1.25" />
+      <circle cx="13" cy="5" r="1.25" />
+      <circle cx="7" cy="10" r="1.25" />
+      <circle cx="13" cy="10" r="1.25" />
+      <circle cx="7" cy="15" r="1.25" />
+      <circle cx="13" cy="15" r="1.25" />
+    </svg>
+  );
+}
+
 export function ExpandIcon({ className }: IconProps) {
   return (
     <svg className={className} width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
