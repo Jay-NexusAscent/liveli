@@ -111,6 +111,81 @@ export async function writeTableDescription(
   return { written: true };
 }
 
+interface WriteDatasetDescriptionInput {
+  ctx: WriteConnectorContext;
+  description: string;
+  source: MetadataSource;
+  force?: boolean;
+}
+
+/**
+ * Write a dataset-level description to BigQuery, and mirror it onto
+ * the connector doc itself (under `datasetMetadata`) — not a separate
+ * subcollection, because there's exactly one dataset per connector,
+ * so a single field is cleaner than a single-doc subcollection.
+ *
+ * Same overwrite semantics as table/column writers: agent re-runs
+ * can update an agent-sourced description, but human or manifest
+ * sources are protected unless `force: true`.
+ *
+ * Tenancy: rejects if `bqDataset` doesn't match the connector tuple
+ * (defence-in-depth against a model writing to the wrong dataset).
+ */
+export async function writeDatasetDescription(
+  input: WriteDatasetDescriptionInput,
+): Promise<WriteResult> {
+  assertDatasetMatchesConnector(
+    input.ctx.bqDataset,
+    input.ctx.clientId,
+    input.ctx.workspaceId,
+    input.ctx.connectorId,
+  );
+
+  await dbReady();
+  const connectorRef = connectorsIn(
+    input.ctx.clientId,
+    input.ctx.workspaceId,
+  ).doc(input.ctx.connectorId);
+
+  const snap = await connectorRef.get();
+  const existing = (snap.data() as
+    | {
+        datasetMetadata?: {
+          description?: string;
+          source?: MetadataSource;
+        };
+      }
+    | undefined)?.datasetMetadata;
+
+  if (!input.force && existing?.source && existing.source !== "agent") {
+    return {
+      written: false,
+      reason:
+        existing.source === "user-edit"
+          ? "already-described-by-human"
+          : "already-described-by-manifest",
+    };
+  }
+
+  const client = await bqReady();
+  await client.dataset(input.ctx.bqDataset).setMetadata({
+    description: input.description,
+  });
+
+  await connectorRef.set(
+    {
+      datasetMetadata: {
+        description: input.description,
+        source: input.source,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+    },
+    { merge: true },
+  );
+
+  return { written: true };
+}
+
 interface WriteColumnDescriptionInput {
   ctx: WriteConnectorContext;
   tableId: string;
