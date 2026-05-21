@@ -274,9 +274,66 @@ export default function DashboardsPage() {
         </section>
       )}
 
-      <FullscreenModal content={fullscreen} onClose={() => setFullscreen(null)} />
+      <FullscreenModal
+        content={fullscreen}
+        onClose={() => setFullscreen(null)}
+        onEdit={getFullscreenEditHandler(fullscreen, charts, openEditInChat)}
+      />
     </div>
   );
+}
+
+/**
+ * Derive the Edit-in-chat handler for whatever is currently fullscreened.
+ *
+ * - Dashboards are always editable — the modal opens for a dashboard
+ *   document we own.
+ * - Standalone charts are editable only if their id matches one of the
+ *   saved-chart documents. Charts inside a dashboard use a synthetic
+ *   id (`<dashboardId>-<index>`) and don't have a row of their own to
+ *   update — to edit them you edit the parent dashboard. We detect
+ *   that case by absence from `savedCharts` rather than parsing the id
+ *   string, so the "is this a real chart doc" rule stays in one place.
+ *
+ * Returns undefined when there's nothing to edit; the modal then
+ * doesn't render the Edit button.
+ */
+function getFullscreenEditHandler(
+  fullscreen: FullscreenContent | null,
+  savedCharts: SavedChart[],
+  openEditInChat: (
+    payload:
+      | { kind: "chart"; id: string; title: string; spec: unknown }
+      | {
+          kind: "dashboard";
+          id: string;
+          title: string;
+          description?: string | null;
+          charts: Array<{ order: number; title: string; spec: unknown }>;
+        }
+  ) => void
+): (() => void) | undefined {
+  if (!fullscreen) return undefined;
+  if (fullscreen.kind === "dashboard") {
+    return () =>
+      openEditInChat({
+        kind: "dashboard",
+        id: fullscreen.id,
+        title: fullscreen.title,
+        description: fullscreen.description,
+        charts: fullscreen.charts,
+      });
+  }
+  // chart kind — only editable if it's a standalone saved chart
+  const isStandalone = savedCharts.some((c) => c.id === fullscreen.id);
+  if (!isStandalone) return undefined;
+  return () =>
+    openEditInChat({
+      kind: "chart",
+      id: fullscreen.id,
+      title: fullscreen.title,
+      spec: fullscreen.spec,
+    });
 }
 
 function ChartTile({
