@@ -18,7 +18,38 @@ const Input = z.object({
     .describe("Cap rows returned to the model. Default 100."),
 });
 
-const READ_ONLY = /^\s*(SELECT|WITH)\b/i;
+/**
+ * Defense-in-depth read-only check.
+ *
+ * The real safety boundary is the workspace SA's IAM — it has
+ * `bigquery.dataViewer` only on workspace datasets, so even a smuggled
+ * DELETE would fail at the BQ permission layer. But customer-facing
+ * model output reaching the SQL planner deserves a syntactic guard
+ * too. The previous version only checked the first keyword, which
+ * misses:
+ *   - Multi-statement scripts: "SELECT 1 ; DELETE FROM x"
+ *   - Block-comment injection: a /-star-...-star-/ before a DELETE
+ *   - Line comments: "-- foo\nDELETE FROM x"
+ *
+ * This version normalises (strip comments, collapse whitespace),
+ * splits on `;`, and requires every non-empty statement to start with
+ * SELECT or WITH. Still not a full SQL parser — adversarial SQL could
+ * still slip through clever quoting — but the IAM layer remains the
+ * actual boundary.
+ */
+function isReadOnlySql(sql: string): boolean {
+  // Strip block comments  /* ... */
+  let cleaned = sql.replace(/\/\*[\s\S]*?\*\//g, " ");
+  // Strip line comments  -- ... \n
+  cleaned = cleaned.replace(/--[^\n]*/g, " ");
+  // Split on `;`, trim, drop empties
+  const statements = cleaned
+    .split(";")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (statements.length === 0) return false;
+  return statements.every((s) => /^(SELECT|WITH)\b/i.test(s));
+}
 
 function stripSyncMetadata(row: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -36,8 +67,8 @@ export const runSqlTool: ToolDefinition = {
   inputSchema: Input,
   handler: async (raw, ctx) => {
     const { sql, maxRows = 100 } = Input.parse(raw);
-    if (!READ_ONLY.test(sql)) {
-      throw new Error("Only SELECT and WITH queries are allowed.");
+    if (!isReadOnlySql(sql)) {
+      throw new Error("Only SELECT and WITH queries are allowed (no DDL/DML, no multi-statement scripts).");
     }
     const result = await safeQuery(sql, {
       maxRows,

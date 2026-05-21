@@ -574,6 +574,31 @@ export async function* runAgentTurn(
             // whole user-message-cycle.
             totalTokensIn += u?.inputTokens ?? 0;
             totalTokensOut += u?.outputTokens ?? 0;
+            // Capture Anthropic prompt-cache stats so we can verify the
+            // ephemeral cache control set in providerOptions is firing.
+            // `providerMetadata` isn't on the typed surface of finish
+            // chunks in AI SDK v6 — runtime carries it through, but the
+            // types don't expose it. Cast and treat as best-effort
+            // observability: if the runtime keys exist, log; otherwise
+            // silently skip.
+            const anthropicMeta = (
+              chunk as unknown as {
+                providerMetadata?: {
+                  anthropic?: {
+                    cacheCreationInputTokens?: number;
+                    cacheReadInputTokens?: number;
+                  };
+                };
+              }
+            ).providerMetadata?.anthropic;
+            if (anthropicMeta) {
+              console.log("[agent-claude] anthropic cache stats", {
+                cacheCreationInputTokens: anthropicMeta.cacheCreationInputTokens ?? 0,
+                cacheReadInputTokens: anthropicMeta.cacheReadInputTokens ?? 0,
+                regularInputTokens: u?.inputTokens ?? 0,
+                outputTokens: u?.outputTokens ?? 0,
+              });
+            }
             break;
           }
           default:

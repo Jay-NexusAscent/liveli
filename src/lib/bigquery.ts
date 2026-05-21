@@ -322,21 +322,48 @@ export interface WorkspaceTable {
   connectorType?: string;
   /**
    * Dataset-level semantic description, populated by the metadata
-   * enrichment agent (LIVELI-87 territory). Same value repeats across
-   * every row that shares a dataset — the flat-shape duplication is
-   * intentional so the chat agent can see the dataset context on any
-   * table it inspects without doing a separate lookup. May be missing
-   * if enrichment hasn't run yet for this dataset.
+   * enrichment agent (LIVELI-87 territory). Cheap to ship in every
+   * list_tables response — short, useful for orientation.
    */
   datasetDescription?: string;
   /** Table-level semantic description from enrichment. */
   tableDescription?: string;
   rowCount: number;
+  /**
+   * Column NAME + TYPE only. Column-level descriptions are deliberately
+   * NOT included here — they bloat the response on big workspaces (8
+   * connectors × 10 tables × 20 cols × ~100 chars = ~160KB of just
+   * descriptions). Agent calls describe_table when it actually needs
+   * column-level semantics. See src/lib/tools/describe-table.ts.
+   */
   columns: {
     name: string;
     type: string;
-    /** Column-level semantic description from enrichment. */
+  }[];
+}
+
+/**
+ * Full per-column metadata. Returned by getTableSchema for use in the
+ * `describe_table` tool — the deep-dive lookup the chat agent calls
+ * when it needs semantic column info (disambiguating similar-named
+ * columns, understanding nullability conventions, etc.). Separated
+ * from the row-count-y WorkspaceTable shape because the typical
+ * list_tables consumer doesn't want this verbosity.
+ */
+export interface WorkspaceTableSchema {
+  qualifiedName: string;
+  dataset: string;
+  table: string;
+  datasetDescription?: string;
+  tableDescription?: string;
+  rowCount: number;
+  columns: {
+    name: string;
+    type: string;
+    /** Enrichment-agent description; undefined when not enriched yet. */
     description?: string;
+    /** BigQuery field mode: NULLABLE, REQUIRED, REPEATED. */
+    mode?: string;
   }[];
 }
 
@@ -435,11 +462,12 @@ export async function listWorkspaceTables(
             datasetDescription,
             tableDescription: (meta as { description?: string }).description,
             rowCount: Number(meta.numRows ?? 0),
+            // Drop column descriptions here — the deep-dive view is in
+            // describe_table. See WorkspaceTable interface comment.
             columns: (meta.schema?.fields ?? []).map(
-              (f: { name: string; type: string; description?: string }) => ({
+              (f: { name: string; type: string }) => ({
                 name: f.name,
                 type: f.type,
-                description: f.description,
               })
             ),
           } satisfies WorkspaceTable;
@@ -458,4 +486,63 @@ export async function listWorkspaceTables(
     durationMs: Date.now() - startedAt,
   });
   return out;
+}
+
+/**
+ * Look up the full schema (including column descriptions) for a single
+ * table. Used by the `describe_table` tool — the agent calls this when
+ * it needs column-level semantic info that `list_tables` deliberately
+ * doesn't carry (to keep its response light).
+ *
+ * Validates dataset ownership: throws if the dataset doesn't follow
+ * the `c_<clientId>__w_<workspaceId>__d_<connectorId>` pattern for the
+ * caller's workspace. Defense against a smuggled dataset name reaching
+ * here from a misbehaving model.
+ */
+export async function getTableSchema(
+  clientId: string,
+  workspaceId: string,
+  datasetId: string,
+  tableId: string
+): Promise<WorkspaceTableSchema> {
+  // Workspace-scope guard: dataset MUST belong to the caller's
+  // workspace (matches the connectorDatasetId pattern). Stops a
+  // smuggled dataset name from a confused model reaching arbitrary
+  // BQ datasets the workspace SA might happen to see.
+  const expectedPrefix = `c_${clientId}__w_${workspaceId}__d_`;
+  if (!datasetId.startsWith(expectedPrefix)) {
+    throw new Error(
+      `dataset "${datasetId}" does not belong to this workspace`
+    );
+  }
+  if (isStagingTable(tableId)) {
+    throw new Error(
+      `table "${tableId}" is a staging table — query the canonical name instead`
+    );
+  }
+
+  const client = await bqReady();
+  const [datasetMeta, [tableMeta]] = await Promise.all([
+    client.dataset(datasetId).getMetadata().catch(() => [{}]),
+    client.dataset(datasetId).table(tableId).getMetadata(),
+  ]);
+  const datasetDescription =
+    (Array.isArray(datasetMeta) ? (datasetMeta[0] as { description?: string }) : datasetMeta).description;
+
+  return {
+    qualifiedName: `${datasetId}.${tableId}`,
+    dataset: datasetId,
+    table: tableId,
+    datasetDescription,
+    tableDescription: (tableMeta as { description?: string }).description,
+    rowCount: Number(tableMeta.numRows ?? 0),
+    columns: (tableMeta.schema?.fields ?? []).map(
+      (f: { name: string; type: string; description?: string; mode?: string }) => ({
+        name: f.name,
+        type: f.type,
+        description: f.description,
+        mode: f.mode,
+      })
+    ),
+  };
 }
