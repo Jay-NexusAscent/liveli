@@ -137,8 +137,27 @@ export interface ReplicationConfig {
    */
   streams: Record<string, StreamReplicationConfig>;
   /**
+   * Streams that CANNOT be safely synced under the current loader
+   * config (`upsert: true`). Specifically: tables without a primary
+   * key, where tap-postgres emits no `key_properties` and z3z1ma's
+   * MERGE step silently fails — leaving the canonical table stale
+   * and littering staging copies. We exclude them from the tap's
+   * select-list entirely rather than let them break syncs silently.
+   *
+   * Stream-name format matches `streams` keys above (`<schema>-<table>`).
+   * Sync routes pass this to the Cloud Run Job as
+   * `LIVELI_EXCLUDED_STREAMS` env; entrypoint.sh writes it into the
+   * meltano.yml `select:` block as `!<stream>.*` exclusions.
+   *
+   * Surfaced to the user at connect time so they know which tables
+   * won't appear in their dataset. Follow-up work to support these
+   * via a parallel `overwrite: true` extractor invocation: LIVELI-?
+   */
+  excludedStreams: string[];
+  /**
    * UI-facing summary of detection results. NOT consumed by Meltano.
-   * One entry per table, including ones that fell through to FULL_TABLE.
+   * One entry per table, including ones that fell through to FULL_TABLE
+   * or are excluded entirely.
    */
   detected: DetectedTable[];
 }
@@ -146,7 +165,14 @@ export interface ReplicationConfig {
 export interface DetectedTable {
   schema: string;
   table: string;
-  method: "INCREMENTAL" | "FULL_TABLE";
+  /**
+   * The replication outcome for this table.
+   *   - INCREMENTAL: delta extracted each sync, MERGE on PK preserves history.
+   *   - FULL_TABLE: full snapshot each sync, MERGE on PK preserves history
+   *     (PK rows present in source survive; deletes don't propagate — known).
+   *   - EXCLUDED: cannot be synced safely (no PK → upsert silently fails).
+   */
+  method: "INCREMENTAL" | "FULL_TABLE" | "EXCLUDED";
   /** Replication key column, when method is INCREMENTAL. */
   key?: string;
   /** Type of the chosen key column, for UI display. */
@@ -254,6 +280,7 @@ export async function introspectPostgresSchema(
     }
 
     const streams: Record<string, StreamReplicationConfig> = {};
+    const excludedStreams: string[] = [];
     const detected: DetectedTable[] = [];
 
     for (const { table_schema, table_name } of tablesRes.rows) {
@@ -265,7 +292,46 @@ export async function introspectPostgresSchema(
       // `<schema>-<table>` (dash, not dot or underscore).
       const streamName = `${table_schema}-${table_name}`;
 
-      // Step 1 — look for a timestamp-named column we recognise.
+      // Hard prerequisite for upsert-mode sync: the table MUST have a
+      // single-column primary key. tap-postgres emits `key_properties`
+      // from the source's PRIMARY KEY constraint, and z3z1ma's
+      // target-bigquery in upsert mode uses those keys for the MERGE
+      // step. Tables without a PK silently fail MERGE (the canonical
+      // table stays stale, staging copies pile up — confirmed in
+      // production, see LIVELI-111). Composite PKs aren't supported by
+      // the loader's MERGE either.
+      //
+      // We EXCLUDE these tables from sync rather than let them corrupt
+      // silently. Surfaced to the user at connect time so they can
+      // decide: add a PK to the source table, or wait for the
+      // follow-up that adds an `overwrite: true` extractor invocation
+      // for no-PK tables.
+      const hasSingleColumnPk = pkColumns.length === 1;
+      if (!hasSingleColumnPk) {
+        excludedStreams.push(streamName);
+        let reason: string;
+        if (pkColumns.length === 0) {
+          reason = `Excluded from sync: no primary key on the source table. BigQuery MERGE requires a key — add a PK to enable replication. (See LIVELI-111 follow-up for a future full-refresh sync path that handles no-PK tables.)`;
+        } else {
+          reason = `Excluded from sync: composite primary key (${pkColumns.length} columns) is not supported by the current MERGE-on-PK loader. (See LIVELI-111 follow-up for a future full-refresh sync path that handles composite keys.)`;
+        }
+        detected.push({
+          schema: table_schema,
+          table: table_name,
+          method: "EXCLUDED",
+          rationale: reason,
+        });
+        continue;
+      }
+
+      // Step 1 — look for a timestamp-named column we recognise as a
+      // replication key. Combined with the single-column PK below, an
+      // INCREMENTAL stream extracts only the delta (WHERE replication-key
+      // > bookmark) and target-bigquery MERGEs the delta onto the
+      // canonical table using key_properties from the PK. History
+      // preserved, cost scales with delta size — the canonical
+      // incremental-sync flow.
+      //
       // Two tiers: prefer "update-aware" (updated_at-family) over
       // "insert-only" (created_at-family). Validate the actual data
       // type is timestamp-ish — a column named updated_at that's
@@ -281,8 +347,8 @@ export async function introspectPostgresSchema(
         // Insert-only keys = inserts only, updates silently missed.
         const rationale =
           tsCandidate.tier === "update-aware"
-            ? `Incremental by \`${tsCandidate.column.column_name}\` (${tsCandidate.column.data_type}). Captures inserts and updates — this is the column the source bumps whenever a row changes.`
-            : `Incremental by \`${tsCandidate.column.column_name}\` (${tsCandidate.column.data_type}). No \`updated_at\`-style column found, so this is the next best bookmark: captures inserts but won't catch updates to existing rows. Use Full Refresh to resync after schema-only changes.`;
+            ? `Incremental by \`${tsCandidate.column.column_name}\` (${tsCandidate.column.data_type}). Captures inserts and updates — this is the column the source bumps whenever a row changes. MERGE on primary key \`${pkColumns[0].column_name}\`.`
+            : `Incremental by \`${tsCandidate.column.column_name}\` (${tsCandidate.column.data_type}). No \`updated_at\`-style column found, so this is the next best bookmark: captures inserts but won't catch updates to existing rows. Use Full Refresh to resync after schema-only changes. MERGE on primary key \`${pkColumns[0].column_name}\`.`;
         detected.push({
           schema: table_schema,
           table: table_name,
@@ -294,9 +360,12 @@ export async function introspectPostgresSchema(
         continue;
       }
 
-      // Step 2 — single-column integer PK. Use as bookmark; captures
-      // inserts only. Better than nothing, worse than a real timestamp.
-      if (pkColumns.length === 1 && INTEGER_DATA_TYPES.has(pkColumns[0].data_type)) {
+      // Step 2 — single-column integer PK with no timestamp column. The
+      // PK itself is monotonically-ish increasing (sequence), so use it
+      // as the bookmark. Captures inserts only — UPDATEs to existing
+      // rows where the PK doesn't change will be silently missed
+      // because the WHERE pk > bookmark filter excludes them.
+      if (INTEGER_DATA_TYPES.has(pkColumns[0].data_type)) {
         const pk = pkColumns[0];
         streams[streamName] = {
           "replication-method": "INCREMENTAL",
@@ -308,32 +377,28 @@ export async function introspectPostgresSchema(
           method: "INCREMENTAL",
           key: pk.column_name,
           keyType: pk.data_type,
-          rationale: `Incremental by primary key \`${pk.column_name}\` (${pk.data_type}). Captures inserts only — updates to existing rows won't sync until you Full Refresh.`,
+          rationale: `Incremental by primary key \`${pk.column_name}\` (${pk.data_type}). Captures inserts only — updates to existing rows won't sync until you Full Refresh. MERGE on the same primary key.`,
         });
         continue;
       }
 
-      // Step 3 — fall back to full extract. Note the reason so the UI
-      // can hint at the cause ("no PK and no updated_at column").
+      // Step 3 — single-column PK but non-integer (UUID, string, etc.)
+      // and no timestamp column. Can't use the PK as a bookmark
+      // (non-monotonic). Fall back to FULL_TABLE replication: every
+      // sync emits all rows, target-bigquery MERGEs on the PK so
+      // history is preserved correctly (insertions / updates land,
+      // deletes from source don't propagate — known limitation).
+      // Slower than INCREMENTAL but correct.
       streams[streamName] = { "replication-method": "FULL_TABLE" };
-
-      let reason: string;
-      if (pkColumns.length > 1) {
-        reason = `Composite primary key (${pkColumns.length} columns) — Meltano supports only a single replication key. Full extract every sync.`;
-      } else if (pkColumns.length === 1) {
-        reason = `Primary key is \`${pkColumns[0].column_name}\` (${pkColumns[0].data_type}) — non-integer types aren't usable as a sequence bookmark. Full extract every sync.`;
-      } else {
-        reason = `No primary key and no recognised timestamp column. Full extract every sync.`;
-      }
       detected.push({
         schema: table_schema,
         table: table_name,
         method: "FULL_TABLE",
-        rationale: reason,
+        rationale: `Full extract every sync — primary key is \`${pkColumns[0].column_name}\` (${pkColumns[0].data_type}, non-integer) and no \`updated_at\`-style column was found, so no usable bookmark. MERGE on PK still preserves history; just costs more per sync.`,
       });
     }
 
-    return { streams, detected };
+    return { streams, excludedStreams, detected };
   } finally {
     // pg's Client doesn't have an idempotent close — but end() on an
     // unconnected client throws. Try/catch the cleanup so it doesn't
