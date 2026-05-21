@@ -11,6 +11,12 @@ RUN meltano lock --update --all && meltano install
 # `ModuleNotFoundError: No module named 'pkg_resources'`. Pin the
 # loader venv's setuptools to a version that still ships pkg_resources.
 RUN .meltano/loaders/target-bigquery/venv/bin/pip install 'setuptools<81'
+# GCS state backend support. Meltano dispatches to fsspec for state
+# backends; the gs:// scheme requires gcsfs (sans-IO filesystem
+# adapter) + google-cloud-storage (auth/transport). Without these
+# Meltano errors out at startup with "Filesystem driver `gs` could
+# not be loaded" when MELTANO_STATE_BACKEND_URI is set.
+RUN pip install --no-cache-dir gcsfs google-cloud-storage
 COPY entrypoint.sh ./
 RUN chmod +x entrypoint.sh
 ENTRYPOINT ["./entrypoint.sh"]

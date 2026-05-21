@@ -25,10 +25,33 @@ export class UnsupportedConnectorTypeError extends Error {
 }
 
 type Creds = Record<string, string>;
-type EnvBuilder = (creds: Creds) => Record<string, string>;
+
+/**
+ * Non-credential per-connector options passed alongside Secret Manager
+ * creds. Used today for postgres' replicationConfig (auto-detected at
+ * connect time, stored on the Firestore connector doc, NOT in Secret
+ * Manager because it's not sensitive). The shape is intentionally loose
+ * — type-narrowing happens per-builder.
+ */
+export interface BuildTapEnvOptions {
+  /**
+   * Meltano-format per-stream metadata overrides. For postgres this is
+   * the `streams` field of ReplicationConfig (see lib/postgres-
+   * introspection.ts). Other connector types may use it differently.
+   * Emitted to the Cloud Run Job as the LIVELI_REPLICATION_CONFIG env
+   * var, which the connector's entrypoint.sh merges into meltano.yml
+   * at sync time.
+   */
+  replicationConfig?: unknown;
+}
+
+type EnvBuilder = (
+  creds: Creds,
+  options?: BuildTapEnvOptions
+) => Record<string, string>;
 
 const TAP_ENV_BUILDERS: Record<string, EnvBuilder> = {
-  postgres: (creds) => {
+  postgres: (creds, options) => {
     // filter_schemas restricts tap-postgres to user schemas only —
     // without it the tap discovers pg_catalog + information_schema, and
     // target-bigquery crashes trying to create `information_schema__pg_*`
@@ -37,7 +60,7 @@ const TAP_ENV_BUILDERS: Record<string, EnvBuilder> = {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
-    return {
+    const env: Record<string, string> = {
       TAP_POSTGRES_HOST: creds.host,
       TAP_POSTGRES_PORT: creds.port,
       TAP_POSTGRES_USER: creds.user,
@@ -45,6 +68,16 @@ const TAP_ENV_BUILDERS: Record<string, EnvBuilder> = {
       TAP_POSTGRES_DATABASE: creds.database,
       TAP_POSTGRES_FILTER_SCHEMAS: JSON.stringify(schemas),
     };
+    // Auto-detected per-stream replication overrides from connect-time
+    // introspection. Passed to the Cloud Run Job container; entrypoint.sh
+    // merges these into meltano.yml's `metadata:` block via inline Python
+    // before invoking `meltano elt`. When this is missing (older connectors
+    // created before the introspection step landed), Meltano falls back
+    // to its default — FULL_TABLE for every stream.
+    if (options?.replicationConfig) {
+      env.LIVELI_REPLICATION_CONFIG = JSON.stringify(options.replicationConfig);
+    }
+    return env;
   },
 
   mysql: (creds) => {
@@ -125,9 +158,18 @@ const TAP_ENV_BUILDERS: Record<string, EnvBuilder> = {
  * Build the TAP_* env vars for a connector run. Throws
  * UnsupportedConnectorTypeError if the type isn't wired yet — caller
  * should map that to a 400 response.
+ *
+ * `options` carries non-credential per-connector data the builder needs
+ * to know about (e.g. postgres' auto-detected replication config). The
+ * sync routes read these out of the Firestore connector doc and pass
+ * them through; they're NOT in Secret Manager.
  */
-export function buildTapEnv(type: string, creds: Creds): Record<string, string> {
+export function buildTapEnv(
+  type: string,
+  creds: Creds,
+  options?: BuildTapEnvOptions
+): Record<string, string> {
   const builder = TAP_ENV_BUILDERS[type];
   if (!builder) throw new UnsupportedConnectorTypeError(type);
-  return builder(creds);
+  return builder(creds, options);
 }
