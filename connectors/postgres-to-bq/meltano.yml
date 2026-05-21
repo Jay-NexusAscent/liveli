@@ -46,7 +46,29 @@ plugins:
       # load-job API (buffers in memory, single load per stream). Slower
       # than storage_write_api but rock-solid and works across any region.
       # If we hit memory issues on large tables, swap to `gcs_stage`.
+      #
+      # overwrite (not upsert) — z3z1ma's batch_job in upsert mode requires
+      # the tap to emit `key_properties` for every stream. tap-postgres only
+      # emits key_properties for tables with an actual PRIMARY KEY constraint
+      # in the source; tables without PKs cause the MERGE step to silently
+      # fail, leaving staging tables (`<table>__<timestamp>__<uuid>`) stranded
+      # in the dataset uncleaned. The agent then sees both canonical (stale)
+      # and dozens of staging duplicates. Symptom in production: `public_orders`
+      # with 1k stale rows + 80× `public_orders__YYYYMMDDHHMMSS__<uuid>` each
+      # holding the actual 150k rows.
+      #
+      # overwrite mode atomically replaces the canonical table with fresh
+      # data on every sync. Doesn't depend on PK detection. Drops its own
+      # staging tables cleanly after the swap. Matches the architectural
+      # reality that Meltano state is ephemeral on Cloud Run Jobs anyway —
+      # every sync is a full extract, so incremental merge was never
+      # delivering its theoretical benefit.
+      #
+      # SaaS connectors (Stripe/HubSpot/Shopify/etc.) stay on `upsert: true`
+      # because their taps reliably emit key_properties (every Stripe Charge
+      # has an `id`, every Shopify Order has an `id` — guaranteed by the
+      # source API contract). Only relational-DB connectors need overwrite.
       config:
         method: batch_job
         denormalized: true
-        upsert: true
+        overwrite: true
