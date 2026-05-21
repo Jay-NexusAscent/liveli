@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { CheckIcon, CloseIcon, ShareIcon } from "@/components/icons";
+import { CheckIcon, CloseIcon, PencilIcon, ShareIcon } from "@/components/icons";
 import { ChartRenderer } from "@/components/chat/chart-renderer";
 
 type FullscreenContent =
@@ -18,6 +18,16 @@ type FullscreenContent =
 interface FullscreenModalProps {
   content: FullscreenContent | null;
   onClose: () => void;
+  /**
+   * Optional callback to open the current content in chat-edit mode.
+   * When provided, an Edit button renders alongside Share in the
+   * header. Invoking it closes the modal first so the navigation away
+   * to /chat isn't covered by a still-mounted overlay (Esc + scroll
+   * locks would otherwise hang around). The parent decides whether to
+   * pass this — inner-dashboard chart tiles, for instance, don't get
+   * an Edit affordance because they aren't standalone documents.
+   */
+  onEdit?: () => void;
 }
 
 /**
@@ -36,7 +46,7 @@ interface FullscreenModalProps {
  * Portaled to document.body so the modal isn't constrained by parent
  * layouts (sidebar, padding, overflow).
  */
-export function FullscreenModal({ content, onClose }: FullscreenModalProps) {
+export function FullscreenModal({ content, onClose, onEdit }: FullscreenModalProps) {
   const [shareState, setShareState] = useState<"idle" | "copied" | "error">("idle");
 
   // Bind Esc + lock body scroll while open. Cleanup removes both.
@@ -93,6 +103,23 @@ export function FullscreenModal({ content, onClose }: FullscreenModalProps) {
             )}
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            {onEdit && (
+              <button
+                type="button"
+                onClick={() => {
+                  // Close first so the portal unmounts before navigation
+                  // — keeps body scroll-lock from outliving the modal if
+                  // the destination page renders before our cleanup runs.
+                  onClose();
+                  onEdit();
+                }}
+                aria-label="Edit in chat"
+                className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[12px] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
+              >
+                <PencilIcon />
+                <span>Edit</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={handleShare}
