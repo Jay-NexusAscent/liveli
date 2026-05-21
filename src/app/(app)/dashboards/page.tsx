@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import dynamic from "next/dynamic";
 import {
   DashboardIcon,
   ExpandIcon,
@@ -9,8 +8,7 @@ import {
   TrashIcon,
 } from "@/components/icons";
 import { FullscreenModal } from "@/components/dashboards/fullscreen-modal";
-
-const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
+import { ChartRenderer } from "@/components/chat/chart-renderer";
 
 interface SavedChart {
   id: string;
@@ -257,11 +255,7 @@ function ChartTile({
         </div>
       </div>
       <div className="p-3">
-        <ReactECharts
-          option={spec as object}
-          style={{ height: 260, width: "100%" }}
-          opts={{ renderer: "svg" }}
-        />
+        <ChartRenderer spec={spec} height={260} />
       </div>
     </div>
   );

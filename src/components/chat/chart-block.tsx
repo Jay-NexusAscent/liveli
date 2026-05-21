@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import ReactECharts from "echarts-for-react";
 import { cn } from "@/lib/utils";
+import { ChartRenderer } from "./chart-renderer";
 
 interface ChartBlockProps {
   title: string;
@@ -57,12 +57,7 @@ export function ChartBlock({ title, spec, toolId, chatId }: ChartBlockProps) {
         </button>
       </div>
       <div className="p-3">
-        <ReactECharts
-          option={spec as object}
-          style={{ height: 320, width: "100%" }}
-          theme={typeof document !== "undefined" && document.documentElement.getAttribute("data-theme") === "light" ? "default" : "dark"}
-          opts={{ renderer: "svg" }}
-        />
+        <ChartRenderer spec={spec} height={320} />
       </div>
     </div>
   );
