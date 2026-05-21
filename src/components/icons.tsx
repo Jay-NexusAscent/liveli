@@ -154,6 +154,19 @@ export function TrendDownIcon({ className }: IconProps) {
   );
 }
 
+export function GripIcon({ className }: IconProps) {
+  return (
+    <svg className={className} width="16" height="16" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+      <circle cx="7" cy="5" r="1.25" />
+      <circle cx="13" cy="5" r="1.25" />
+      <circle cx="7" cy="10" r="1.25" />
+      <circle cx="13" cy="10" r="1.25" />
+      <circle cx="7" cy="15" r="1.25" />
+      <circle cx="13" cy="15" r="1.25" />
+    </svg>
+  );
+}
+
 export function ExpandIcon({ className }: IconProps) {
   return (
     <svg className={className} width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -161,6 +174,35 @@ export function ExpandIcon({ className }: IconProps) {
       <path d="M17 8V3h-5" />
       <path d="M3 12v5h5" />
       <path d="M17 12v5h-5" />
+    </svg>
+  );
+}
+
+export function ShareIcon({ className }: IconProps) {
+  return (
+    <svg className={className} width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="15" cy="4.5" r="2.25" />
+      <circle cx="5" cy="10" r="2.25" />
+      <circle cx="15" cy="15.5" r="2.25" />
+      <path d="M7 9l6-3" />
+      <path d="M7 11l6 3" />
+    </svg>
+  );
+}
+
+export function CopyIcon({ className }: IconProps) {
+  return (
+    <svg className={className} width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="7" y="7" width="10" height="10" rx="2" />
+      <path d="M5 13H4.5A1.5 1.5 0 0 1 3 11.5v-7A1.5 1.5 0 0 1 4.5 3h7A1.5 1.5 0 0 1 13 4.5V5" />
+    </svg>
+  );
+}
+
+export function CheckIcon({ className }: IconProps) {
+  return (
+    <svg className={className} width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 10l4 4 8-9" />
     </svg>
   );
 }

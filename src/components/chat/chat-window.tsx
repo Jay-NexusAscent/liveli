@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { SparkleIcon } from "@/components/icons";
+import { CloseIcon, PencilIcon, SparkleIcon } from "@/components/icons";
 import { ChartBlock } from "./chart-block";
 import { ToolCallBlock } from "./tool-call-block";
 import { TableBlock } from "./table-block";
@@ -46,20 +46,34 @@ const PROMPT_SUGGESTIONS = [
   "Build me a dashboard with sales overview",
 ];
 
+/**
+ * Edit-context shape carried in sessionStorage["liveli.editing"] when
+ * the user clicks Edit on a saved chart or dashboard. Each chat-API
+ * call forwards this so the server-side agent injects an EDIT MODE
+ * preamble into the system prompt for that turn and the model calls
+ * update_chart / update_dashboard with the supplied id.
+ */
+interface EditContext {
+  kind: "chart" | "dashboard";
+  id: string;
+  title: string;
+  spec?: unknown;
+  description?: string | null;
+  charts?: Array<{ order?: number; title: string; spec: unknown }>;
+}
+
 export function ChatWindow({ initialChatId }: { initialChatId?: string } = {}) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [chatId, setChatId] = useState<string | undefined>(initialChatId);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
-  // True while loading messages from /api/chats/[id]/messages on
-  // resume. We render a loading state instead of the empty-state
-  // suggestion grid so the user doesn't briefly see "Ask anything…"
-  // before their past messages flash in.
   const [loadingHistory, setLoadingHistory] = useState(!!initialChatId);
-  // Map of bqDataset → connector friendly name. Used to substitute
-  // technical dataset IDs in displayed SQL with the user's source name.
-  // Fetched once on mount; empty map gracefully no-ops the substitution.
   const [datasetNames, setDatasetNames] = useState<Record<string, string>>({});
+  // Edit mode: when set, we render a banner above the chat and pass
+  // this through with each /api/chat call so the agent uses update_X
+  // tools instead of make_X. Persisted in sessionStorage until the
+  // user explicitly closes it or starts a new chat.
+  const [editContext, setEditContext] = useState<EditContext | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll on new content
@@ -82,6 +96,32 @@ export function ChatWindow({ initialChatId }: { initialChatId?: string } = {}) {
     const prefill = sessionStorage.getItem("liveli.chatPrefill");
     if (prefill) setInput(prefill);
   }, []);
+
+  // Load edit context from sessionStorage when arriving from the
+  // Edit button on /dashboards or the FullscreenModal. Stays set
+  // across multiple sends so the user can iterate ("change to bar"
+  // → "make the bars green") on the same chart/dashboard. Cleared
+  // explicitly via the banner's close button or `New chat`.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = sessionStorage.getItem("liveli.editing");
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as EditContext;
+      if (parsed.kind && parsed.id && parsed.title) {
+        setEditContext(parsed);
+      }
+    } catch {
+      sessionStorage.removeItem("liveli.editing");
+    }
+  }, []);
+
+  const stopEditing = () => {
+    setEditContext(null);
+    if (typeof window !== "undefined") {
+      sessionStorage.removeItem("liveli.editing");
+    }
+  };
 
   // Fetch the workspace's connectors once and build the dataset→friendly
   // name map. We don't block render on this — if the fetch is slow or
@@ -184,7 +224,11 @@ export function ChatWindow({ initialChatId }: { initialChatId?: string } = {}) {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, chatId }),
+        body: JSON.stringify({
+          message: text,
+          chatId,
+          editContext: editContext ?? undefined,
+        }),
       });
       if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
 
@@ -233,6 +277,7 @@ export function ChatWindow({ initialChatId }: { initialChatId?: string } = {}) {
 
   return (
     <div className="flex h-[calc(100vh-56px)] flex-col lg:h-screen">
+      {editContext && <EditBanner ctx={editContext} onStop={stopEditing} />}
       {/* Scrollable message area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-6 py-8">
@@ -744,3 +789,37 @@ function unwrapJsonField(v: unknown): unknown {
   return v;
 }
 
+
+/**
+ * Sticky-style banner at the top of the chat surface when the user
+ * arrived via Edit on a chart or dashboard. Makes the editing
+ * context visible at all times during the session, with a close
+ * affordance to exit edit mode (clears sessionStorage + state).
+ */
+function EditBanner({
+  ctx,
+  onStop,
+}: {
+  ctx: EditContext;
+  onStop: () => void;
+}) {
+  const kindLabel = ctx.kind === "chart" ? "chart" : "dashboard";
+  return (
+    <div className="flex items-center gap-3 border-b border-border bg-accent-muted/40 px-6 py-2.5">
+      <PencilIcon className="shrink-0 text-accent" />
+      <div className="min-w-0 flex-1 text-[13px] text-text-primary">
+        <span className="text-text-tertiary">Editing {kindLabel}</span>{" "}
+        <span className="font-medium">{ctx.title}</span>
+      </div>
+      <button
+        type="button"
+        onClick={onStop}
+        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
+        aria-label="Exit edit mode"
+      >
+        <CloseIcon />
+        <span>Exit</span>
+      </button>
+    </div>
+  );
+}

@@ -14,6 +14,9 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^7.0.7",
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@google-cloud/bigquery": "^8.1.1",
     "@google-cloud/firestore": "^7.11.0",
     "@google-cloud/logging": "^11.2.1",
@@ -26,7 +29,9 @@
     "echarts": "^5.5.1",
     "echarts-for-react": "^3.0.2",
     "google-auth-library": "^10.6.2",
+    "html-to-image": "^1.11.13",
     "next": "16.2.1",
+    "pg": "^8.21.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-markdown": "^10.1.0",
@@ -38,6 +43,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^22",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
