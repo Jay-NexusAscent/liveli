@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   DashboardIcon,
   ExpandIcon,
+  PencilIcon,
   SparkleIcon,
   TrashIcon,
 } from "@/components/icons";
@@ -35,6 +37,7 @@ type FullscreenContent =
     };
 
 export default function DashboardsPage() {
+  const router = useRouter();
   const [charts, setCharts] = useState<SavedChart[]>([]);
   const [dashboards, setDashboards] = useState<SavedDashboard[]>([]);
   const [loading, setLoading] = useState(true);
@@ -44,6 +47,27 @@ export default function DashboardsPage() {
   // Currently-fullscreened chart or dashboard, or null. Single piece of
   // state so only one fullscreen view can be open at a time.
   const [fullscreen, setFullscreen] = useState<FullscreenContent | null>(null);
+
+  /**
+   * Stash the chart or dashboard in sessionStorage and navigate to the
+   * chat surface. ChatWindow reads `liveli.editing` on mount, shows the
+   * Editing X banner, and forwards the context to /api/chat so the
+   * agent uses update_chart / update_dashboard with this id.
+   */
+  const openEditInChat = (
+    payload:
+      | { kind: "chart"; id: string; title: string; spec: unknown }
+      | {
+          kind: "dashboard";
+          id: string;
+          title: string;
+          description?: string | null;
+          charts: Array<{ order: number; title: string; spec: unknown }>;
+        }
+  ) => {
+    sessionStorage.setItem("liveli.editing", JSON.stringify(payload));
+    router.push("/chat");
+  };
 
   useEffect(() => {
     (async () => {
@@ -149,6 +173,21 @@ export default function DashboardsPage() {
                   <div className="flex shrink-0 items-center gap-1">
                     <IconButton
                       onClick={() =>
+                        openEditInChat({
+                          kind: "dashboard",
+                          id: d.id,
+                          title: d.title,
+                          description: d.description,
+                          charts: d.charts,
+                        })
+                      }
+                      ariaLabel={`Edit dashboard ${d.title}`}
+                      variant="neutral"
+                    >
+                      <PencilIcon />
+                    </IconButton>
+                    <IconButton
+                      onClick={() =>
                         setFullscreen({
                           kind: "dashboard",
                           id: d.id,
@@ -219,6 +258,14 @@ export default function DashboardsPage() {
                     spec: c.spec,
                   })
                 }
+                onEdit={() =>
+                  openEditInChat({
+                    kind: "chart",
+                    id: c.id,
+                    title: c.title,
+                    spec: c.spec,
+                  })
+                }
                 onDelete={() => deleteChart(c.id, c.title)}
                 deleting={deleting.has(c.id)}
               />
@@ -236,12 +283,14 @@ function ChartTile({
   title,
   spec,
   onExpand,
+  onEdit,
   onDelete,
   deleting,
 }: {
   title: string;
   spec: unknown;
   onExpand?: () => void;
+  onEdit?: () => void;
   onDelete?: () => void;
   deleting?: boolean;
 }) {
@@ -250,6 +299,15 @@ function ChartTile({
       <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2.5">
         <div className="truncate text-[13px] font-medium text-text-primary">{title}</div>
         <div className="flex shrink-0 items-center gap-1">
+          {onEdit && (
+            <IconButton
+              onClick={onEdit}
+              ariaLabel={`Edit chart ${title}`}
+              variant="neutral"
+            >
+              <PencilIcon />
+            </IconButton>
+          )}
           {onExpand && (
             <IconButton
               onClick={onExpand}

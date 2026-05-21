@@ -3,6 +3,8 @@ import { listTablesTool } from "./list-tables";
 import { runSqlTool } from "./run-sql";
 import { makeChartTool } from "./make-chart";
 import { makeDashboardTool } from "./make-dashboard";
+import { updateChartTool } from "./update-chart";
+import { updateDashboardTool } from "./update-dashboard";
 import type { AgentContext, ToolDefinition, ToolResult } from "./types";
 import type { FunctionDeclaration } from "@google-cloud/vertexai";
 
@@ -13,6 +15,8 @@ export const tools: ToolDefinition[] = [
   runSqlTool,
   makeChartTool,
   makeDashboardTool,
+  updateChartTool,
+  updateDashboardTool,
 ];
 
 const byName = new Map(tools.map((t) => [t.name, t]));
