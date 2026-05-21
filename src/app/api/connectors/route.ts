@@ -5,11 +5,17 @@ import { getExecutionStatus } from "@/lib/cloud-run";
 import { dispatchMetadataEnrichment } from "@/lib/metadata/dispatcher";
 
 export const runtime = "nodejs";
-// 300s budget covers the post-response metadata-agent run scheduled
+// 600s budget covers the post-response metadata-agent run scheduled
 // via `after()` from the dispatcher. The HTTP response itself still
 // returns in <5s; the extended budget is spent in the background
-// while the agent enriches a freshly-synced connector.
-export const maxDuration = 300;
+// while the agent enriches a freshly-synced connector. Bumped from
+// 300s to handle customer schemas up to ~50 tables in one shot —
+// at ~150 Gemini turns (per src/lib/metadata/agent.ts MAX_TURNS) × ~3s
+// per turn ≈ 450s, with headroom. Above 50 tables, the dispatcher's
+// gate-and-resume mechanism splits the work across subsequent /api/
+// connectors polls; the budget here is sized for one-shot completion
+// in the common case, not for unbounded schemas.
+export const maxDuration = 600;
 
 interface ConnectorDoc {
   status?: string;

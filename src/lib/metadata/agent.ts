@@ -16,42 +16,63 @@ import {
 } from "./tools";
 
 /**
- * Per-run cap on individual tool invocations. Sized to enrich the full
- * Postgres demo (9 tables × ~13 columns ≈ 130 column writes + 9 table
- * writes + 9 sample_rows + 1 dataset write + 1 finish ≈ 150 tool calls)
- * in a SINGLE run.
+ * Per-run cap on individual tool invocations. Each table costs
+ * ~15 tool calls (1 sample_rows + ~12 write_column_description + 1
+ * write_table_description + occasional column_profile for ambiguous
+ * columns). The dataset adds 1 write_dataset_description + 1 finish.
  *
- * Earlier this was 100 — which silently cut off mid-table because each
- * table costs ~15 tool calls. Symptom: an alphabetical-ordered partial
- * enrichment ("categories→customers→order_items done; orders half-done;
- * products onwards untouched"). The dispatcher does re-trigger on the
- * next /api/connectors poll because the gate sees remaining uncovered
- * fields, but a second-sync top-up is the wrong UX — metadata is what
- * the chat agent USES at query construction time, so we want it
- * complete after the first sync, not "eventually complete."
+ *   schema size      → tool calls budget needed
+ *   9 tables (demo)  → ~150
+ *   20 tables        → ~310
+ *   50 tables        → ~770
  *
- * 250 covers ~20 tables × ~12 columns with headroom. Connectors with
- * larger schemas (a customer's app DB with 50+ tables) still progress
- * across runs via the same gate-and-resume mechanism — but the common
- * case (demo, typical SaaS source, small DBs) finishes in one shot.
+ * 800 covers up to ~50 tables in one shot — sized for real customer
+ * databases, not just the demo. Connectors with larger schemas
+ * (enterprise data warehouses with 100+ tables) still progress
+ * across runs via the same gate-and-resume mechanism: the
+ * dispatcher's pre-flight gate re-runs on every /api/connectors
+ * poll, sees the remaining uncovered fields, and re-triggers the
+ * agent. So the worst case for a huge schema is "complete in 2-3
+ * syncs" rather than "stuck forever."
  *
- * Function lifetime is /api/connectors' maxDuration = 300s. At ~2-3s
- * per Gemini round-trip × MAX_TURNS=50 turns we're well inside that;
- * tool-call budget is the binding constraint, not wall time.
+ * For schemas big enough that even 2-3 sequential runs are slow
+ * (think 500+ tables), the right answer is parallel-dispatch
+ * (chunked agent invocations running concurrently via `after()`) —
+ * tracked as a follow-up architectural change. Not in this PR.
+ *
+ * Cost note: each tool call adds ~150 tokens of args + ~50 tokens
+ * of response to the history. At Gemini Flash prices that's ~$0.0001
+ * per tool call. 800 calls = ~$0.08 per run worst-case, but most
+ * customers will hit ~150-300 calls and stay around $0.01-$0.03.
  */
-const MAX_TOOL_CALLS = 250;
+const MAX_TOOL_CALLS = 800;
 
 /**
- * Hard limit on Gemini round-trips. Each round-trip is one
- * generateContent call (~2-3s end-to-end with streaming + tool
- * execution). 50 turns × 3s = ~150s — well inside the 300s function
- * `maxDuration`, with headroom for slow days.
+ * Hard limit on Gemini round-trips. **This is the binding ceiling
+ * for large schemas**, not MAX_TOOL_CALLS. Each table costs ~3 turns:
+ *   1. sample_rows
+ *   2. batched write_column_description for all columns + write_
+ *      table_description (Gemini supports parallel function calls in
+ *      a single turn, the system prompt requires this batching).
+ *   3. Sometimes a column_profile retry on an ambiguous column.
  *
- * Above ~80 we'd start risking timeouts on the function lifetime
- * (`maxDuration` in /api/connectors), so don't push this much higher
- * without bumping that too.
+ * So 150 turns covers ~50 tables comfortably. Same break-points as
+ * MAX_TOOL_CALLS above:
+ *
+ *   schema size      → turns needed
+ *   9 tables (demo)  → ~25
+ *   20 tables        → ~60
+ *   50 tables        → ~150
+ *
+ * Wall-time check: at ~2-3s per Gemini round-trip × 150 turns ≈
+ * 300-450s. Below the 600s `maxDuration` on /api/connectors (bumped
+ * in this PR from 300s for the same reason).
+ *
+ * Push much above 150 and you risk the function-lifetime cap — at
+ * which point the right answer is parallel dispatch, not a bigger
+ * single-run budget.
  */
-const MAX_TURNS = 50;
+const MAX_TURNS = 150;
 
 const SYSTEM_PROMPT_TEMPLATE = `You are the Liveli Metadata Enrichment Agent.
 
