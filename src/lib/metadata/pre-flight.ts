@@ -44,6 +44,15 @@ export interface UncoveredMetadata {
   tables: string[];
   /** Column field paths whose description is empty or unset. */
   columns: UncoveredColumn[];
+  /**
+   * True when the dataset itself has no description. The metadata
+   * agent writes one as the final step of a run; the gate triggers
+   * even when all tables + columns are covered if this is missing,
+   * so a partially-populated dataset (table descriptions done,
+   * dataset description still empty) gets completed on the next
+   * sync rather than left in a half-finished state.
+   */
+  datasetDescriptionMissing: boolean;
 }
 
 export interface PreFlightInput {
@@ -127,9 +136,35 @@ export async function findUncoveredMetadata(
     if (code === 404) {
       // Dataset doesn't exist — connector synced but produced no tables.
       // Nothing to enrich, nothing to skip on.
-      return { tables: [], columns: [] };
+      return {
+        tables: [],
+        columns: [],
+        datasetDescriptionMissing: false,
+      };
     }
     throw err;
+  }
+
+  // ── Dataset-level gate ──────────────────────────────────────────
+  // One additional getMetadata call on the dataset itself to read
+  // its top-level description. The dispatcher treats this like
+  // another uncovered field — if it's empty, enrichment is triggered
+  // even when all tables + columns are already described.
+  let datasetDescriptionMissing = false;
+  try {
+    const [datasetMeta] = await client.dataset(input.bqDataset).getMetadata();
+    const desc =
+      typeof datasetMeta.description === "string"
+        ? datasetMeta.description
+        : "";
+    datasetDescriptionMissing = desc.trim() === "";
+  } catch (err) {
+    const code = (err as { code?: number }).code;
+    if (code !== 404) throw err;
+    // 404 here is unexpected because we just listed the tables, but
+    // treat it the same as "no description present" — the writer
+    // will fail loudly later if the dataset really is missing.
+    datasetDescriptionMissing = true;
   }
 
   const filteredTables = bqTables.filter(
@@ -148,5 +183,5 @@ export async function findUncoveredMetadata(
     .filter((t) => t.tableId && t.description.trim() === "")
     .map((t) => t.tableId);
 
-  return { tables, columns };
+  return { tables, columns, datasetDescriptionMissing };
 }

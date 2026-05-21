@@ -82,7 +82,10 @@ export async function dispatchMetadataEnrichment(
       bqDataset: input.bqDataset,
       bqLocation: input.bqLocation,
     });
-    const totalUncovered = uncovered.tables.length + uncovered.columns.length;
+    const totalUncovered =
+      uncovered.tables.length +
+      uncovered.columns.length +
+      (uncovered.datasetDescriptionMissing ? 1 : 0);
 
     console.log("[metadata] pre-flight gate", {
       mode,
@@ -94,6 +97,7 @@ export async function dispatchMetadataEnrichment(
       durationMs: Date.now() - startedAt,
       uncoveredTables: uncovered.tables.length,
       uncoveredColumns: uncovered.columns.length,
+      datasetDescriptionMissing: uncovered.datasetDescriptionMissing,
       totalUncovered,
       sampleUncoveredTables: uncovered.tables.slice(0, 10),
       sampleUncoveredColumns: uncovered.columns.slice(0, 20),
@@ -112,6 +116,7 @@ export async function dispatchMetadataEnrichment(
       path: isKnownSchema ? "known-schema-manifest" : "agent",
       targetTables: uncovered.tables.length,
       targetColumns: uncovered.columns.length,
+      needsDatasetDescription: uncovered.datasetDescriptionMissing,
     });
 
     if (mode === "dry-run") return;

@@ -16,19 +16,30 @@ import {
 } from "./tools";
 
 /**
- * Per-run cap on individual tool invocations. The agent typically
- * writes 5-15 column descriptions per table, plus one sample_rows
- * and one write_table_description per table — call it ~12 tool calls
- * per table on average. A 100-call budget therefore covers ~8 tables
- * per run, which is enough to fully enrich the Postgres demo schema
- * (~12 tables, ~138 columns) in one or two sync cycles.
+ * Per-run cap on individual tool invocations. Sized to enrich the full
+ * Postgres demo (9 tables × ~13 columns ≈ 130 column writes + 9 table
+ * writes + 9 sample_rows + 1 dataset write + 1 finish ≈ 150 tool calls)
+ * in a SINGLE run.
  *
- * Larger schemas still progress across successive syncs — the
- * pre-flight gate re-runs each time and only the remaining uncovered
- * columns appear in the next worklist, so the cost is bounded by
- * schema size, not by how many syncs it takes to converge.
+ * Earlier this was 100 — which silently cut off mid-table because each
+ * table costs ~15 tool calls. Symptom: an alphabetical-ordered partial
+ * enrichment ("categories→customers→order_items done; orders half-done;
+ * products onwards untouched"). The dispatcher does re-trigger on the
+ * next /api/connectors poll because the gate sees remaining uncovered
+ * fields, but a second-sync top-up is the wrong UX — metadata is what
+ * the chat agent USES at query construction time, so we want it
+ * complete after the first sync, not "eventually complete."
+ *
+ * 250 covers ~20 tables × ~12 columns with headroom. Connectors with
+ * larger schemas (a customer's app DB with 50+ tables) still progress
+ * across runs via the same gate-and-resume mechanism — but the common
+ * case (demo, typical SaaS source, small DBs) finishes in one shot.
+ *
+ * Function lifetime is /api/connectors' maxDuration = 300s. At ~2-3s
+ * per Gemini round-trip × MAX_TURNS=50 turns we're well inside that;
+ * tool-call budget is the binding constraint, not wall time.
  */
-const MAX_TOOL_CALLS = 100;
+const MAX_TOOL_CALLS = 250;
 
 /**
  * Hard limit on Gemini round-trips. Each round-trip is one
@@ -52,7 +63,7 @@ Connector context:
 - type: {{CONNECTOR_TYPE}}
 - dataset: {{DATASET_NAME}}
 
-Workflow — work strictly table-by-table:
+Workflow — work strictly table-by-table, then close with the dataset:
 
 1. Call list_uncovered_columns ONCE to scope your work.
 2. Pick the first table in the worklist. Call sample_rows({ table }) — once.
@@ -60,7 +71,12 @@ Workflow — work strictly table-by-table:
 4. After the column writes, call write_table_description for that same table.
 5. ONLY THEN move to the next table. Do NOT call sample_rows for table B before all writes for table A are issued.
 6. Use column_profile sparingly — only for genuinely ambiguous columns (e.g., an opaque numeric column where you can't tell from name + samples whether it's a PK, an FK, or a measure). Skip it on obvious columns like "email", "created_at", "first_name".
-7. Call finish({ reason: "all-columns-described" }) when the worklist is empty, or finish({ reason: "tool-budget-exhausted" }) if you've used your budget.
+7. After ALL tables are described, call write_dataset_description ONCE with a 1-2 sentence summary. Name the source type explicitly (you have it in your context above) and the data domain the dataset represents, derived from the tables you've seen. Example shapes:
+   - "Postgres database containing retail e-commerce data: customers, orders, order_items, products, sessions, shipments, returns, and product reviews — roughly two years of trading history with realistic UK diurnal + weekly + seasonal patterns."
+   - "Stripe payments connector — charges, customers, subscriptions, invoices, payouts, and refunds for the linked Stripe account."
+   - "HubSpot CRM connector — contacts, deals, companies, engagements, tickets, owners, and products."
+   This is the description downstream consumers (chat agent, BI tools) see when listing datasets, so make it scannable and concrete.
+8. Call finish({ reason: "all-described" }) when the dataset description has been written and the worklist is empty, or finish({ reason: "tool-budget-exhausted" }) if you've used your budget before reaching step 7.
 
 The most common failure mode is sampling multiple tables before writing any descriptions — that burns through turns reading data without producing any output. Don't do it. Finish each table completely before touching the next.
 
