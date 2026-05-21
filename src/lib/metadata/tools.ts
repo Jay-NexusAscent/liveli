@@ -5,6 +5,7 @@ import { bqReady, safeQuery } from "@/lib/bigquery";
 import { findUncoveredMetadata, type UncoveredMetadata } from "./pre-flight";
 import {
   writeColumnDescription,
+  writeDatasetDescription,
   writeTableDescription,
   type WriteResult,
 } from "./writers";
@@ -381,6 +382,39 @@ const writeColumnTool: MetadataToolDefinition = {
   },
 };
 
+// ── write_dataset_description ────────────────────────────────────
+
+const WriteDatasetInput = z.object({
+  description: z
+    .string()
+    .min(20)
+    .max(600)
+    .describe(
+      "1-2 sentence summary of the dataset. Must name the source type (e.g. 'Postgres database', 'Stripe payments connector') and the data domain (e.g. 'retail e-commerce data', 'CRM contacts and deals'). Read by chat agent + BI tools when listing datasets — keep it concrete and scannable. Max 600 chars.",
+    ),
+});
+
+const writeDatasetTool: MetadataToolDefinition = {
+  name: "write_dataset_description",
+  description:
+    "Write the dataset-level description to BigQuery and mirror it to the connector registry. Call this ONCE per run, as the FINAL step before finish, after all table + column descriptions have been written. The description should name the source type and summarise the data domain in 1-2 sentences.",
+  inputSchema: WriteDatasetInput,
+  handler: async (raw, ctx): Promise<MetadataToolResult> => {
+    const { description } = WriteDatasetInput.parse(raw);
+    const result = await writeDatasetDescription({
+      ctx: {
+        clientId: ctx.clientId,
+        workspaceId: ctx.workspaceId,
+        connectorId: ctx.connectorId,
+        bqDataset: ctx.bqDataset,
+      },
+      description,
+      source: "agent",
+    });
+    return { content: result };
+  },
+};
+
 // ── finish ───────────────────────────────────────────────────────
 
 const FinishInput = z.object({
@@ -411,6 +445,7 @@ export const metadataTools: MetadataToolDefinition[] = [
   columnProfileTool,
   writeTableTool,
   writeColumnTool,
+  writeDatasetTool,
   finishTool,
 ];
 
