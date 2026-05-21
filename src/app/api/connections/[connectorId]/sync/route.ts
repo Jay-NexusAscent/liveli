@@ -4,7 +4,10 @@ import { connectorsIn, dbReady, workspaceDoc } from "@/lib/firestore";
 import { readConnectorSecret } from "@/lib/secret-manager";
 import { runConnectorJob } from "@/lib/cloud-run";
 import { cloudComputeRegionForResidency, gcp } from "@/lib/gcp";
-import { DEFAULT_BQ_LOCATION } from "@/lib/bigquery";
+import {
+  cleanupStaleStagingTables,
+  DEFAULT_BQ_LOCATION,
+} from "@/lib/bigquery";
 import {
   buildTapEnv,
   UnsupportedConnectorTypeError,
@@ -81,6 +84,14 @@ export async function POST(
     }
     throw err;
   }
+
+  // Drop any orphan staging tables from previous failed merges BEFORE
+  // we start the new run. See cleanupStaleStagingTables docstring for
+  // the full rationale. Fire-and-forget — failure here must not block
+  // the sync. The 1h age threshold guarantees we never touch staging
+  // belonging to a concurrent in-flight execution (Cloud Run Jobs
+  // max-out at 30min in our infra/cloud-run.tf).
+  await cleanupStaleStagingTables(data.bqDataset);
 
   let executionName: string;
   try {

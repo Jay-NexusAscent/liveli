@@ -33,7 +33,15 @@ plugins:
       #   TARGET_BIGQUERY_LOCATION
       # batch_job over storage_write_api for cross-region safety —
       # storage_write_api hits BrokenPipeError against EU multi-region.
+      #
+      # overwrite (not upsert) — see connectors/postgres-to-bq/meltano.yml
+      # for the full rationale. tl;dr: z3z1ma's upsert mode requires the
+      # tap to emit key_properties for every stream, which tap-mysql only
+      # does for tables with PRIMARY KEY constraints. Tables without PKs
+      # leak staging tables that never get merged or cleaned up. Overwrite
+      # mode atomically replaces the canonical, doesn't depend on PK
+      # detection, and matches our ephemeral-state-full-extract reality.
       config:
         method: batch_job
         denormalized: true
-        upsert: true
+        overwrite: true
