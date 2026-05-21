@@ -9,7 +9,10 @@ import {
 import { readConnectorSecret } from "@/lib/secret-manager";
 import { runConnectorJob } from "@/lib/cloud-run";
 import { cloudComputeRegionForResidency, gcp } from "@/lib/gcp";
-import { DEFAULT_BQ_LOCATION } from "@/lib/bigquery";
+import {
+  cleanupStaleStagingTables,
+  DEFAULT_BQ_LOCATION,
+} from "@/lib/bigquery";
 import {
   buildTapEnv,
   UnsupportedConnectorTypeError,
@@ -171,6 +174,11 @@ export async function POST(
     }
     throw err;
   }
+
+  // Drop any orphan staging tables from previous failed merges. Same
+  // pattern as /sync — fire-and-forget pre-run sweep. See
+  // cleanupStaleStagingTables docstring for full rationale.
+  await cleanupStaleStagingTables(data.bqDataset);
 
   let executionName: string;
   try {
