@@ -6,6 +6,7 @@ import type {
 } from "@google-cloud/vertexai";
 import { buildModel, vertexReady, MODEL } from "@/lib/vertex";
 import { vertexRegionForResidency } from "@/lib/gcp";
+import { bqReady } from "@/lib/bigquery";
 import { logMetadataAgentRun } from "@/lib/usage";
 import {
   executeMetadataTool,
@@ -14,44 +15,66 @@ import {
   type MetadataAgentContext,
   type ToolBudget,
 } from "./tools";
+import { writeDatasetDescription } from "./writers";
 
 /**
- * Per-run cap on individual tool invocations. Sized to enrich the full
- * Postgres demo (9 tables × ~13 columns ≈ 130 column writes + 9 table
- * writes + 9 sample_rows + 1 dataset write + 1 finish ≈ 150 tool calls)
- * in a SINGLE run.
+ * Per-run cap on individual tool invocations. Each table costs
+ * ~15 tool calls (1 sample_rows + ~12 write_column_description + 1
+ * write_table_description + occasional column_profile for ambiguous
+ * columns). The dataset description is NOT in this budget — it's
+ * written by the deterministic finalizer after the main loop ends.
  *
- * Earlier this was 100 — which silently cut off mid-table because each
- * table costs ~15 tool calls. Symptom: an alphabetical-ordered partial
- * enrichment ("categories→customers→order_items done; orders half-done;
- * products onwards untouched"). The dispatcher does re-trigger on the
- * next /api/connectors poll because the gate sees remaining uncovered
- * fields, but a second-sync top-up is the wrong UX — metadata is what
- * the chat agent USES at query construction time, so we want it
- * complete after the first sync, not "eventually complete."
+ *   schema size      → tool calls budget needed
+ *   9 tables (demo)  → ~150
+ *   20 tables        → ~310
+ *   50 tables        → ~770
  *
- * 250 covers ~20 tables × ~12 columns with headroom. Connectors with
- * larger schemas (a customer's app DB with 50+ tables) still progress
- * across runs via the same gate-and-resume mechanism — but the common
- * case (demo, typical SaaS source, small DBs) finishes in one shot.
+ * 800 covers up to ~50 tables in one shot — sized for real customer
+ * databases, not just the demo. Connectors with larger schemas
+ * (enterprise data warehouses with 100+ tables) still progress
+ * across runs via the same gate-and-resume mechanism: the
+ * dispatcher's pre-flight gate re-runs on every /api/connectors
+ * poll, sees the remaining uncovered fields, and re-triggers the
+ * agent. So the worst case for a huge schema is "complete in 2-3
+ * syncs" rather than "stuck forever."
  *
- * Function lifetime is /api/connectors' maxDuration = 300s. At ~2-3s
- * per Gemini round-trip × MAX_TURNS=50 turns we're well inside that;
- * tool-call budget is the binding constraint, not wall time.
+ * For schemas big enough that even 2-3 sequential runs are slow
+ * (think 500+ tables), the right answer is parallel-dispatch
+ * (chunked agent invocations running concurrently via `after()`) —
+ * tracked as a follow-up architectural change. Not in this PR.
+ *
+ * Cost note: each tool call adds ~150 tokens of args + ~50 tokens
+ * of response to the history. At Gemini Flash prices that's ~$0.0001
+ * per tool call. 800 calls = ~$0.08 per run worst-case, but most
+ * customers will hit ~150-300 calls and stay around $0.01-$0.03.
  */
-const MAX_TOOL_CALLS = 250;
+const MAX_TOOL_CALLS = 800;
 
 /**
- * Hard limit on Gemini round-trips. Each round-trip is one
- * generateContent call (~2-3s end-to-end with streaming + tool
- * execution). 50 turns × 3s = ~150s — well inside the 300s function
- * `maxDuration`, with headroom for slow days.
+ * Hard limit on Gemini round-trips. **This is the binding ceiling
+ * for large schemas**, not MAX_TOOL_CALLS. Each table costs ~3 turns:
+ *   1. sample_rows
+ *   2. batched write_column_description for all columns + write_
+ *      table_description (Gemini supports parallel function calls in
+ *      a single turn, the system prompt requires this batching).
+ *   3. Sometimes a column_profile retry on an ambiguous column.
  *
- * Above ~80 we'd start risking timeouts on the function lifetime
- * (`maxDuration` in /api/connectors), so don't push this much higher
- * without bumping that too.
+ * So 150 turns covers ~50 tables comfortably. Same break-points as
+ * MAX_TOOL_CALLS above:
+ *
+ *   schema size      → turns needed
+ *   9 tables (demo)  → ~25
+ *   20 tables        → ~60
+ *   50 tables        → ~150
+ *
+ * Wall-time check: at ~2-3s per Gemini round-trip × 150 turns ≈
+ * 300-450s. Below the 600s `maxDuration` on /api/connectors.
+ *
+ * Push much above 150 and you risk the function-lifetime cap — at
+ * which point the right answer is parallel dispatch, not a bigger
+ * single-run budget.
  */
-const MAX_TURNS = 50;
+const MAX_TURNS = 150;
 
 const SYSTEM_PROMPT_TEMPLATE = `You are the Liveli Metadata Enrichment Agent.
 
@@ -63,7 +86,7 @@ Connector context:
 - type: {{CONNECTOR_TYPE}}
 - dataset: {{DATASET_NAME}}
 
-Workflow — work strictly table-by-table, then close with the dataset:
+Workflow — work strictly table-by-table:
 
 1. Call list_uncovered_columns ONCE to scope your work.
 2. Pick the first table in the worklist. Call sample_rows({ table }) — once.
@@ -71,14 +94,11 @@ Workflow — work strictly table-by-table, then close with the dataset:
 4. After the column writes, call write_table_description for that same table.
 5. ONLY THEN move to the next table. Do NOT call sample_rows for table B before all writes for table A are issued.
 6. Use column_profile sparingly — only for genuinely ambiguous columns (e.g., an opaque numeric column where you can't tell from name + samples whether it's a PK, an FK, or a measure). Skip it on obvious columns like "email", "created_at", "first_name".
-7. After ALL tables are described, call write_dataset_description ONCE with a 1-2 sentence summary. Name the source type explicitly (you have it in your context above) and the data domain the dataset represents, derived from the tables you've seen. Example shapes:
-   - "Postgres database containing retail e-commerce data: customers, orders, order_items, products, sessions, shipments, returns, and product reviews — roughly two years of trading history with realistic UK diurnal + weekly + seasonal patterns."
-   - "Stripe payments connector — charges, customers, subscriptions, invoices, payouts, and refunds for the linked Stripe account."
-   - "HubSpot CRM connector — contacts, deals, companies, engagements, tickets, owners, and products."
-   This is the description downstream consumers (chat agent, BI tools) see when listing datasets, so make it scannable and concrete.
-8. Call finish({ reason: "all-described" }) when the dataset description has been written and the worklist is empty, or finish({ reason: "tool-budget-exhausted" }) if you've used your budget before reaching step 7.
+7. Call finish({ reason: "all-described" }) when the worklist is empty, or finish({ reason: "tool-budget-exhausted" }) if you've used your budget.
 
 The most common failure mode is sampling multiple tables before writing any descriptions — that burns through turns reading data without producing any output. Don't do it. Finish each table completely before touching the next.
+
+The dataset-level description is synthesized automatically AFTER your run from the table descriptions you write. You do NOT have a tool for this and do NOT need to think about it — it's a separate deterministic step that the runner handles. Your only job is per-table enrichment.
 
 Rules:
 - Be concrete, not generic.
@@ -278,6 +298,38 @@ export async function runMetadataAgent(
     const status: MetadataAgentResult["status"] =
       turn >= MAX_TURNS && !finishReason ? "max-turns" : "finished";
 
+    // Deterministic dataset-description finalizer.
+    //
+    // The agent's job is per-entity (tables + columns). Synthesizing
+    // a dataset summary is a different kind of task — it's a fold
+    // over already-written table descriptions, not grounded sampling
+    // — and shoehorning it into the same tool-loop made it the
+    // unreliable step: an LLM with 100+ turns of conversation behind
+    // it would skip the "final step" or run out of budget just
+    // before it.
+    //
+    // Doing it here, outside the loop, in a focused single-call
+    // synthesis, makes it bulletproof:
+    //   - Always runs, regardless of how the main loop ended
+    //     (finish, max-turns, or no-tool-calls).
+    //   - Gets a clean context — just the table descriptions, no
+    //     per-row sampling noise.
+    //   - Never competes with per-table work for turn budget.
+    //
+    // Wrapped in try/catch so a synthesis failure can't fail the
+    // overall run — the gate-and-resume on /api/connectors will
+    // pick up the still-missing dataset description on the next
+    // sync if this one fails.
+    let datasetDescriptionWritten = false;
+    try {
+      datasetDescriptionWritten = await finalizeDatasetDescription(ctx, region);
+    } catch (err) {
+      console.error("[metadata-agent] dataset finalizer failed", {
+        connectorId: ctx.connectorId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
     const summary: MetadataAgentResult = {
       status,
       reason: finishReason,
@@ -302,6 +354,7 @@ export async function runMetadataAgent(
     console.log("[metadata-agent] run complete", {
       connectorId: ctx.connectorId,
       ...summary,
+      datasetDescriptionWritten,
     });
 
     return summary;
@@ -334,4 +387,172 @@ export async function runMetadataAgent(
     });
     return summary;
   }
+}
+
+/**
+ * Synthesize a 1-2 sentence dataset description from the table
+ * descriptions already written into the BigQuery dataset, and store
+ * it via the shared writer (which mirrors to Firestore + applies
+ * source-protection so we never clobber a human-edited description).
+ *
+ * Why this lives outside the main agent loop: see the long comment
+ * at the call site. TL;DR — synthesis is a different task class
+ * than per-entity enrichment and shouldn't share the tool-loop's
+ * turn budget. Doing it here guarantees the dataset description
+ * lands every run, even when the main loop ran out of turns or the
+ * agent skipped a "step 7" instruction.
+ *
+ * Idempotency:
+ *   - If the dataset already has a description, returns without
+ *     touching it. Preserves human edits and prior agent runs.
+ *   - If there are no table descriptions to synthesize from
+ *     (genuinely empty dataset), returns false without writing.
+ *
+ * Returns true iff a new description was written this run.
+ */
+async function finalizeDatasetDescription(
+  ctx: MetadataAgentContext,
+  region: string,
+): Promise<boolean> {
+  const start = Date.now();
+
+  const client = await bqReady();
+
+  // Skip if the dataset already has a description. The writer also
+  // enforces source-protection (won't overwrite human edits), but
+  // skipping here avoids an unnecessary Gemini call when we already
+  // know the answer.
+  let existingDesc = "";
+  try {
+    const [datasetMeta] = await client.dataset(ctx.bqDataset).getMetadata();
+    existingDesc =
+      typeof datasetMeta.description === "string" ? datasetMeta.description : "";
+  } catch (err) {
+    const code = (err as { code?: number }).code;
+    if (code === 404) {
+      console.warn("[metadata-agent] dataset finalizer skip — dataset 404", {
+        connectorId: ctx.connectorId,
+        bqDataset: ctx.bqDataset,
+      });
+      return false;
+    }
+    throw err;
+  }
+  if (existingDesc.trim() !== "") {
+    console.log("[metadata-agent] dataset finalizer skip — already described", {
+      connectorId: ctx.connectorId,
+      existingLength: existingDesc.length,
+    });
+    return false;
+  }
+
+  // Gather the table descriptions just written by this run (or by a
+  // previous run — either way, they're the freshest grounded
+  // summaries of the schema).
+  const [tables] = await client.dataset(ctx.bqDataset).getTables();
+  const tableDescriptions: { table: string; description: string }[] = [];
+  await Promise.all(
+    tables.map(async (t) => {
+      const [m] = await t.getMetadata();
+      const desc = typeof m.description === "string" ? m.description : "";
+      if (t.id && desc.trim() !== "") {
+        tableDescriptions.push({ table: t.id, description: desc });
+      }
+    }),
+  );
+  tableDescriptions.sort((a, b) => a.table.localeCompare(b.table));
+
+  if (tableDescriptions.length === 0) {
+    console.warn(
+      "[metadata-agent] dataset finalizer skip — no table descriptions to synthesize from",
+      { connectorId: ctx.connectorId },
+    );
+    return false;
+  }
+
+  // Single-shot Gemini synthesis call — no tools, no streaming, no
+  // loop. Just: "given these table descriptions, write a 1-2 sentence
+  // dataset summary." This is purely deterministic from the runner's
+  // perspective: the call either succeeds and we write, or it fails
+  // and we log + return false.
+  const synthesisModel = buildModel(region, {
+    systemInstruction: {
+      role: "system",
+      parts: [
+        {
+          text:
+            "You write concise BigQuery dataset descriptions. Output a single 1-2 sentence description that names the source connector type and the data domain. Be concrete and scannable. No preamble, no markdown, no quotation marks around the output.",
+        },
+      ],
+    },
+  });
+
+  const prompt = `Connector type: ${ctx.connectorType}
+Dataset: ${ctx.bqDataset}
+
+Table descriptions (one row per table):
+${tableDescriptions.map((t) => `- ${t.table}: ${t.description}`).join("\n")}
+
+Write the dataset description now. Example shapes:
+- "Postgres database containing retail e-commerce data: customers, orders, order_items, products, sessions, shipments, returns, and product reviews."
+- "Stripe payments connector — charges, customers, subscriptions, invoices, payouts, and refunds for the linked account."
+- "HubSpot CRM connector — contacts, deals, companies, engagements, tickets, owners, and products."
+
+Output only the description.`;
+
+  const result = await synthesisModel.generateContent({
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    generationConfig: { maxOutputTokens: 256, temperature: 0.3 },
+  });
+
+  const candidate = result.response.candidates?.[0] as
+    | GenerateContentCandidate
+    | undefined;
+  const rawText =
+    candidate?.content?.parts
+      ?.map((p: Part) => p.text ?? "")
+      .join("")
+      .trim() ?? "";
+
+  // Defensive cleanup: strip wrapping quotes (Gemini sometimes adds
+  // them despite the system instruction) and clamp to the writer's
+  // 600-char max.
+  const cleaned = rawText
+    .replace(/^["'`]+|["'`]+$/g, "")
+    .trim()
+    .slice(0, 600);
+
+  if (cleaned.length < 20) {
+    console.warn(
+      "[metadata-agent] dataset finalizer skip — model output too short",
+      {
+        connectorId: ctx.connectorId,
+        outputLength: cleaned.length,
+        rawPreview: rawText.slice(0, 100),
+      },
+    );
+    return false;
+  }
+
+  const writeResult = await writeDatasetDescription({
+    ctx: {
+      clientId: ctx.clientId,
+      workspaceId: ctx.workspaceId,
+      connectorId: ctx.connectorId,
+      bqDataset: ctx.bqDataset,
+    },
+    description: cleaned,
+    source: "agent",
+  });
+
+  console.log("[metadata-agent] dataset finalizer complete", {
+    connectorId: ctx.connectorId,
+    written: writeResult.written,
+    skipReason: writeResult.reason,
+    descriptionPreview: cleaned.slice(0, 120),
+    tableDescriptionsUsed: tableDescriptions.length,
+    durationMs: Date.now() - start,
+  });
+
+  return writeResult.written;
 }
