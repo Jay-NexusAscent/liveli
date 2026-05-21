@@ -59,6 +59,10 @@ Rules:
 - **\`make_chart\` argument shape — STRICT.** The function takes \`{ title, echartsOption }\`. Every ECharts field (xAxis, yAxis, series, tooltip, legend, grid) goes INSIDE \`echartsOption\`. Do NOT put \`series\` or \`yAxis\` at the top level alongside \`title\`. Correct:
     \`{ "title": "...", "echartsOption": { "xAxis": {...}, "yAxis": {...}, "series": [...] } }\`
 - **For \`make_dashboard\`**: run ALL the SQL queries you need first, build the complete chart specs in memory, then call \`make_dashboard\` **once** with every chart fully populated. Do NOT call \`make_dashboard\` first with an empty placeholder and try to fill it in later — there's no way to update an existing dashboard from chat.
+- **CRITICAL — text-only turns end the workflow.** Liveli's agent loop terminates the moment you emit reply text without ALSO calling a tool in the same turn. For multi-step work — especially dashboards — this means: emit ZERO prose between tool calls. Stack the tool calls back-to-back; save ALL narration for one final summary AFTER the last tool call (\`make_dashboard\` / \`make_chart\`) has succeeded. If you write "Here's the data…" or "Let me gather more…" mid-flow, the customer sees that text and nothing renders — broken UX.
+- **Never narrate intent. Just act.** Banned phrasings (these are text-only turns disguised as plans): "First, let me…", "I'll now…", "Let's gather…", "Here's the data for your dashboard:" (before the dashboard actually exists). If you catch yourself about to write one of those, replace it with the actual tool call.
+- **Empty results → silently widen the range.** If a query returns 0 rows for the requested time period, immediately re-issue with a wider / more recent range (last month, last quarter). Do NOT explain the empty result first — that's a text-only turn that ends the workflow. The customer doesn't need to see the dead end; they just want the dashboard.
+- **Dashboard turn budget — be efficient anyway.** You have ~25 turns of headroom, which is plenty for any reasonable dashboard, but every turn is a Vertex round-trip and customer-perceived latency. An exec dashboard should fit in ~6-10 turns (\`list_tables\` + 4-6 \`run_sql\` + 1 \`make_dashboard\` + retries if needed). Don't pad with narration or alternative views — the budget exists for genuine retries, not exploration.
 - **Dashboard tile sizing (\`colSpan\` on each chart)**: dashboards render on a 4-column grid. Set \`colSpan\` per chart for a polished layout:
   - **\`small\`** (1/4 width) — KPI tiles. A row of 4 KPIs at the top of a dashboard is the canonical pattern.
   - **\`medium\`** (1/2 width) — default. Use for bar, line, area, scatter, donut. Two of these fill a row.
@@ -71,7 +75,22 @@ Rules:
 Current date: ${new Date().toISOString().split("T")[0]}.`;
 
 // Max agent turns per user message — prevents infinite tool loops.
-const MAX_TURNS = 8;
+// Sized for exec dashboards: `list_tables` (1) + 4-6 `run_sql` calls
+// (one per chart) + `make_dashboard` (1) = 6-8 turns of actual work,
+// plus retry headroom for queries that need widening or fixing.
+//
+// History: was 8 originally; bumped to 12 after seeing the agent run
+// out mid-dashboard; bumped to 25 to give comfortable headroom even
+// for heavy exec dashboards with 6+ charts and a few retry rounds.
+// Cost per turn is dominated by Vertex (≈$0.003) + BQ scans (capped
+// at 10GB / ~$0.05 per scan, but typical queries are far below).
+// Worst-case 25-turn chat is ≈$0.10 — small per message, but the
+// aggregate per-plan cap is the real cost guardrail (tracked
+// separately in LIVELI-100: per-plan chat usage limits).
+//
+// The system prompt bans text-only turns (which previously burned
+// budget for free), so most chats finish in well under the ceiling.
+const MAX_TURNS = 25;
 
 /**
  * Build the per-turn edit-context preamble that gets appended to
@@ -651,6 +670,19 @@ export async function* runAgentTurn(
     history.push({ role: "user", parts: fnResultParts });
 
     logTurnComplete(turn, turnStart, turnMetrics, true);
+  }
+
+  // If we exited the loop because we hit MAX_TURNS (rather than because
+  // the agent naturally stopped calling tools), the customer would
+  // otherwise see whatever partial output the agent produced and then
+  // silence. Surface a brief, voice-consistent message so they know to
+  // try a smaller scope rather than wonder if the product hung.
+  if (turn >= MAX_TURNS) {
+    const truncationMsg =
+      "\n\nI ran out of steps before I could finish that. Try asking for a smaller scope (one chart at a time, or a narrower dashboard) and I'll have plenty of room.";
+    assistantText.push(truncationMsg);
+    yield { type: "text_delta", text: truncationMsg };
+    console.warn("[agent] MAX_TURNS exhausted", { turns: turn });
   }
 
   console.log("[agent] runAgentTurn complete", {
