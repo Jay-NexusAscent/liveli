@@ -26,6 +26,7 @@ const EVENTS_TABLE = "usage_events";
 export type UsageEventType =
   | "query.run"
   | "agent.message"
+  | "agent.metadata"
   | "sync.run"
   | "chart.create"
   | "dashboard.create"
@@ -172,6 +173,40 @@ export function logAgentMessage(input: {
     tokensIn: input.tokensIn,
     tokensOut: input.tokensOut,
     cost_gbp_estimate: vertexCostGbp(input.model, input.tokensIn, input.tokensOut),
+  });
+}
+
+/**
+ * Token + duration usage from a single metadata-enrichment-agent run.
+ * Distinct event type from `agent.message` so the cost dashboard can
+ * attribute metadata-pipeline spend separately from user-facing chat.
+ * Resource is the connectorId — every metadata run is scoped to one.
+ */
+export function logMetadataAgentRun(input: {
+  clientId: string;
+  workspaceId: string;
+  connectorId: string;
+  model: string;
+  tokensIn: number;
+  tokensOut: number;
+  executionMs: number;
+  toolCallsUsed: number;
+  status: "finished" | "max-turns" | "error";
+}): void {
+  logUsageEvent({
+    clientId: input.clientId,
+    workspaceId: input.workspaceId,
+    eventType: "agent.metadata",
+    resource: input.connectorId,
+    executionMs: input.executionMs,
+    model: input.model,
+    tokensIn: input.tokensIn,
+    tokensOut: input.tokensOut,
+    cost_gbp_estimate: vertexCostGbp(input.model, input.tokensIn, input.tokensOut),
+    labels: {
+      toolCallsUsed: input.toolCallsUsed,
+      status: input.status,
+    },
   });
 }
 
