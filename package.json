@@ -14,6 +14,9 @@
   },
   "dependencies": {
     "@clerk/nextjs": "^7.0.7",
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
     "@google-cloud/bigquery": "^8.1.1",
     "@google-cloud/firestore": "^7.11.0",
     "@google-cloud/logging": "^11.2.1",
