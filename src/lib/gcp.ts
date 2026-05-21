@@ -42,12 +42,27 @@ export const gcp = {
   vertexRegion: process.env.VERTEX_AI_REGION ?? "europe-west1",
   /**
    * Default model. Must be available in the workspace's residency region.
-   * gemini-2.5-flash is the latest Flash variant available in europe-west1
-   * as of 2026-05. gemini-3.5-flash exists but only in us-central1/global
-   * for now — switching there would break EU data residency. Re-check
-   * regional availability before bumping this default.
+   *
+   * Default: `claude-sonnet-4-6` (Anthropic Claude Sonnet 4.6 via Vertex AI).
+   * Switched from gemini-2.5-flash in LIVELI-107 because the smaller Flash
+   * model wasn't fit for purpose in agentic loops — mid-flow stopping,
+   * column hallucination, SQL dialect errors, dashboard quality. Claude
+   * Sonnet handles tool use and instruction following dramatically better
+   * out of the box, replacing layers of prompt-rule scaffolding that were
+   * compensating for the small model's limitations.
+   *
+   * Model-name prefix is the dispatch key in /api/chat/route.ts:
+   *   - `claude-*` → AI SDK (@ai-sdk/google-vertex/anthropic) loop in agent-claude.ts
+   *   - `gemini-*` → legacy @google-cloud/vertexai loop in agent.ts
+   *
+   * Easy rollback: set VERTEX_AI_MODEL=gemini-2.5-flash to restore the
+   * legacy path (no code change needed).
+   *
+   * Regional availability: Claude Sonnet 4.6 is served from `eu`, `us`,
+   * and `global` Vertex endpoints. Workspace data-residency choice in
+   * vertexRegionForResidency() still drives which endpoint is used.
    */
-  vertexModel: process.env.VERTEX_AI_MODEL ?? "gemini-2.5-flash",
+  vertexModel: process.env.VERTEX_AI_MODEL ?? "claude-sonnet-4-6",
 };
 
 /**
