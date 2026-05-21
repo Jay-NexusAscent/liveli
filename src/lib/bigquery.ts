@@ -78,6 +78,90 @@ export function workspaceDatasetId(orgId: string): string {
   return `ws_${slug(orgId)}`;
 }
 
+// ── Staging table cleanup ──────────────────────────────────────────
+//
+// z3z1ma/target-bigquery in batch_job mode writes incoming rows to a
+// staging table named `<stream>__<YYYYMMDDHHMMSS>__<uuid-v4>`, then
+// (in upsert/overwrite mode) merges or swaps it into the canonical
+// table and drops the staging. When the post-load step fails for any
+// reason — MERGE silently dies on a no-PK table, type mismatch on
+// overwrite, network blip mid-operation — the staging table is left
+// behind. Symptom: dataset accumulates dozens of `<table>__<ts>__<uuid>`
+// over time; the agent's list_tables tool sees them all as siblings
+// of the canonical and gets confused about which holds the real data.
+//
+// Pattern matches z3z1ma's exact naming: double-underscore, 14-digit
+// timestamp, double-underscore, RFC 4122 UUID. Tight enough to not
+// collide with any reasonable user table name a tap might emit.
+export const STAGING_TABLE_PATTERN =
+  /__\d{14}__[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isStagingTable(tableId: string): boolean {
+  return STAGING_TABLE_PATTERN.test(tableId);
+}
+
+/**
+ * Drop staging tables in a connector's dataset that are older than the
+ * threshold. Best-effort: errors are logged, never thrown — cleanup
+ * failure must not block a sync.
+ *
+ * Safety: only drops tables matching the STAGING_TABLE_PATTERN. Only
+ * drops tables CREATED before `cutoffMs` ago (default 1h, longer than
+ * the Cloud Run Job's 30-min max timeout — guarantees we never drop
+ * staging belonging to a concurrent in-flight execution).
+ *
+ * Called from sync/route.ts + scheduled-sync/route.ts BEFORE triggering
+ * the next Cloud Run Job. Running pre-sync (rather than post-sync via
+ * a Pub/Sub webhook) is intentional: no completion hook to wire, no
+ * new infra, eventual consistency — orphans from run N get dropped at
+ * the start of run N+1.
+ */
+export async function cleanupStaleStagingTables(
+  datasetId: string,
+  opts: { thresholdMs?: number } = {}
+): Promise<{ dropped: number; checked: number }> {
+  const thresholdMs = opts.thresholdMs ?? 60 * 60 * 1000; // 1h default
+  const cutoff = Date.now() - thresholdMs;
+
+  let dropped = 0;
+  let checked = 0;
+  try {
+    const client = await bqReady();
+    const [tables] = await client.dataset(datasetId).getTables();
+    for (const t of tables) {
+      checked++;
+      const tableId = t.id ?? "";
+      if (!isStagingTable(tableId)) continue;
+      // Metadata lookup gets creationTime. We could parse the timestamp
+      // out of the staging table name itself (it's right there as YYYY-
+      // MMDDHHMMSS), but using BQ's authoritative creationTime is safer
+      // against clock skew / future renames.
+      try {
+        const [meta] = await t.getMetadata();
+        const createdMs = Number(meta.creationTime ?? 0);
+        if (createdMs && createdMs >= cutoff) continue; // too young to drop
+        await t.delete();
+        dropped++;
+      } catch (err) {
+        console.warn("[bq] staging-table cleanup: skip", {
+          datasetId,
+          tableId,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  } catch (err) {
+    console.warn("[bq] staging-table cleanup: dataset enumeration failed", {
+      datasetId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+  if (dropped > 0) {
+    console.log("[bq] staging-table cleanup", { datasetId, dropped, checked });
+  }
+  return { dropped, checked };
+}
+
 // ── Safe query ─────────────────────────────────────────────────────
 
 export interface SafeQueryOptions {
@@ -276,11 +360,10 @@ export interface WorkspaceTable {
  * to APPEND or MERGE into the canonical, not just write staging. See
  * the new Linear ticket on sync data promotion.
  */
-const STAGING_TABLE_SUFFIX = /__\d{14}__[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
-function isStagingTableName(tableId: string): boolean {
-  return STAGING_TABLE_SUFFIX.test(tableId);
-}
+// Note: STAGING_TABLE_PATTERN + isStagingTable are defined at the top of
+// this file (alongside cleanupStaleStagingTables). A locally-scoped
+// duplicate was added here in a separate PR — consolidated on the
+// exported version so there's a single source of truth for the pattern.
 
 export async function listWorkspaceTables(
   clientId: string,
@@ -303,9 +386,15 @@ export async function listWorkspaceTables(
         if (code === 404) return [] as WorkspaceTable[];
         throw err;
       }
-      // Filter Singer/Meltano staging copies before fetching metadata —
-      // saves a getMetadata round-trip per excluded table.
-      const filteredTables = tables.filter((t) => !isStagingTableName(t.id ?? ""));
+      // Filter out z3z1ma target-bigquery staging tables before the agent
+      // ever sees them. Even with the post-sync `cleanupStaleStagingTables`
+      // sweep there's a window — between a Cloud Run Job creating staging
+      // and the next sync's cleanup — where orphans exist in the dataset.
+      // The agent should not be choosing between `public_orders` and 80
+      // siblings called `public_orders__YYYYMMDDHHMMSS__<uuid>`; surface
+      // only the canonical names. Bonus: filtering BEFORE the per-table
+      // getMetadata round-trip saves one BQ call per excluded staging.
+      const filteredTables = tables.filter((t) => !isStagingTable(t.id ?? ""));
       const rows = await Promise.all(
         filteredTables.map(async (t) => {
           const [meta] = await t.getMetadata();
