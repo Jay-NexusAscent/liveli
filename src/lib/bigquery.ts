@@ -320,8 +320,24 @@ export interface WorkspaceTable {
   connectorName?: string;
   /** Connector type (postgres, stripe, etc.). */
   connectorType?: string;
+  /**
+   * Dataset-level semantic description, populated by the metadata
+   * enrichment agent (LIVELI-87 territory). Same value repeats across
+   * every row that shares a dataset — the flat-shape duplication is
+   * intentional so the chat agent can see the dataset context on any
+   * table it inspects without doing a separate lookup. May be missing
+   * if enrichment hasn't run yet for this dataset.
+   */
+  datasetDescription?: string;
+  /** Table-level semantic description from enrichment. */
+  tableDescription?: string;
   rowCount: number;
-  columns: { name: string; type: string }[];
+  columns: {
+    name: string;
+    type: string;
+    /** Column-level semantic description from enrichment. */
+    description?: string;
+  }[];
 }
 
 /**
@@ -376,16 +392,28 @@ export async function listWorkspaceTables(
   const perConnector = await Promise.all(
     connectorIds.map(async (conn) => {
       const datasetId = connectorDatasetId(clientId, workspaceId, conn.id);
-      let tables;
-      try {
-        [tables] = await client.dataset(datasetId).getTables();
-      } catch (err) {
-        const code = (err as { code?: number }).code;
+      // Fetch dataset metadata (semantic description from the enrichment
+      // agent) and the table list in parallel — one extra BQ round-trip
+      // per connector, runs concurrently with the table-list fetch, so
+      // it adds ~zero wall-time cost beyond what was already happening.
+      // Wrapped in a try/catch independent of getTables so an enrichment
+      // gap doesn't break table listing.
+      const [tablesResult, datasetMetaResult] = await Promise.allSettled([
+        client.dataset(datasetId).getTables(),
+        client.dataset(datasetId).getMetadata(),
+      ]);
+      if (tablesResult.status === "rejected") {
+        const code = (tablesResult.reason as { code?: number }).code;
         // 404 = dataset doesn't exist (connector hasn't synced yet).
         // Anything else, surface so we don't silently hide real BQ errors.
         if (code === 404) return [] as WorkspaceTable[];
-        throw err;
+        throw tablesResult.reason;
       }
+      const [tables] = tablesResult.value;
+      const datasetDescription =
+        datasetMetaResult.status === "fulfilled"
+          ? (datasetMetaResult.value[0] as { description?: string }).description
+          : undefined;
       // Filter out z3z1ma target-bigquery staging tables before the agent
       // ever sees them. Even with the post-sync `cleanupStaleStagingTables`
       // sweep there's a window — between a Cloud Run Job creating staging
@@ -404,11 +432,14 @@ export async function listWorkspaceTables(
             table: t.id ?? "",
             connectorName: conn.name,
             connectorType: conn.type,
+            datasetDescription,
+            tableDescription: (meta as { description?: string }).description,
             rowCount: Number(meta.numRows ?? 0),
             columns: (meta.schema?.fields ?? []).map(
-              (f: { name: string; type: string }) => ({
+              (f: { name: string; type: string; description?: string }) => ({
                 name: f.name,
                 type: f.type,
+                description: f.description,
               })
             ),
           } satisfies WorkspaceTable;
