@@ -12,6 +12,7 @@ import { cloudComputeRegionForResidency, gcp } from "@/lib/gcp";
 import { logUsageEvent } from "@/lib/usage";
 import { upsertSyncJob, deleteSyncJob } from "@/lib/cloud-scheduler";
 import { deleteConnectorSecret } from "@/lib/secret-manager";
+import { introspectPostgresSchema } from "@/lib/postgres-introspection";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -63,6 +64,64 @@ export async function POST(req: Request) {
 
   const step = { current: "init" };
   try {
+    // Introspect the source database BEFORE touching any of our own
+    // state (BQ dataset, Secret Manager, Firestore, Scheduler). This
+    // doubles as a creds liveness check — if we can't connect or
+    // can't read information_schema, the wizard fails fast with a
+    // useful error rather than committing a connector that will
+    // silently break on first sync 15 min later.
+    //
+    // Output drives per-stream incremental-sync config: each table
+    // gets INCREMENTAL with an `updated_at`-family key when one
+    // exists, INCREMENTAL with the integer PK when that's all there
+    // is, or FULL_TABLE as a fallback. Persisted to the Firestore
+    // connector doc and re-injected as a meltano.yml metadata block
+    // at sync time.
+    step.current = "introspect postgres schema";
+    const schemaList = (body.schemas ?? "public")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    let replicationConfig;
+    try {
+      replicationConfig = await introspectPostgresSchema({
+        host: body.host,
+        port: body.port,
+        database: body.database,
+        user: body.user,
+        password: body.password,
+        ssl: body.ssl,
+        schemas: schemaList,
+      });
+    } catch (introspectErr) {
+      // Customer-facing: most introspection failures are connection or
+      // auth problems they need to fix in their wizard input. Return 400
+      // with the underlying error visible so they can act on it.
+      const msg =
+        introspectErr instanceof Error
+          ? introspectErr.message
+          : String(introspectErr);
+      return Response.json(
+        {
+          error: "Couldn't connect to the Postgres source",
+          errorMessage: msg,
+        },
+        { status: 400 }
+      );
+    }
+
+    // Empty result means the schema filter matched zero tables —
+    // almost always a user-input mistake (wrong schema name, typo).
+    // Surface this before they save a connector that would sync nothing.
+    if (replicationConfig.detected.length === 0) {
+      return Response.json(
+        {
+          error: `No tables found in schema(s): ${schemaList.join(", ")}. Check that the schema name is correct and your user has SELECT privileges.`,
+        },
+        { status: 400 }
+      );
+    }
+
     step.current = "dbReady";
     await dbReady();
 
@@ -125,6 +184,14 @@ export async function POST(req: Request) {
       bqProject: gcp.projectId,
       bqDataset: datasetId,
       bqLocation,
+      // Replication config from connect-time introspection. `streams` is
+      // the Meltano-format per-stream metadata overrides injected at
+      // sync time. `detected` is the human-readable summary shown in
+      // the edit modal so the user can see what we picked and override
+      // if wrong (override UI is a separate PR). Stored as a plain object
+      // because Firestore doesn't like undefined values inside nested
+      // Records — we already filtered those out in the introspection.
+      replicationConfig,
     });
     created.firestoreDoc = connectorRef;
 

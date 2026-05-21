@@ -42,6 +42,16 @@ export async function POST(
     type: string;
     bqDataset: string;
     bqLocation?: "EU" | "US";
+    /**
+     * Auto-detected per-stream replication strategy from connect-time
+     * introspection. Optional because pre-introspection connectors
+     * (created before this code shipped) won't have it — those default
+     * to FULL_TABLE for every stream.
+     */
+    replicationConfig?: {
+      streams: Record<string, unknown>;
+      detected?: unknown[];
+    };
   };
 
   // Workspace BQ location for the target — prefer the connector's own
@@ -74,10 +84,24 @@ export async function POST(
     TARGET_BIGQUERY_PROJECT: gcp.projectId,
     TARGET_BIGQUERY_DATASET: data.bqDataset,
     TARGET_BIGQUERY_LOCATION: location,
+    // Persistent Meltano state backend on GCS. The bucket follows the
+    // workspace's residency region (matches the Cloud Run Job's `-eu`/
+    // `-us` split); the actual state object inside the bucket is named
+    // by the --state-id flag from entrypoint.sh, which we set to a
+    // tenant-prefixed path so prefix-deletion-on-customer-delete just
+    // works. Without this env var, Meltano falls back to the local
+    // filesystem state — wiped on every container exit, defeating
+    // incremental-sync.
+    MELTANO_STATE_BACKEND_URI: `gs://liveli-meltano-state-${suffix}`,
   };
 
   try {
-    Object.assign(env, buildTapEnv(data.type, creds));
+    Object.assign(
+      env,
+      buildTapEnv(data.type, creds, {
+        replicationConfig: data.replicationConfig?.streams,
+      })
+    );
   } catch (err) {
     if (err instanceof UnsupportedConnectorTypeError) {
       return Response.json({ error: err.message }, { status: 400 });
