@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CheckIcon, CloseIcon, PencilIcon, ShareIcon } from "@/components/icons";
+import { toPng } from "html-to-image";
+import { CheckIcon, CloseIcon, CopyIcon, PencilIcon } from "@/components/icons";
 import { ChartRenderer } from "@/components/chat/chart-renderer";
 
 type FullscreenContent =
@@ -20,7 +21,7 @@ interface FullscreenModalProps {
   onClose: () => void;
   /**
    * Optional callback to open the current content in chat-edit mode.
-   * When provided, an Edit button renders alongside Share in the
+   * When provided, an Edit button renders alongside Copy in the
    * header. Invoking it closes the modal first so the navigation away
    * to /chat isn't covered by a still-mounted overlay (Esc + scroll
    * locks would otherwise hang around). The parent decides whether to
@@ -43,16 +44,27 @@ interface FullscreenModalProps {
  *   - clicking the backdrop
  *   - the X button in the top-right
  *
+ * Copy: snapshots the modal panel as a PNG and writes it to the
+ * clipboard as an image. Users paste straight into Outlook, Teams,
+ * Slack, etc. — flat image, no auth-walled link to dead-end on. The
+ * action buttons themselves are excluded from the capture via a
+ * data-attribute filter so the screenshot shows just the title +
+ * chart(s).
+ *
  * Portaled to document.body so the modal isn't constrained by parent
  * layouts (sidebar, padding, overflow).
  */
 export function FullscreenModal({ content, onClose, onEdit }: FullscreenModalProps) {
-  const [shareState, setShareState] = useState<"idle" | "copied" | "error">("idle");
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+  // Ref onto the modal panel itself — html-to-image walks this subtree
+  // to produce the PNG. Buttons inside are tagged data-capture-exclude
+  // so they don't appear in the screenshot.
+  const panelRef = useRef<HTMLDivElement | null>(null);
 
   // Bind Esc + lock body scroll while open. Cleanup removes both.
   useEffect(() => {
     if (!content) return;
-    setShareState("idle");
+    setCopyState("idle");
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
@@ -67,16 +79,43 @@ export function FullscreenModal({ content, onClose, onEdit }: FullscreenModalPro
 
   if (!content || typeof window === "undefined") return null;
 
-  const shareUrl = `${window.location.origin}/dashboards#${content.kind}-${content.id}`;
-
-  const handleShare = async () => {
+  const handleCopy = async () => {
+    if (!panelRef.current) return;
+    // Feature-detect ClipboardItem up front. Older Firefox / Safari
+    // versions support clipboard.writeText but not write-with-blob.
+    // Fail fast with a useful error state rather than letting the
+    // browser throw an opaque DOMException mid-render.
+    if (typeof window.ClipboardItem === "undefined") {
+      setCopyState("error");
+      window.setTimeout(() => setCopyState("idle"), 2000);
+      return;
+    }
     try {
-      await navigator.clipboard.writeText(shareUrl);
-      setShareState("copied");
-      window.setTimeout(() => setShareState("idle"), 2000);
+      // pixelRatio: 2 for retina-sharp output when pasted into Teams /
+      // Outlook (which often display at native DPI).
+      const dataUrl = await toPng(panelRef.current, {
+        pixelRatio: 2,
+        // Filter the action-buttons cluster out of the capture — we
+        // don't want the Copy / Edit / Close buttons in the PNG.
+        filter: (node) => {
+          if (!(node instanceof HTMLElement)) return true;
+          return node.dataset.captureExclude !== "true";
+        },
+        // Match the modal's background so anti-aliased edges blend.
+        // Reading the actual computed color of the panel keeps light /
+        // dark themes correct without hard-coding hex values.
+        backgroundColor:
+          getComputedStyle(panelRef.current).backgroundColor || undefined,
+      });
+      const blob = await (await fetch(dataUrl)).blob();
+      await navigator.clipboard.write([
+        new ClipboardItem({ "image/png": blob }),
+      ]);
+      setCopyState("copied");
+      window.setTimeout(() => setCopyState("idle"), 2000);
     } catch {
-      setShareState("error");
-      window.setTimeout(() => setShareState("idle"), 2000);
+      setCopyState("error");
+      window.setTimeout(() => setCopyState("idle"), 2000);
     }
   };
 
@@ -89,6 +128,7 @@ export function FullscreenModal({ content, onClose, onEdit }: FullscreenModalPro
       aria-label={content.title}
     >
       <div
+        ref={panelRef}
         // Stop backdrop-close from firing when clicking inside the panel.
         onClick={(e) => e.stopPropagation()}
         className="relative m-4 flex w-full max-w-[1400px] flex-col rounded-xl border border-border bg-surface shadow-2xl"
@@ -102,7 +142,10 @@ export function FullscreenModal({ content, onClose, onEdit }: FullscreenModalPro
               <p className="mt-0.5 text-[13px] text-text-secondary">{content.description}</p>
             )}
           </div>
-          <div className="flex shrink-0 items-center gap-1">
+          <div
+            data-capture-exclude="true"
+            className="flex shrink-0 items-center gap-1"
+          >
             {onEdit && (
               <button
                 type="button"
@@ -122,27 +165,29 @@ export function FullscreenModal({ content, onClose, onEdit }: FullscreenModalPro
             )}
             <button
               type="button"
-              onClick={handleShare}
+              onClick={handleCopy}
               aria-label={
-                shareState === "copied"
+                copyState === "copied"
                   ? "Copied to clipboard"
-                  : "Copy share link"
+                  : copyState === "error"
+                    ? "Copy failed — your browser may not support image clipboard"
+                    : "Copy as image"
               }
               className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[12px] font-medium transition-colors ${
-                shareState === "copied"
+                copyState === "copied"
                   ? "bg-[color:var(--status-success)]/12 text-[color:var(--status-success)]"
-                  : shareState === "error"
+                  : copyState === "error"
                     ? "bg-[color:var(--status-error)]/12 text-[color:var(--status-error)]"
                     : "text-text-secondary hover:bg-hover hover:text-text-primary"
               }`}
             >
-              {shareState === "copied" ? <CheckIcon /> : <ShareIcon />}
+              {copyState === "copied" ? <CheckIcon /> : <CopyIcon />}
               <span>
-                {shareState === "copied"
-                  ? "Link copied"
-                  : shareState === "error"
+                {copyState === "copied"
+                  ? "Copied"
+                  : copyState === "error"
                     ? "Copy failed"
-                    : "Share"}
+                    : "Copy"}
               </span>
             </button>
             <button
