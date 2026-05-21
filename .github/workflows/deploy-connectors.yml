@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       connector:
-        description: "Specific connector to (re)build (leave blank to build all listed in matrix)"
+        description: "Specific connector to (re)build. Leave blank for normal diff-based detection; '*' forces all."
         required: false
         type: string
 
@@ -20,49 +20,146 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # ── Stage 1: figure out what actually changed ─────────────────────
+  #
+  # Static-matrix builds-all-on-every-push waste ~6-8 min × 8 unchanged
+  # connectors per single-connector PR. This job computes a dynamic
+  # matrix from the push diff so only changed connectors fan out to
+  # the build job.
+  #
+  # Decision tree:
+  #   workflow_dispatch + specific connector input → that one
+  #   workflow_dispatch + "*" or empty input       → all
+  #   push with unreachable BEFORE (force push,    → all (safe fallback)
+  #     initial push, history GC'd)
+  #   push + workflow file itself changed          → all (the workflow
+  #     change may affect every build step, so revalidate everywhere)
+  #   push + only some connectors changed          → just those
+  #   push + no connector dirs changed             → empty matrix; the
+  #     build job below is skipped via its `if:` condition
+  detect-changes:
+    name: Detect changed connectors
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      empty: ${{ steps.set-matrix.outputs.empty }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the BEFORE..SHA diff works for any reachable
+          # commit. Default fetch-depth (1) would shallow-clone and the
+          # diff against BEFORE would fail.
+          fetch-depth: 0
+
+      - id: set-matrix
+        name: Compute matrix from diff
+        env:
+          DISPATCH_INPUT: ${{ github.event.inputs.connector }}
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # Helper: emit the matrix JSON + empty flag, then return.
+          emit_matrix() {
+            local items="$1"
+            local matrix
+            if [ -z "$items" ]; then
+              matrix='{"connector":[]}'
+              echo "empty=true" >> "$GITHUB_OUTPUT"
+            else
+              matrix=$(echo "$items" \
+                | jq -R -s -c 'split("\n") | map(select(length > 0)) | { connector: . }')
+              echo "empty=false" >> "$GITHUB_OUTPUT"
+            fi
+            echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+            echo "→ matrix: $matrix"
+          }
+
+          # Helper: enumerate every connector by reading the directory.
+          # Avoids a hard-coded list that would drift as connectors are
+          # added — the same directory layout the build step expects.
+          all_connectors() {
+            find connectors -mindepth 1 -maxdepth 1 -type d -printf '%f\n' \
+              | sort
+          }
+
+          # Case 1: manual run with a specific connector input → that one.
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] \
+             && [ -n "$DISPATCH_INPUT" ] \
+             && [ "$DISPATCH_INPUT" != "*" ]; then
+            echo "→ workflow_dispatch connector=$DISPATCH_INPUT"
+            emit_matrix "$DISPATCH_INPUT"
+            exit 0
+          fi
+
+          # Case 2: manual run with empty / "*" input → all connectors.
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "→ workflow_dispatch with no specific connector — building all"
+            emit_matrix "$(all_connectors)"
+            exit 0
+          fi
+
+          # Case 3: BEFORE is missing or unreachable (initial push, force
+          # push, history rewritten). Diff is unreliable — build all.
+          # Better to over-build than miss a needed deploy.
+          if [ -z "$BEFORE" ] \
+             || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+             || ! git rev-parse --verify "$BEFORE" >/dev/null 2>&1; then
+            echo "→ BEFORE ($BEFORE) is missing or unreachable — building all"
+            emit_matrix "$(all_connectors)"
+            exit 0
+          fi
+
+          # Case 4: workflow file itself changed in the push range. A
+          # change to build/push/update steps applies to every connector,
+          # so we revalidate everywhere.
+          if git diff --name-only "$BEFORE" "$SHA" \
+             | grep -q "^\.github/workflows/deploy-connectors\.yml$"; then
+            echo "→ workflow file changed — building all"
+            emit_matrix "$(all_connectors)"
+            exit 0
+          fi
+
+          # Case 5 (typical): only the connectors with changes in the push.
+          CHANGED=$(git diff --name-only "$BEFORE" "$SHA" \
+            | grep "^connectors/" \
+            | awk -F/ '{print $2}' \
+            | sort -u)
+
+          echo "→ changed connector dirs in $BEFORE..$SHA:"
+          echo "$CHANGED" | sed 's/^/    /'
+          emit_matrix "$CHANGED"
+
+  # ── Stage 2: build, push, and update Cloud Run Jobs ───────────────
+  #
+  # `if:` skips the whole job (matrix not even materialised) when no
+  # connectors need building — GitHub Actions shows it as Skipped, no
+  # red-X noise.
   build:
     name: ${{ matrix.connector }}
+    needs: detect-changes
+    if: needs.detect-changes.outputs.empty != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     strategy:
       fail-fast: false
-      # Each new connector is matrix-built independently — one failure
-      # doesn't block the others. Image build time is ~6-8 min per
-      # connector (meltano install dominates), so adding to this list
-      # costs roughly that on the next push. Order is alphabetical for
-      # readability — Cloud Run Job names are derived from the same
-      # slug via `connector-<name>` in infra/cloud-run.tf.
-      matrix:
-        connector:
-          - facebook-ads-to-bq
-          - google-ads-to-bq
-          - hubspot-to-bq
-          - mailchimp-to-bq
-          - mysql-to-bq
-          - postgres-to-bq
-          - salesforce-to-bq
-          - shopify-to-bq
-          - stripe-to-bq
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
 
     env:
       # Artifact Registry stays in europe-west4 — image binaries aren't
       # customer data, and Cloud Run can pull from any region. The
       # Cloud Run Jobs themselves are deployed PER RESIDENCY into the
-      # regions listed in CLOUD_RUN_REGIONS (matches the EU/US suffix
-      # scheme in infra/cloud-run.tf + src/lib/gcp.ts).
+      # regions listed below (matches the EU/US suffix scheme in
+      # infra/cloud-run.tf + src/lib/gcp.ts).
       AR_REGION: europe-west4
       PROJECT_ID: liveli-496609
       REPO: liveli-connectors
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Skip if a specific connector was requested and this isn't it
-        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.connector != '' && github.event.inputs.connector != matrix.connector }}
-        run: |
-          echo "Skipping ${{ matrix.connector }} — workflow dispatched for ${{ github.event.inputs.connector }}"
-          exit 0
 
       - uses: google-github-actions/auth@v2
         with:
