@@ -6,7 +6,7 @@ const features = [
     icon: ConnectIcon,
     title: "Connect anything",
     body:
-      "Postgres, MySQL, Stripe, HubSpot, Salesforce, Google Ads, Shopify — 600+ sources powered by the open-source Meltano connector ecosystem. One click, one form, your data is live.",
+      "Postgres, MySQL, Stripe, HubSpot, Salesforce, Google Ads, Shopify — 600+ sources supported out of the box. One click, one form, your data is live.",
   },
   {
     icon: ChatIcon,

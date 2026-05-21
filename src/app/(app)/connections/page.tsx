@@ -395,7 +395,7 @@ export default function ConnectionsPage() {
               <div>
                 <p className="text-[15px] font-medium text-text-primary">No sources connected yet</p>
                 <p className="mt-0.5 text-[13px] text-text-secondary">
-                  Pick a source below to get started — Liveli will replicate it into BigQuery for you.
+                  Pick a source below to get started — Liveli will sync it for you so you can ask questions about your data.
                 </p>
               </div>
             </div>
