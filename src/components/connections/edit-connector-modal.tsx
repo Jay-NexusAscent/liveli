@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Modal } from "@/components/ui/modal";
 import { ConfirmModal } from "@/components/ui/confirm-modal";
 import { cn } from "@/lib/utils";
@@ -61,30 +61,51 @@ interface FormState {
  *     credentials" section. Empty creds == leave existing secret in
  *     place. Full creds set == write new Secret Manager version.
  */
+/**
+ * Build the initial form-state shape from a connector record. Pulled
+ * out so the lazy useState initialiser and the "reset on connector
+ * swap" path can share one definition.
+ */
+function formFromConnector(c: ConnectorForEdit | null): FormState {
+  if (!c) return emptyForm();
+  return {
+    name: c.name ?? "",
+    syncFrequency: c.syncFrequency ?? "1h",
+    schemas: c.schemas ?? "public",
+    showCreds: false,
+    host: c.host ?? "",
+    port: String(c.port ?? 5432),
+    database: c.database ?? "",
+    user: c.user ?? "",
+    password: "",
+    ssl: c.ssl ?? true,
+  };
+}
+
 export function EditConnectorModal({ connector, onClose, onSaved, onDeleted }: Props) {
-  const [form, setForm] = useState<FormState>(emptyForm());
+  // Lazy initialiser: seed the form from the connector on first render.
+  // No effect needed for the initial population — that's what useState
+  // lazy init is for.
+  const [form, setForm] = useState<FormState>(() => formFromConnector(connector));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Which destructive action the user has clicked but not yet confirmed.
    * Null when the danger-zone confirm modal is closed. */
   const [pendingDanger, setPendingDanger] = useState<"refresh" | "delete" | null>(null);
 
-  useEffect(() => {
-    if (!connector) return;
-    setForm({
-      name: connector.name ?? "",
-      syncFrequency: connector.syncFrequency ?? "1h",
-      schemas: connector.schemas ?? "public",
-      showCreds: false,
-      host: connector.host ?? "",
-      port: String(connector.port ?? 5432),
-      database: connector.database ?? "",
-      user: connector.user ?? "",
-      password: "",
-      ssl: connector.ssl ?? true,
-    });
+  // Reset form + error when the parent swaps the connector prop (e.g.
+  // closes the modal and re-opens it for a different connector without
+  // unmounting). Done via React's "adjust state during render" pattern
+  // — React docs recommend this over the previous setState-in-effect
+  // approach:
+  // https://react.dev/reference/react/useState#storing-information-from-previous-renders
+  const currentConnectorId = connector?.id ?? null;
+  const [seenConnectorId, setSeenConnectorId] = useState<string | null>(currentConnectorId);
+  if (currentConnectorId !== seenConnectorId) {
+    setSeenConnectorId(currentConnectorId);
+    setForm(formFromConnector(connector));
     setError(null);
-  }, [connector]);
+  }
 
   if (!connector) return null;
 
