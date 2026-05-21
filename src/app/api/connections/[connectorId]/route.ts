@@ -2,6 +2,7 @@ import { requireWorkspaceContext, UnauthorizedError } from "@/lib/clients";
 import { connectorsIn, dbReady } from "@/lib/firestore";
 import { getExecutionStatus } from "@/lib/cloud-run";
 import { deleteConnectorSecret } from "@/lib/secret-manager";
+import { deleteConnectorState } from "@/lib/meltano-state";
 import { bqReady } from "@/lib/bigquery";
 import { logUsageEvent } from "@/lib/usage";
 import { deleteSyncJob } from "@/lib/cloud-scheduler";
@@ -120,6 +121,13 @@ export async function DELETE(
         if (code !== 404) throw err;
       }
     }
+
+    // Drop the connector's Meltano state file from GCS so a customer
+    // re-creating a connector with the same name/database doesn't
+    // unexpectedly resume from an old bookmark. Best-effort — state
+    // cleanup must not block connector deletion.
+    step.current = "delete Meltano state";
+    await deleteConnectorState(ctx.clientId, ctx.workspaceId, connectorId);
 
     step.current = "delete Firestore connector doc";
     await ref.delete();

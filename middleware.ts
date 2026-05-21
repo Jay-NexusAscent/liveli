@@ -33,7 +33,6 @@ const isAppRoute = createRouteMatcher([
 const isPublicAuthRoute = createRouteMatcher([
   "/sign-in(.*)",
   "/sign-up(.*)",
-  "/onboarding(.*)",
   "/api/webhooks(.*)",
 ]);
 

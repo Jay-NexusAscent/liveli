@@ -130,6 +130,11 @@ export async function POST(
     bqDataset: string;
     bqLocation?: "EU" | "US";
     deletionState?: string;
+    /** Auto-detected per-stream replication strategy. See sync/route.ts for the shape. */
+    replicationConfig?: {
+      streams: Record<string, unknown>;
+      detected?: unknown[];
+    };
   };
 
   if (data.deletionState === "scheduled") {
@@ -164,10 +169,18 @@ export async function POST(
     TARGET_BIGQUERY_PROJECT: gcp.projectId,
     TARGET_BIGQUERY_DATASET: data.bqDataset,
     TARGET_BIGQUERY_LOCATION: location,
+    // Persistent Meltano state backend (see sync/route.ts for the full
+    // rationale — same env var, same residency-driven bucket choice).
+    MELTANO_STATE_BACKEND_URI: `gs://liveli-meltano-state-${suffix}`,
   };
 
   try {
-    Object.assign(env, buildTapEnv(data.type, creds));
+    Object.assign(
+      env,
+      buildTapEnv(data.type, creds, {
+        replicationConfig: data.replicationConfig?.streams,
+      })
+    );
   } catch (err) {
     if (err instanceof UnsupportedConnectorTypeError) {
       return Response.json({ error: err.message }, { status: 400 });
