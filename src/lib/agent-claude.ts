@@ -251,6 +251,89 @@ function blocksToModelMessages(blocks: MsgContent[]): ModelMessage[] {
 }
 
 /**
+ * Heuristic complexity classifier. Picks "simple" or "complex" based
+ * on deterministic signals in the request — no LLM call, runs in
+ * microseconds. Drives model routing in selectModelForRequest below.
+ *
+ * Signals that flip "complex":
+ *   1. Edit context present — edits inherently multi-step (read current
+ *      spec, plan change, call update_*).
+ *   2. Analytics trigger words in the user message — "dashboard",
+ *      "overview", "report", "summary", "breakdown", "trend", "compare",
+ *      "year over year", etc. These are reliable predictors that the
+ *      agent will need to plan, run multiple SQL queries, and compose
+ *      a multi-chart output.
+ *   3. Long messages (>200 chars) — usually multi-part questions or
+ *      detailed scenarios that benefit from a stronger reasoner.
+ *
+ * Everything else → "simple". Examples that route to "simple": "how
+ * many orders this month?", "list my top products", "what's the
+ * average order value?".
+ *
+ * Misclassification risk: a "simple"-looking question that turns out
+ * to need multi-step planning gets a weaker model and may stop early.
+ * Mitigations:
+ *   - Haiku is still very capable at tool use (not as good as Sonnet
+ *     but acceptable for single-step queries).
+ *   - The text-only-turn handler (in the Gemini path) and AI SDK's
+ *     multi-step loop both still apply on the light model.
+ *   - If a "simple"-routed query produces poor output, the customer
+ *     can re-ask with more detail and trigger a re-classification.
+ */
+const COMPLEXITY_TRIGGER_WORDS = [
+  "dashboard",
+  "overview",
+  "report",
+  "summary",
+  "breakdown",
+  "trend",
+  "compare",
+  "comparison",
+  "year over year",
+  "month over month",
+  "vs ",
+  "versus",
+  "build me",
+  "compose",
+  "analyze",
+  "analyse",
+] as const;
+
+function classifyComplexity(input: AgentTurnInput): "simple" | "complex" {
+  if (input.editContext) return "complex";
+  const msg = input.userMessage.toLowerCase();
+  if (COMPLEXITY_TRIGGER_WORDS.some((t) => msg.includes(t))) return "complex";
+  if (input.userMessage.length > 200) return "complex";
+  return "simple";
+}
+
+/**
+ * Pick the model to use for this request based on the classifier and
+ * env configuration. Three cases:
+ *
+ *   1. `vertexModelLight` unset → routing disabled; always primary.
+ *   2. `vertexModelLight` set + classifier="complex" → primary.
+ *   3. `vertexModelLight` set + classifier="simple" → light.
+ *
+ * The chosen model is logged so we can correlate routing decisions
+ * with quality / cost in usage_events post-hoc.
+ */
+function selectModelForRequest(input: AgentTurnInput): {
+  modelId: string;
+  complexity: "simple" | "complex";
+  routed: boolean;
+} {
+  const complexity = classifyComplexity(input);
+  const lightModel = gcp.vertexModelLight;
+  const useLight = lightModel && complexity === "simple";
+  return {
+    modelId: useLight ? lightModel : gcp.vertexModel,
+    complexity,
+    routed: Boolean(useLight),
+  };
+}
+
+/**
  * Cached Vertex Anthropic provider instances, keyed by region. Same
  * pattern as the Gemini path's `_vertexByRegion` — instantiating the
  * provider is non-trivial (auth chain) so we keep one per region.
@@ -397,6 +480,20 @@ export async function* runAgentTurn(
     orgId: input.clientId, // deprecated alias
   };
 
+  // Pick the model for this request via the heuristic classifier +
+  // env routing config. When VERTEX_AI_MODEL_LIGHT is set, "simple"
+  // requests drop to that model (~10× cheaper for Haiku vs Sonnet).
+  // When unset, routing is disabled and everything uses the primary.
+  // Logged so we can verify routing decisions in usage_events.
+  const routing = selectModelForRequest(input);
+  console.log("[agent-claude] model routing", {
+    primary: gcp.vertexModel,
+    light: gcp.vertexModelLight ?? null,
+    chosen: routing.modelId,
+    complexity: routing.complexity,
+    routedToLight: routing.routed,
+  });
+
   const assistantText: string[] = [];
   const finalToolBlocks: MsgContent[] = [];
   const turnStartedAt = Date.now();
@@ -411,7 +508,10 @@ export async function* runAgentTurn(
       workspaceId: input.workspaceId,
       userId: input.userId,
       chatId,
-      model: gcp.vertexModel,
+      // Log the ACTUAL model used (might be light or primary), not the
+      // configured default. This lets cost analytics see per-model
+      // spend even when routing is active.
+      model: routing.modelId,
       tokensIn: totalTokensIn,
       tokensOut: totalTokensOut,
       executionMs: Date.now() - turnStartedAt,
@@ -430,7 +530,7 @@ export async function* runAgentTurn(
 
   try {
     const provider = getProvider(vertexRegion);
-    const model = provider(gcp.vertexModel);
+    const model = provider(routing.modelId);
 
     // ── Outer continuation loop ───────────────────────────────────
     //
