@@ -13,6 +13,10 @@ import {
 } from "@/lib/firestore";
 import { bqReady } from "@/lib/bigquery";
 import { deleteConnectorSecret } from "@/lib/secret-manager";
+import {
+  deleteClientState,
+  deleteConnectorState,
+} from "@/lib/meltano-state";
 
 export interface ClientDoc {
   /** Display name. Defaults to "Workspace" for self-serve signup; can be set later. */
@@ -263,6 +267,10 @@ export async function deleteClient(
         // deleteConnectorSecret is already idempotent — swallow anything else.
       }
 
+      // Drop the Meltano state object for this connector. Already
+      // best-effort + idempotent inside the helper.
+      await deleteConnectorState(clientId, workspaceId, connectorId);
+
       await connDocSnap.ref.delete();
     }
 
@@ -274,6 +282,13 @@ export async function deleteClient(
     // Workspace doc itself.
     await workspaceDoc(clientId, workspaceId).delete();
   }
+
+  // ── Step 2b: sweep any orphaned state objects under <clientId>/ ──
+  // The per-connector loop above already dropped each known
+  // connector's state. This sweep catches anything left behind by
+  // races (e.g. a connector deleted before this code shipped) so the
+  // client is fully clean after this call.
+  await deleteClientState(clientId);
 
   // ── Step 3: delete the Client doc ────────────────────────────────
   await ref.delete();
