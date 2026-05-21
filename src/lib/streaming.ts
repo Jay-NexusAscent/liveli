@@ -15,7 +15,15 @@ export type ChatStreamEvent =
       dashboardId: string;
       title: string;
       description?: string;
-      charts: Array<{ order: number; title: string; spec: unknown }>;
+      // colSpan threads through from make_dashboard / update_dashboard
+      // clientRender so the inline chat preview can render with the
+      // same Small/Medium/Large tile widths as /dashboards.
+      charts: Array<{
+        order: number;
+        title: string;
+        spec: unknown;
+        colSpan?: "small" | "medium" | "large";
+      }>;
     }
   | { type: "message_start"; chatId: string; messageId: string }
   | { type: "message_stop" }

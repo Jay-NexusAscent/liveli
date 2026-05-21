@@ -9,7 +9,15 @@ import { ToolCallBlock } from "./tool-call-block";
 import { TableBlock } from "./table-block";
 import { DashboardBlock } from "./dashboard-block";
 
-type DashboardChart = { order: number; title: string; spec: unknown };
+type DashboardChart = {
+  order: number;
+  title: string;
+  spec: unknown;
+  // Per-tile width on the dashboard grid. Mirror of the enum on the
+  // dashboards page; threaded through so the inline preview shown
+  // after make_dashboard matches the /dashboards rendering.
+  colSpan?: "small" | "medium" | "large";
+};
 
 type MessageBlock =
   | { type: "text"; text: string }
@@ -751,15 +759,21 @@ function reconstructCompanion(
       };
     }
   }
-  if (meta.name === 'make_dashboard') {
+  if (meta.name === 'make_dashboard' || meta.name === 'update_dashboard') {
     const i = meta.input as
       | {
           title?: string;
           description?: string;
-          charts?: Array<{ title?: string; echartsOption?: unknown }>;
+          charts?: Array<{
+            title?: string;
+            echartsOption?: unknown;
+            colSpan?: 'small' | 'medium' | 'large';
+          }>;
         }
       | null;
-    const dashboardId = (content as { dashboardId?: string })?.dashboardId;
+    const dashboardId =
+      (content as { dashboardId?: string })?.dashboardId ??
+      (meta.input as { dashboardId?: string })?.dashboardId;
     if (i?.title && Array.isArray(i.charts) && dashboardId) {
       return {
         type: 'dashboard',
@@ -771,6 +785,7 @@ function reconstructCompanion(
           order,
           title: c.title ?? '',
           spec: c.echartsOption,
+          ...(c.colSpan ? { colSpan: c.colSpan } : {}),
         })),
       };
     }

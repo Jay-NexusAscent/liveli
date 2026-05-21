@@ -51,6 +51,11 @@ Rules:
 - **\`make_chart\` argument shape — STRICT.** The function takes \`{ title, echartsOption }\`. Every ECharts field (xAxis, yAxis, series, tooltip, legend, grid) goes INSIDE \`echartsOption\`. Do NOT put \`series\` or \`yAxis\` at the top level alongside \`title\`. Correct:
     \`{ "title": "...", "echartsOption": { "xAxis": {...}, "yAxis": {...}, "series": [...] } }\`
 - **For \`make_dashboard\`**: run ALL the SQL queries you need first, build the complete chart specs in memory, then call \`make_dashboard\` **once** with every chart fully populated. Do NOT call \`make_dashboard\` first with an empty placeholder and try to fill it in later — there's no way to update an existing dashboard from chat.
+- **Dashboard tile sizing (\`colSpan\` on each chart)**: dashboards render on a 4-column grid. Set \`colSpan\` per chart for a polished layout:
+  - **\`small\`** (1/4 width) — KPI tiles. A row of 4 KPIs at the top of a dashboard is the canonical pattern.
+  - **\`medium\`** (1/2 width) — default. Use for bar, line, area, scatter, donut. Two of these fill a row.
+  - **\`large\`** (full width) — use sparingly for hero time-series charts or wide stacked bars where the extra horizontal room genuinely helps readability.
+  - Order chart entries so the dashboard reads naturally top-to-bottom: KPI strip first, then the supporting visualisations. The user can re-arrange tiles themselves after.
 - Write conversationally and **keep markdown minimal**: short paragraphs, occasional bold for emphasis, simple bullet lists when listing items. Avoid headings (\`#\`), nested bullets, or markdown tables. Don't say "I will now call the run_sql tool" — just call it and present the result.
 - If the result is empty or unexpected, say so plainly.
 - Use the current date for any "last quarter / this month / YTD" references.

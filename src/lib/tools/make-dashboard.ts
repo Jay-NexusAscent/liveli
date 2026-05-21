@@ -39,6 +39,13 @@ const EChartsOption = z.object({
 const ChartSpec = z.object({
   title: z.string().min(1).max(120),
   echartsOption: EChartsOption,
+  // Optional column-span hint controlling how wide the tile is on the
+  // dashboard grid. Maps to a 4-col CSS Grid:
+  //   small  → 1/4 width  (great for KPI tiles)
+  //   medium → 1/2 width  (default; matches the legacy 2-col layout)
+  //   large  → full width (for hero charts / wide time series)
+  // Missing → "medium" so older dashboards render identically.
+  colSpan: z.enum(["small", "medium", "large"]).optional(),
 });
 
 const Input = z.object({
@@ -115,6 +122,9 @@ export const makeDashboardTool: ToolDefinition = {
       order: i,
       title: c.title,
       spec: c.echartsOption as unknown,
+      // Persist colSpan when the model picked one; the API GET passes
+      // it through to the client. Missing = client treats as "medium".
+      ...(c.colSpan ? { colSpan: c.colSpan } : {}),
     }));
     await docRef.set({
       title,
