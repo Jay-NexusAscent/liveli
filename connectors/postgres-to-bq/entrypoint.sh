@@ -38,45 +38,29 @@ export MELTANO_STATE_BACKEND_URI="${MELTANO_STATE_BACKEND_URI:-gs://liveli-melta
 # still be stored, just under the legacy path).
 STATE_ID="${CLIENT_ID:-$WORKSPACE_ID}/${LIVELI_WORKSPACE_ID:-default}/${CONNECTOR_ID}"
 
-# ── Optional per-stream replication overrides ──────────────────────
-# LIVELI_REPLICATION_CONFIG is a JSON object mapping Meltano stream
-# names (`<schema>-<table>`) to {replication-method, replication-key}
-# config. Generated at connect time by lib/postgres-introspection.ts
-# based on which tables have `updated_at`-family columns or single-
-# column integer PKs.
+# ── INCREMENTAL replication DISABLED — see LIVELI-111 ──────────────
+# The merge step below has been deliberately disabled. The combination
+# of `replication-method: INCREMENTAL` (which this env var sets per
+# stream) with the loader's `overwrite: true` mode (meltano.yml line
+# ~70) is catastrophic: each incremental sync emits only the delta
+# WHERE replication-key > bookmark, and `overwrite` then REPLACES the
+# entire target table with that small delta. All historical data is
+# wiped on every sync after the first.
 #
-# We merge it into meltano.yml's extractor `metadata:` block using
-# Python's yaml module — far more bullet-proof than awk/sed against
-# the YAML structure, and Python is already in the meltano base image.
-# When the env var is unset (older connectors before introspection
-# shipped, or non-postgres connectors), this step is skipped and
-# every stream falls back to Meltano's default (FULL_TABLE).
+# Until we ship PK detection + a switch to `upsert: true` for tables
+# with a single-column PK (LIVELI-111 follow-up), every postgres
+# stream MUST stay on FULL_TABLE replication (the tap-postgres default
+# when no `metadata:` overrides are present) — that's the only mode
+# safe to combine with `overwrite: true`.
+#
+# `lib/connector-env.ts` was updated to stop passing this env var,
+# but defence-in-depth here ensures the merge cannot happen even if
+# an older sync route or a manual job invocation supplies it anyway.
 if [ -n "${LIVELI_REPLICATION_CONFIG:-}" ]; then
-  echo "→ merging per-stream replication config into meltano.yml"
-  python3 <<'PY'
-import json, os, yaml
-
-with open("/project/meltano.yml") as f:
-    cfg = yaml.safe_load(f)
-
-overrides = json.loads(os.environ["LIVELI_REPLICATION_CONFIG"])
-
-extractor = cfg["plugins"]["extractors"][0]
-# Merge with anything already in meltano.yml (today: nothing — but
-# future static defaults could live there).
-existing = extractor.get("metadata", {}) or {}
-existing.update(overrides)
-extractor["metadata"] = existing
-
-with open("/project/meltano.yml", "w") as f:
-    yaml.safe_dump(cfg, f, sort_keys=False)
-
-# Echo summary so Cloud Run Job logs surface what mode each stream is in.
-for stream, conf in overrides.items():
-    method = conf.get("replication-method", "?")
-    key = conf.get("replication-key", "")
-    print(f"   {stream}: {method}{(' by ' + key) if key else ''}")
-PY
+  echo "→ WARNING: LIVELI_REPLICATION_CONFIG is set, but the merge step"
+  echo "  is disabled (see LIVELI-111). Ignoring; all streams will use"
+  echo "  FULL_TABLE replication, which is the only mode safe with the"
+  echo "  loader's overwrite: true setting."
 fi
 
 echo "→ workspace=$WORKSPACE_ID connector=$CONNECTOR_ID state=$STATE_ID"

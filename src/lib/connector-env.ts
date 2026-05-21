@@ -68,14 +68,40 @@ const TAP_ENV_BUILDERS: Record<string, EnvBuilder> = {
       TAP_POSTGRES_DATABASE: creds.database,
       TAP_POSTGRES_FILTER_SCHEMAS: JSON.stringify(schemas),
     };
-    // Auto-detected per-stream replication overrides from connect-time
-    // introspection. Passed to the Cloud Run Job container; entrypoint.sh
-    // merges these into meltano.yml's `metadata:` block via inline Python
-    // before invoking `meltano elt`. When this is missing (older connectors
-    // created before the introspection step landed), Meltano falls back
-    // to its default — FULL_TABLE for every stream.
+    // ── INCREMENTAL replication is DISABLED for postgres — see LIVELI-111.
+    //
+    // The introspection writer (`lib/postgres-introspection.ts`) sets
+    // `replication-method: INCREMENTAL` with per-table replication keys
+    // for tables that have suitable timestamp columns or single-column
+    // integer PKs. But our postgres loader runs in `overwrite: true`
+    // mode (see `connectors/postgres-to-bq/meltano.yml`) — a mode that
+    // atomically REPLACES the target BigQuery table on every sync.
+    //
+    // The interaction:
+    //   1. First sync (state empty): tap emits all rows → overwrite
+    //      writes them all. ✓
+    //   2. State persisted to GCS with per-table bookmarks.
+    //   3. Second sync: tap emits only rows WHERE replication-key >
+    //      bookmark (a small delta) → overwrite REPLACES the table
+    //      with just those rows. All historical data wiped.
+    //
+    // Until we ship PK detection + a switch to `upsert: true` for
+    // tables that have a single-column PK (LIVELI-111 follow-up),
+    // every postgres stream MUST stay on FULL_TABLE replication. The
+    // overwrite mode then matches what the original meltano.yml comment
+    // assumed: "every sync is a full extract".
+    //
+    // The introspection still runs at connect time and the result is
+    // still stored on the connector doc — useful for diagnostics and
+    // for the eventual proper fix to consume. We just don't pass it
+    // through to the runtime here, so the entrypoint's merge step is
+    // a no-op and the tap defaults to FULL_TABLE for every stream.
     if (options?.replicationConfig) {
-      env.LIVELI_REPLICATION_CONFIG = JSON.stringify(options.replicationConfig);
+      // Intentional: do NOT pass LIVELI_REPLICATION_CONFIG. The
+      // commented-out assignment is kept here so the next person to
+      // touch this file sees explicitly what's been disabled and why.
+      //   env.LIVELI_REPLICATION_CONFIG = JSON.stringify(options.replicationConfig);
+      void options.replicationConfig;
     }
     return env;
   },
