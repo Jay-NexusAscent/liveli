@@ -67,7 +67,9 @@ export async function POST(req: Request) {
       message: "Shopify connection saved. Click Sync to start the first import.",
     });
   } catch (err) {
-    const responseBody = connectErrorEnvelope("shopify", step.current, err);
+    const responseBody = connectErrorEnvelope("shopify", step.current, err, [
+      body.adminApiKey,
+    ]);
     console.error("[shopify/connect]", JSON.stringify(responseBody).slice(0, 2000));
     return Response.json(responseBody, { status: 500 });
   }

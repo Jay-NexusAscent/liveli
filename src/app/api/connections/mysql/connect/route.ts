@@ -82,7 +82,9 @@ export async function POST(req: Request) {
       message: "Connector saved. Click Sync to start the first import.",
     });
   } catch (err) {
-    const responseBody = connectErrorEnvelope("mysql", step.current, err);
+    const responseBody = connectErrorEnvelope("mysql", step.current, err, [
+      body.password,
+    ]);
     console.error("[mysql/connect]", JSON.stringify(responseBody).slice(0, 2000));
     return Response.json(responseBody, { status: 500 });
   }
