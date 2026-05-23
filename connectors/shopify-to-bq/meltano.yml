@@ -9,8 +9,13 @@ environments:
 plugins:
   extractors:
     - name: tap-shopify
-      variant: meltanolabs
-      pip_url: meltanolabs-tap-shopify
+      # MeltanoLabs does NOT maintain a tap-shopify — the previous
+      # `variant: meltanolabs` + `pip_url: meltanolabs-tap-shopify`
+      # config referenced a package that doesn't exist on PyPI or on
+      # github.com/MeltanoLabs. Switched to the Matatika variant which
+      # is the Meltano Hub default and gold-tier (Active + Stable).
+      variant: matatika
+      pip_url: git+https://github.com/Matatika/tap-shopify.git
       # Required env at runtime:
       #   TAP_SHOPIFY_STORE         (the {store}.myshopify.com handle, without the protocol)
       #   TAP_SHOPIFY_ADMIN_API_KEY (Admin API access token, starts with shpat_)
