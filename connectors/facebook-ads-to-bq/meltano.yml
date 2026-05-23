@@ -10,7 +10,10 @@ plugins:
   extractors:
     - name: tap-facebook
       variant: meltanolabs
-      pip_url: meltanolabs-tap-facebook
+      # Install from git rather than PyPI — MeltanoLabs publishes
+      # tap-facebook to GitHub but not to PyPI under the
+      # `meltanolabs-tap-facebook` name (404 on pypi.org).
+      pip_url: git+https://github.com/MeltanoLabs/tap-facebook.git
       # Required env at runtime (Meta Marketing API v18+):
       #   TAP_FACEBOOK_ACCESS_TOKEN  (long-lived Meta access token)
       #   TAP_FACEBOOK_ACCOUNT_ID    (single act_xxxxxx — multiple ad

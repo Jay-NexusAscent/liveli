@@ -9,8 +9,13 @@ environments:
 plugins:
   extractors:
     - name: tap-mailchimp
-      variant: meltanolabs
-      pip_url: meltanolabs-tap-mailchimp
+      # MeltanoLabs does NOT maintain a tap-mailchimp — the previous
+      # `variant: meltanolabs` + `pip_url: meltanolabs-tap-mailchimp`
+      # config referenced a package that doesn't exist on PyPI or on
+      # github.com/MeltanoLabs. Switched to the acarter24 variant
+      # which is the Meltano Hub default (Active, Stable).
+      variant: acarter24
+      pip_url: git+https://github.com/acarter24/tap-mailchimp.git
       # Required env at runtime:
       #   TAP_MAILCHIMP_API_KEY  (the "-usN" suffix on the API key
       #                           selects the data center; the tap
