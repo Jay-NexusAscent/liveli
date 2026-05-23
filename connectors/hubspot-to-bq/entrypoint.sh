@@ -31,33 +31,17 @@ export MELTANO_STATE_BACKEND_URI="${MELTANO_STATE_BACKEND_URI:-gs://liveli-melta
 # (handled in lib/clients.ts deleteClient via lib/meltano-state.ts).
 STATE_ID="${CLIENT_ID:-$WORKSPACE_ID}/${LIVELI_WORKSPACE_ID:-default}/${CONNECTOR_ID}"
 
-# ── Optional per-stream replication overrides ──────────────────────
-# When LIVELI_REPLICATION_CONFIG is set (today: postgres only via
-# connect-time introspection in lib/postgres-introspection.ts), merge
-# the JSON into meltano.yml's extractor `metadata:` block before
-# invoking meltano elt. Future per-tenant overrides for any connector
-# (e.g. "user disabled syncing of Stripe payouts stream") use the
-# same channel — that's why the merge step lives in EVERY connector's
-# entrypoint, not just postgres. Harmless no-op when unset.
-if [ -n "${LIVELI_REPLICATION_CONFIG:-}" ]; then
-  echo "→ merging per-stream replication config into meltano.yml"
-  python3 <<'PY'
-import json, os, yaml
-with open("/project/meltano.yml") as f:
-    cfg = yaml.safe_load(f)
-overrides = json.loads(os.environ["LIVELI_REPLICATION_CONFIG"])
-extractor = cfg["plugins"]["extractors"][0]
-existing = extractor.get("metadata", {}) or {}
-existing.update(overrides)
-extractor["metadata"] = existing
-with open("/project/meltano.yml", "w") as f:
-    yaml.safe_dump(cfg, f, sort_keys=False)
-for stream, conf in overrides.items():
-    method = conf.get("replication-method", "?")
-    key = conf.get("replication-key", "")
-    print(f"   {stream}: {method}{(' by ' + key) if key else ''}")
-PY
-fi
+# ── Per-stream replication overrides — intentionally absent ───────
+# Dynamic per-stream config (LIVELI_REPLICATION_CONFIG) is a
+# postgres-only mechanism wired to lib/postgres-introspection.ts.
+# Re-adding it here requires the loader to be `upsert: true` AND the
+# tap to emit `key_properties` for every stream — otherwise an
+# `overwrite: true` loader combined with INCREMENTAL replication
+# wipes all historical data on every sync after the first (see
+# LIVELI-111). tap-hubspot IS on upsert and emits key_properties
+# from the source `id`, so re-enabling here would be safe — but
+# until there's a concrete need (per-tenant stream selection, etc.)
+# keep it absent to reduce surface area.
 
 echo "→ state backend: $MELTANO_STATE_BACKEND_URI"
 echo "→ state id: $STATE_ID"

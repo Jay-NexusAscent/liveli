@@ -35,33 +35,15 @@ export MELTANO_STATE_BACKEND_URI="${MELTANO_STATE_BACKEND_URI:-gs://liveli-melta
 # (handled in lib/clients.ts deleteClient via lib/meltano-state.ts).
 STATE_ID="${CLIENT_ID:-$WORKSPACE_ID}/${LIVELI_WORKSPACE_ID:-default}/${CONNECTOR_ID}"
 
-# ── Optional per-stream replication overrides ──────────────────────
-# When LIVELI_REPLICATION_CONFIG is set (today: postgres only via
-# connect-time introspection in lib/postgres-introspection.ts), merge
-# the JSON into meltano.yml's extractor `metadata:` block before
-# invoking meltano elt. Future per-tenant overrides for any connector
-# (e.g. "user disabled syncing of Stripe payouts stream") use the
-# same channel — that's why the merge step lives in EVERY connector's
-# entrypoint, not just postgres. Harmless no-op when unset.
-if [ -n "${LIVELI_REPLICATION_CONFIG:-}" ]; then
-  echo "→ merging per-stream replication config into meltano.yml"
-  python3 <<'PY'
-import json, os, yaml
-with open("/project/meltano.yml") as f:
-    cfg = yaml.safe_load(f)
-overrides = json.loads(os.environ["LIVELI_REPLICATION_CONFIG"])
-extractor = cfg["plugins"]["extractors"][0]
-existing = extractor.get("metadata", {}) or {}
-existing.update(overrides)
-extractor["metadata"] = existing
-with open("/project/meltano.yml", "w") as f:
-    yaml.safe_dump(cfg, f, sort_keys=False)
-for stream, conf in overrides.items():
-    method = conf.get("replication-method", "?")
-    key = conf.get("replication-key", "")
-    print(f"   {stream}: {method}{(' by ' + key) if key else ''}")
-PY
-fi
+# ── Per-stream replication overrides — intentionally absent ───────
+# DO NOT re-enable LIVELI_REPLICATION_CONFIG handling here without
+# first flipping the loader from `overwrite: true` to `upsert: true`
+# (see meltano.yml above). The combination of an overwrite loader
+# with INCREMENTAL-mode streams (which is what the merge block would
+# set) wiped two years of demo data in LIVELI-111. The mysql tap
+# defaults to FULL_TABLE which is safe under overwrite; keep it that
+# way until the loader contract is fixed and PK gating equivalent to
+# lib/postgres-introspection.ts has been built for mysql tables.
 
 echo "→ state backend: $MELTANO_STATE_BACKEND_URI"
 echo "→ state id: $STATE_ID"

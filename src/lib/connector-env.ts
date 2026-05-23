@@ -15,6 +15,35 @@
  * Callers: src/app/api/connections/[connectorId]/sync/route.ts and
  * src/app/api/connections/[connectorId]/scheduled-sync/route.ts. Keep
  * them thin — this file is the single source of truth.
+ *
+ * ── INCREMENTAL replication: precondition for new connectors ──────
+ *
+ * If your new connector needs per-stream replication overrides
+ * (INCREMENTAL by a key column, FULL_TABLE for the rest, etc.) the
+ * existing mechanism is `LIVELI_REPLICATION_CONFIG` — a JSON env var
+ * the connector's entrypoint.sh merges into meltano.yml's
+ * `extractor.metadata` block.
+ *
+ * Today this is wired ONLY for postgres (the introspection writer
+ * lives in `lib/postgres-introspection.ts`). Other entrypoints do
+ * NOT contain the merge block; re-adding it has a HARD precondition:
+ *
+ *   - The loader MUST be in `upsert: true` mode (see meltano.yml).
+ *   - The tap MUST emit `key_properties` for every stream that will
+ *     be set to INCREMENTAL.
+ *
+ * Why: a loader in `overwrite: true` mode atomically REPLACES the
+ * target table on every sync. Combined with INCREMENTAL replication
+ * the tap emits only the delta and the loader replaces the whole
+ * table with that delta — all historical data wiped on every sync
+ * after the first. See LIVELI-111: this is exactly how two years of
+ * demo data got lost.
+ *
+ * mysql is currently on `overwrite: true` and intentionally does NOT
+ * have the merge block, even though it's a DB connector. Until the
+ * mysql loader flips to upsert AND PK gating equivalent to
+ * lib/postgres-introspection.ts has been built, mysql streams must
+ * stay on FULL_TABLE replication (the tap-mysql default).
  */
 
 export class UnsupportedConnectorTypeError extends Error {
