@@ -367,6 +367,41 @@ export async function* runAgentTurn(
     orgId: input.clientId,
   };
 
+  // ── Model routing (mirrors the Claude path's classifier) ───────
+  //
+  // VERTEX_AI_MODEL_LIGHT acts as the opt-in for "simple → cheap"
+  // routing. When set, queries classified as "simple" route to the
+  // light model; everything else uses gcp.vertexModel as the primary.
+  // When unset, routing is disabled and the primary handles all
+  // traffic — safe default.
+  //
+  // Same heuristic as the Claude path (src/lib/agent-claude.ts):
+  // edit context → complex, analytics trigger words → complex,
+  // long messages (>200 chars) → complex, everything else simple.
+  const COMPLEXITY_TRIGGERS = [
+    "dashboard", "overview", "report", "summary", "breakdown", "trend",
+    "compare", "comparison", "year over year", "month over month", "vs ",
+    "versus", "build me", "compose", "analyze", "analyse",
+  ];
+  const classifyComplexity = (): "simple" | "complex" => {
+    if (input.editContext) return "complex";
+    const msg = input.userMessage.toLowerCase();
+    if (COMPLEXITY_TRIGGERS.some((t) => msg.includes(t))) return "complex";
+    if (input.userMessage.length > 200) return "complex";
+    return "simple";
+  };
+  const complexity = classifyComplexity();
+  const lightModel = gcp.vertexModelLight;
+  const routedToLight = Boolean(lightModel && complexity === "simple");
+  const routedModelId = routedToLight ? (lightModel as string) : gcp.vertexModel;
+  console.log("[agent] model routing", {
+    primary: gcp.vertexModel,
+    light: lightModel ?? null,
+    chosen: routedModelId,
+    complexity,
+    routedToLight,
+  });
+
   const assistantText: string[] = [];
   const finalToolBlocks: MsgContent[] = [];
   const turnStartedAt = Date.now();
@@ -386,7 +421,9 @@ export async function* runAgentTurn(
       workspaceId: input.workspaceId,
       userId: input.userId,
       chatId,
-      model: MODEL,
+      // Log the ACTUAL model used (might be light or primary), so cost
+      // analytics in usage_events segments cleanly by Flash vs Pro.
+      model: routedModelId,
       tokensIn: totalTokensIn,
       tokensOut: totalTokensOut,
       executionMs: Date.now() - turnStartedAt,
@@ -447,10 +484,14 @@ export async function* runAgentTurn(
     const systemPromptText = input.editContext
       ? `${SYSTEM_PROMPT}\n\n${buildEditContextPreamble(input.editContext)}`
       : SYSTEM_PROMPT;
-    const model = buildModel(vertexRegion, {
-      systemInstruction: { role: "system", parts: [{ text: systemPromptText }] },
-      tools: [{ functionDeclarations: fnDecls }],
-    });
+    const model = buildModel(
+      vertexRegion,
+      {
+        systemInstruction: { role: "system", parts: [{ text: systemPromptText }] },
+        tools: [{ functionDeclarations: fnDecls }],
+      },
+      routedModelId,
+    );
 
     let result;
     const vertexCallStart = Date.now();

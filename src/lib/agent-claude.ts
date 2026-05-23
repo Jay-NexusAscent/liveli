@@ -104,8 +104,19 @@ interface ServerToolCall {
  * configured Vertex region if it's a known Claude region.
  */
 function claudeRegionForResidency(bqLocation: "EU" | "US" | undefined): string {
-  // For now, mirror the Gemini region map verbatim. Adjust if Claude
-  // availability changes per region.
+  // Operator override — lets us route Claude to a region with more
+  // capacity (e.g. us-east5) when the EU region's default quota is too
+  // tight. Newly-enabled Anthropic models start at the lowest tier
+  // (~1 RPM in some regions); us-east5 has the largest steady-state
+  // quota for Anthropic on Vertex.
+  //
+  // WARNING: setting this bypasses workspace data-residency for the
+  // inference call. EU customer data routes through the override
+  // region during the LLM call. Acceptable during dev/testing; do NOT
+  // leave this set when serving real EU-residency customers in prod —
+  // request a quota increase on europe-west1 first, then unset.
+  const override = process.env.VERTEX_AI_REGION_CLAUDE;
+  if (override) return override;
   return vertexRegionForResidency(bqLocation);
 }
 
