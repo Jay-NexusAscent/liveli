@@ -1,4 +1,4 @@
-FROM meltano/meltano:v3.7.1
+FROM meltano/meltano:v3.7.1-python3.11
 WORKDIR /project
 COPY meltano.yml ./
 # Meltano 3.x doesn't bundle the plugin hub registry — fetch the plugin
