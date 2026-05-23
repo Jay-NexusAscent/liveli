@@ -104,8 +104,19 @@ interface ServerToolCall {
  * configured Vertex region if it's a known Claude region.
  */
 function claudeRegionForResidency(bqLocation: "EU" | "US" | undefined): string {
-  // For now, mirror the Gemini region map verbatim. Adjust if Claude
-  // availability changes per region.
+  // Operator override — lets us route Claude to a region with more
+  // capacity (e.g. us-east5) when the EU region's default quota is too
+  // tight. Newly-enabled Anthropic models start at the lowest tier
+  // (~1 RPM in some regions); us-east5 has the largest steady-state
+  // quota for Anthropic on Vertex.
+  //
+  // WARNING: setting this bypasses workspace data-residency for the
+  // inference call. EU customer data routes through the override
+  // region during the LLM call. Acceptable during dev/testing; do NOT
+  // leave this set when serving real EU-residency customers in prod —
+  // request a quota increase on europe-west1 first, then unset.
+  const override = process.env.VERTEX_AI_REGION_CLAUDE;
+  if (override) return override;
   return vertexRegionForResidency(bqLocation);
 }
 
@@ -248,6 +259,89 @@ function blocksToModelMessages(blocks: MsgContent[]): ModelMessage[] {
   }
   flushAssistant();
   return out;
+}
+
+/**
+ * Heuristic complexity classifier. Picks "simple" or "complex" based
+ * on deterministic signals in the request — no LLM call, runs in
+ * microseconds. Drives model routing in selectModelForRequest below.
+ *
+ * Signals that flip "complex":
+ *   1. Edit context present — edits inherently multi-step (read current
+ *      spec, plan change, call update_*).
+ *   2. Analytics trigger words in the user message — "dashboard",
+ *      "overview", "report", "summary", "breakdown", "trend", "compare",
+ *      "year over year", etc. These are reliable predictors that the
+ *      agent will need to plan, run multiple SQL queries, and compose
+ *      a multi-chart output.
+ *   3. Long messages (>200 chars) — usually multi-part questions or
+ *      detailed scenarios that benefit from a stronger reasoner.
+ *
+ * Everything else → "simple". Examples that route to "simple": "how
+ * many orders this month?", "list my top products", "what's the
+ * average order value?".
+ *
+ * Misclassification risk: a "simple"-looking question that turns out
+ * to need multi-step planning gets a weaker model and may stop early.
+ * Mitigations:
+ *   - Haiku is still very capable at tool use (not as good as Sonnet
+ *     but acceptable for single-step queries).
+ *   - The text-only-turn handler (in the Gemini path) and AI SDK's
+ *     multi-step loop both still apply on the light model.
+ *   - If a "simple"-routed query produces poor output, the customer
+ *     can re-ask with more detail and trigger a re-classification.
+ */
+const COMPLEXITY_TRIGGER_WORDS = [
+  "dashboard",
+  "overview",
+  "report",
+  "summary",
+  "breakdown",
+  "trend",
+  "compare",
+  "comparison",
+  "year over year",
+  "month over month",
+  "vs ",
+  "versus",
+  "build me",
+  "compose",
+  "analyze",
+  "analyse",
+] as const;
+
+function classifyComplexity(input: AgentTurnInput): "simple" | "complex" {
+  if (input.editContext) return "complex";
+  const msg = input.userMessage.toLowerCase();
+  if (COMPLEXITY_TRIGGER_WORDS.some((t) => msg.includes(t))) return "complex";
+  if (input.userMessage.length > 200) return "complex";
+  return "simple";
+}
+
+/**
+ * Pick the model to use for this request based on the classifier and
+ * env configuration. Three cases:
+ *
+ *   1. `vertexModelLight` unset → routing disabled; always primary.
+ *   2. `vertexModelLight` set + classifier="complex" → primary.
+ *   3. `vertexModelLight` set + classifier="simple" → light.
+ *
+ * The chosen model is logged so we can correlate routing decisions
+ * with quality / cost in usage_events post-hoc.
+ */
+function selectModelForRequest(input: AgentTurnInput): {
+  modelId: string;
+  complexity: "simple" | "complex";
+  routed: boolean;
+} {
+  const complexity = classifyComplexity(input);
+  const lightModel = gcp.vertexModelLight;
+  const useLight = lightModel && complexity === "simple";
+  return {
+    modelId: useLight ? lightModel : gcp.vertexModel,
+    complexity,
+    routed: Boolean(useLight),
+  };
 }
 
 /**
@@ -397,6 +491,20 @@ export async function* runAgentTurn(
     orgId: input.clientId, // deprecated alias
   };
 
+  // Pick the model for this request via the heuristic classifier +
+  // env routing config. When VERTEX_AI_MODEL_LIGHT is set, "simple"
+  // requests drop to that model (~10× cheaper for Haiku vs Sonnet).
+  // When unset, routing is disabled and everything uses the primary.
+  // Logged so we can verify routing decisions in usage_events.
+  const routing = selectModelForRequest(input);
+  console.log("[agent-claude] model routing", {
+    primary: gcp.vertexModel,
+    light: gcp.vertexModelLight ?? null,
+    chosen: routing.modelId,
+    complexity: routing.complexity,
+    routedToLight: routing.routed,
+  });
+
   const assistantText: string[] = [];
   const finalToolBlocks: MsgContent[] = [];
   const turnStartedAt = Date.now();
@@ -411,7 +519,10 @@ export async function* runAgentTurn(
       workspaceId: input.workspaceId,
       userId: input.userId,
       chatId,
-      model: gcp.vertexModel,
+      // Log the ACTUAL model used (might be light or primary), not the
+      // configured default. This lets cost analytics see per-model
+      // spend even when routing is active.
+      model: routing.modelId,
       tokensIn: totalTokensIn,
       tokensOut: totalTokensOut,
       executionMs: Date.now() - turnStartedAt,
@@ -430,120 +541,259 @@ export async function* runAgentTurn(
 
   try {
     const provider = getProvider(vertexRegion);
-    const model = provider(gcp.vertexModel);
+    const model = provider(routing.modelId);
 
-    const result = streamText({
-      model,
-      system: systemPromptText,
-      messages: history,
-      tools,
-      stopWhen: stepCountIs(MAX_STEPS),
-      // Anthropic prompt caching — mark the system prompt as ephemeral
-      // so repeated context (system rules + edit preamble) is cached
-      // on Anthropic's side. ~90% input-token reduction on cache hits.
-      // Requires >= 1024 tokens of cached content; our system prompt
-      // is ~3-5k so comfortably above the threshold.
-      providerOptions: {
-        anthropic: {
-          cacheControl: { type: "ephemeral" },
+    // ── Outer continuation loop ───────────────────────────────────
+    //
+    // AI SDK's `streamText` with `stopWhen: stepCountIs(N)` already
+    // handles multi-step tool loops within ONE call. But it terminates
+    // the moment the model returns a step with no tool calls — even if
+    // that's a mid-workflow narration like "Here's the data:" or "Your
+    // tables look sparse." instead of completing the requested chart /
+    // dashboard.
+    //
+    // This is the same failure mode as the Gemini path (LIVELI-99,
+    // LIVELI-105). The fix is the same architecturally: detect a
+    // mid-workflow text-only termination by inspecting what the model
+    // just produced, inject a continuation prompt, and call streamText
+    // again with the augmented history. AI SDK can't natively be told
+    // to "continue past a text-only step" — but we can call it again
+    // ourselves.
+    //
+    // The discriminator: after a streamText call completes, if the
+    // last assistant turn is text-only AND the conversation has tool
+    // results in it (i.e., we're past the first conversational
+    // exchange), we know the model gave up before completing. Inject
+    // a continuation and re-call.
+    //
+    // Capped at MAX_TEXT_ONLY_CONTINUATIONS to prevent infinite
+    // back-and-forth with a stuck model. After the cap, surface a
+    // user-facing "I ran out of steps" message (mirrors LIVELI-105).
+    const MAX_TEXT_ONLY_CONTINUATIONS = 3;
+    let textOnlyContinuations = 0;
+    let gaveUp = false;
+
+    while (true) {
+      const result = streamText({
+        model,
+        system: systemPromptText,
+        messages: history,
+        tools,
+        stopWhen: stepCountIs(MAX_STEPS),
+        // Anthropic prompt caching — mark the system prompt as ephemeral
+        // so repeated context (system rules + edit preamble) is cached
+        // on Anthropic's side. ~90% input-token reduction on cache hits.
+        providerOptions: {
+          anthropic: {
+            cacheControl: { type: "ephemeral" },
+          },
         },
-      },
-      // AI SDK default is 2 retries with backoff — bump for transient
-      // 429s in EU region where Anthropic capacity is tighter than US.
-      maxRetries: 4,
-    });
+        // AI SDK default is 2 retries with backoff — bump for transient
+        // 429s in EU region where Anthropic capacity is tighter than US.
+        maxRetries: 4,
+      });
 
-    // ── Stream loop: translate AI SDK fullStream chunks → our SSE events
-    for await (const chunk of result.fullStream) {
-      switch (chunk.type) {
-        case "text-delta": {
-          const text = chunk.text;
-          assistantText.push(text);
-          yield { type: "text_delta", text };
-          break;
+      // Track whether this streamText call resulted in any tool use.
+      // If yes, the model engaged with the workflow; if no, it produced
+      // only text — which we then check for mid-flow context below.
+      let toolCallsThisCall = 0;
+
+      // ── Stream loop: translate AI SDK fullStream chunks → our SSE events
+      for await (const chunk of result.fullStream) {
+        switch (chunk.type) {
+          case "text-delta": {
+            const text = chunk.text;
+            assistantText.push(text);
+            yield { type: "text_delta", text };
+            break;
+          }
+          case "tool-input-start": {
+            // Tool call started — emit the tool_use event now so the
+            // client renders the "Querying your data" indicator while
+            // execute() runs server-side.
+            yield {
+              type: "tool_use",
+              id: chunk.id,
+              name: chunk.toolName,
+              input: {},
+            };
+            break;
+          }
+          case "tool-call": {
+            toolCallsThisCall++;
+            // Tool call args finalised. Update the registry entry with
+            // real input, and re-emit a refined tool_use event so the
+            // client UI can show the actual args.
+            const registered = toolCallRegistry.get(chunk.toolCallId);
+            const input = registered?.input ?? chunk.input;
+            finalToolBlocks.push({
+              type: "tool_use",
+              id: chunk.toolCallId,
+              name: chunk.toolName,
+              input,
+            });
+            yield {
+              type: "tool_use",
+              id: chunk.toolCallId,
+              name: chunk.toolName,
+              input,
+            };
+            break;
+          }
+          case "tool-result": {
+            // Drain any clientRender events the tool produced.
+            for (const ev of renderQueue.drain()) yield ev;
+            finalToolBlocks.push({
+              type: "tool_result",
+              tool_use_id: chunk.toolCallId,
+              content: chunk.output,
+            });
+            yield {
+              type: "tool_result",
+              id: chunk.toolCallId,
+              output: chunk.output,
+            };
+            break;
+          }
+          case "tool-error": {
+            for (const ev of renderQueue.drain()) yield ev;
+            const message =
+              chunk.error instanceof Error ? chunk.error.message : String(chunk.error);
+            finalToolBlocks.push({
+              type: "tool_result",
+              tool_use_id: chunk.toolCallId,
+              content: { error: message },
+            });
+            yield {
+              type: "tool_result",
+              id: chunk.toolCallId,
+              output: null,
+              error: message,
+            };
+            break;
+          }
+          case "error": {
+            const message = flattenErrorChain(chunk.error);
+            console.error("[agent-claude] stream error", { message });
+            yield { type: "error", error: message };
+            break;
+          }
+          case "finish": {
+            const u = chunk.totalUsage;
+            // Accumulate — each streamText call in the continuation
+            // loop reports its own usage; we want the total for the
+            // whole user-message-cycle.
+            totalTokensIn += u?.inputTokens ?? 0;
+            totalTokensOut += u?.outputTokens ?? 0;
+            // Capture Anthropic prompt-cache stats so we can verify the
+            // ephemeral cache control set in providerOptions is firing.
+            // `providerMetadata` isn't on the typed surface of finish
+            // chunks in AI SDK v6 — runtime carries it through, but the
+            // types don't expose it. Cast and treat as best-effort
+            // observability: if the runtime keys exist, log; otherwise
+            // silently skip.
+            const anthropicMeta = (
+              chunk as unknown as {
+                providerMetadata?: {
+                  anthropic?: {
+                    cacheCreationInputTokens?: number;
+                    cacheReadInputTokens?: number;
+                  };
+                };
+              }
+            ).providerMetadata?.anthropic;
+            if (anthropicMeta) {
+              console.log("[agent-claude] anthropic cache stats", {
+                cacheCreationInputTokens: anthropicMeta.cacheCreationInputTokens ?? 0,
+                cacheReadInputTokens: anthropicMeta.cacheReadInputTokens ?? 0,
+                regularInputTokens: u?.inputTokens ?? 0,
+                outputTokens: u?.outputTokens ?? 0,
+              });
+            }
+            break;
+          }
+          default:
+            // Other chunk types (step-start, step-finish, reasoning,
+            // source, tool-input-delta, etc.) we don't need to surface
+            // to the client. Drop silently.
+            break;
         }
-        case "tool-input-start": {
-          // Tool call started — emit the tool_use event now so the
-          // client renders the "Querying your data" indicator while
-          // execute() runs server-side.
-          yield {
-            type: "tool_use",
-            id: chunk.id,
-            name: chunk.toolName,
-            input: {},
-          };
-          break;
-        }
-        case "tool-call": {
-          // Tool call args finalised. Update the registry entry with
-          // real input, and re-emit a refined tool_use event so the
-          // client UI can show the actual args.
-          const registered = toolCallRegistry.get(chunk.toolCallId);
-          const input = registered?.input ?? chunk.input;
-          finalToolBlocks.push({
-            type: "tool_use",
-            id: chunk.toolCallId,
-            name: chunk.toolName,
-            input,
-          });
-          yield {
-            type: "tool_use",
-            id: chunk.toolCallId,
-            name: chunk.toolName,
-            input,
-          };
-          break;
-        }
-        case "tool-result": {
-          // Drain any clientRender events the tool produced.
-          for (const ev of renderQueue.drain()) yield ev;
-          finalToolBlocks.push({
-            type: "tool_result",
-            tool_use_id: chunk.toolCallId,
-            content: chunk.output,
-          });
-          yield {
-            type: "tool_result",
-            id: chunk.toolCallId,
-            output: chunk.output,
-          };
-          break;
-        }
-        case "tool-error": {
-          for (const ev of renderQueue.drain()) yield ev;
-          const message =
-            chunk.error instanceof Error ? chunk.error.message : String(chunk.error);
-          finalToolBlocks.push({
-            type: "tool_result",
-            tool_use_id: chunk.toolCallId,
-            content: { error: message },
-          });
-          yield {
-            type: "tool_result",
-            id: chunk.toolCallId,
-            output: null,
-            error: message,
-          };
-          break;
-        }
-        case "error": {
-          const message = flattenErrorChain(chunk.error);
-          console.error("[agent-claude] stream error", { message });
-          yield { type: "error", error: message };
-          break;
-        }
-        case "finish": {
-          const u = chunk.totalUsage;
-          totalTokensIn = u?.inputTokens ?? 0;
-          totalTokensOut = u?.outputTokens ?? 0;
-          break;
-        }
-        default:
-          // Other chunk types (step-start, step-finish, reasoning,
-          // source, tool-input-delta, etc.) we don't need to surface
-          // to the client. Drop silently.
-          break;
       }
+
+      // After the stream drains, fetch the model's response messages
+      // and append to history. AI SDK gives us back model + tool turns
+      // in CoreMessage shape, which is what subsequent streamText
+      // calls expect.
+      const finalResponse = await result.response;
+      history.push(...finalResponse.messages);
+
+      // ── Detect mid-workflow text-only termination ───────────────
+      //
+      // If this streamText call produced ZERO tool calls but the
+      // conversation already contains tool-results from earlier turns,
+      // the model gave up mid-flow. Inject a continuation prompt and
+      // re-call streamText. The user-facing prose the model just
+      // emitted has already been streamed; the continuation should
+      // produce the actual chart/dashboard/table on the next pass.
+      const sessionHasToolResults = history.some((m) => m.role === "tool");
+
+      if (
+        toolCallsThisCall === 0 &&
+        sessionHasToolResults &&
+        textOnlyContinuations < MAX_TEXT_ONLY_CONTINUATIONS
+      ) {
+        textOnlyContinuations++;
+        const continuationPrompt =
+          "[System intervention] You produced reply text without calling a tool. " +
+          "The workflow is incomplete — the customer is waiting for the final " +
+          "output (chart / dashboard / table / summary). Do ONE of the following NOW:\n" +
+          "  - If a chart was requested but not yet rendered: call make_chart.\n" +
+          "  - If a dashboard was requested but not yet rendered: call make_dashboard.\n" +
+          "  - If editing a chart/dashboard: call update_chart / update_dashboard.\n" +
+          "  - If you need more data first: call run_sql.\n" +
+          "  - If the data is genuinely insufficient (e.g. tables are empty or have 1 row), call make_chart / make_dashboard ANYWAY with what's there AND in the resulting prose explain that the data is sparse. Do NOT silently stop without producing the requested output.\n" +
+          "Do NOT narrate further or repeat your previous text — call the appropriate tool now.";
+        history.push({
+          role: "user",
+          content: continuationPrompt,
+        });
+        console.warn(
+          "[agent-claude] forced continuation after text-only mid-workflow termination",
+          {
+            continuationsUsed: textOnlyContinuations,
+            maxContinuations: MAX_TEXT_ONLY_CONTINUATIONS,
+          }
+        );
+        continue;
+      }
+
+      // Either:
+      //  - Tools were called (workflow progressed normally; AI SDK
+      //    would have looped internally; we're done)
+      //  - No prior tool results in session (legit conversational reply)
+      //  - Continuations exhausted (give up and surface what we have)
+      if (
+        toolCallsThisCall === 0 &&
+        sessionHasToolResults &&
+        textOnlyContinuations >= MAX_TEXT_ONLY_CONTINUATIONS
+      ) {
+        gaveUp = true;
+        console.warn("[agent-claude] gave up forcing continuation", {
+          continuationsUsed: textOnlyContinuations,
+        });
+      }
+      break;
+    }
+
+    // If we burned through every continuation attempt and the model
+    // still wouldn't complete the workflow, stream a clean recovery
+    // message to the customer rather than leaving them with whatever
+    // partial output they saw + silence.
+    if (gaveUp) {
+      const truncationMsg =
+        "\n\nI ran out of steps before I could finish that. Try asking for a smaller scope (one chart at a time, or a narrower dashboard) and I'll have plenty of room.";
+      assistantText.push(truncationMsg);
+      yield { type: "text_delta", text: truncationMsg };
     }
 
     yield { type: "message_stop" };

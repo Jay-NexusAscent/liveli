@@ -491,7 +491,6 @@ export function EditConnectorModal({ connector, onClose, onSaved, onDeleted }: P
             and resync from scratch.
           </p>
           <ul className="mt-3 ml-5 list-disc space-y-1 text-[13px]">
-            <li>The BigQuery dataset will be dropped and re-created.</li>
             <li>
               The current credentials and source schema will be re-read; any
               new tables / columns in your source will be picked up.

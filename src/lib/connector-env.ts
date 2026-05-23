@@ -43,6 +43,19 @@ export interface BuildTapEnvOptions {
    * at sync time.
    */
   replicationConfig?: unknown;
+  /**
+   * Streams to EXCLUDE from sync. For postgres this is tables without
+   * a single-column primary key — the BQ loader runs in `upsert: true`
+   * mode and MERGEs on `key_properties`; tables without a usable PK
+   * would silently corrupt under MERGE, so we refuse to sync them.
+   * Stream-name format matches the tap's discovery output
+   * (`<schema>-<table>` for tap-postgres).
+   *
+   * Emitted as LIVELI_EXCLUDED_STREAMS (JSON array). Entrypoint.sh
+   * writes them into the meltano.yml `select:` filter as `!<stream>.*`
+   * exclusions so the tap doesn't emit those streams at all.
+   */
+  excludedStreams?: string[];
 }
 
 type EnvBuilder = (
@@ -76,6 +89,13 @@ const TAP_ENV_BUILDERS: Record<string, EnvBuilder> = {
     // to its default — FULL_TABLE for every stream.
     if (options?.replicationConfig) {
       env.LIVELI_REPLICATION_CONFIG = JSON.stringify(options.replicationConfig);
+    }
+    // Tables without a single-column primary key — the loader's
+    // `upsert: true` mode MERGEs on PK and would silently corrupt
+    // these. We exclude them from the tap's discovered stream set at
+    // sync time. See lib/postgres-introspection.ts for detection.
+    if (options?.excludedStreams && options.excludedStreams.length > 0) {
+      env.LIVELI_EXCLUDED_STREAMS = JSON.stringify(options.excludedStreams);
     }
     return env;
   },

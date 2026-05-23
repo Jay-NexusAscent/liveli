@@ -1,5 +1,6 @@
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { listTablesTool } from "./list-tables";
+import { describeTableTool } from "./describe-table";
 import { runSqlTool } from "./run-sql";
 import { makeChartTool } from "./make-chart";
 import { makeDashboardTool } from "./make-dashboard";
@@ -12,6 +13,7 @@ export type { AgentContext, ToolDefinition, ToolResult };
 
 export const tools: ToolDefinition[] = [
   listTablesTool,
+  describeTableTool,
   runSqlTool,
   makeChartTool,
   makeDashboardTool,

@@ -50,6 +50,7 @@ export async function POST(
      */
     replicationConfig?: {
       streams: Record<string, unknown>;
+      excludedStreams?: string[];
       detected?: unknown[];
     };
   };
@@ -100,6 +101,7 @@ export async function POST(
       env,
       buildTapEnv(data.type, creds, {
         replicationConfig: data.replicationConfig?.streams,
+        excludedStreams: data.replicationConfig?.excludedStreams,
       })
     );
   } catch (err) {
