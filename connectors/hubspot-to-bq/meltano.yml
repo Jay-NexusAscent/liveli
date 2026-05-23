@@ -10,7 +10,12 @@ plugins:
   extractors:
     - name: tap-hubspot
       variant: meltanolabs
-      pip_url: meltanolabs-tap-hubspot
+      # Install from git rather than PyPI — MeltanoLabs publishes
+      # tap-hubspot to GitHub but not to PyPI under the
+      # `meltanolabs-tap-hubspot` name (404 on pypi.org). Builds
+      # started failing 2026-05-23 when the deploy workflow
+      # re-resolved during the meltano lock step.
+      pip_url: git+https://github.com/MeltanoLabs/tap-hubspot.git
       # Required env at runtime:
       #   TAP_HUBSPOT_ACCESS_TOKEN  (HubSpot Private App token)
       # Optional:

@@ -10,7 +10,10 @@ plugins:
   extractors:
     - name: tap-salesforce
       variant: meltanolabs
-      pip_url: meltanolabs-tap-salesforce
+      # Install from git rather than PyPI — MeltanoLabs publishes
+      # tap-salesforce to GitHub but not to PyPI under the
+      # `meltanolabs-tap-salesforce` name (404 on pypi.org).
+      pip_url: git+https://github.com/MeltanoLabs/tap-salesforce.git
       # Required env at runtime (OAuth refresh-token flow):
       #   TAP_SALESFORCE_CLIENT_ID
       #   TAP_SALESFORCE_CLIENT_SECRET
