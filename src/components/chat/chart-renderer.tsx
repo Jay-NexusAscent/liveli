@@ -54,9 +54,11 @@ export function ChartRenderer({ spec, height = 320 }: ChartRendererProps) {
   // labels. Donut translation runs after so it operates on a spec
   // that already has the polish baked in.
   const polished = polishChartSpec(chartSpec);
-  const echartsOption = polished.series?.[0]?.type === "donut"
-    ? toDonutOption(polished)
-    : polished;
+  const firstType = polished.series?.[0]?.type;
+  const echartsOption =
+    firstType === "donut" || firstType === "pie"
+      ? toPieOption(polished)
+      : polished;
 
   const isLightTheme =
     typeof document !== "undefined" &&
@@ -173,7 +175,17 @@ function formatKpiValue(
   unit?: string
 ): string {
   if (format === "percent") {
-    return `${value.toFixed(1)}%`;
+    // Handle both common conventions defensively:
+    //   - Fraction form (0.03 → 3.0%) — what SQL aggregates naturally
+    //     produce, e.g. SUM(buyers) / COUNT(sessions) = 0.03
+    //   - Already-percent form (3.0 → 3.0%) — what some agents emit
+    //     when they multiply by 100 in SQL
+    // Heuristic: if value is between -1 and 1 (exclusive of -1/1),
+    // treat as fraction and multiply by 100. Otherwise treat as
+    // already-percent. This covers >99% of real cases and produces
+    // readable output for both conventions.
+    const display = value > -1 && value < 1 ? value * 100 : value;
+    return `${display.toFixed(1)}%`;
   }
   const abbreviated = abbreviateNumber(value);
   if (format === "currency") {
@@ -281,24 +293,56 @@ function formatIsoAxisLabel(value: unknown): string {
 }
 
 /**
- * Translate a donut chart spec into an ECharts pie with an inner
- * radius. The model emits type: "donut" via the SeriesSchema enum;
- * ECharts itself doesn't have a "donut" type — it's a pie with
- * `radius: [innerR, outerR]`. We do the translation here so the
- * model's contract stays clean.
+ * Translate a pie/donut chart spec into a properly-shaped ECharts
+ * pie spec.
+ *
+ * Two things this fixes:
+ *
+ * 1. Our model contract puts categories in `xAxis.data` (strings)
+ *    and values in `series[].data` (flat number array) — that
+ *    matches bars/lines but ECharts pie/donut wants
+ *    `data: [{name, value}, ...]` pairs. Without the pairing, pie
+ *    segments render with just the index as label ("0", "1", "2")
+ *    or, with our spec, the xAxis.data labels appear on the
+ *    chart's axis area but the pie itself shows no values.
+ *
+ * 2. Pie/donut don't use xAxis or yAxis at all — leaving them in
+ *    the spec produces a stray axis frame around the chart in
+ *    ECharts. Strip both.
+ *
+ * Also installs a label formatter that shows the canonical
+ * "name: value (percent%)" form so segments are self-explaining
+ * instead of just colour-coded.
+ *
+ * Donut (`type: "donut"`) maps to pie with inner radius. Pie
+ * (`type: "pie"`) stays a single-radius pie.
  */
-function toDonutOption(spec: ChartSpecLike): ChartSpecLike {
+function toPieOption(spec: ChartSpecLike): ChartSpecLike {
+  const xLabels = (spec.xAxis as { data?: unknown[] } | undefined)?.data ?? [];
   return {
     ...spec,
-    series: (spec.series ?? []).map((s) =>
-      s.type === "donut"
-        ? {
-            ...s,
-            type: "pie",
-            radius: ["40%", "70%"],
-            avoidLabelOverlap: true,
-          }
-        : s
-    ),
+    // Pie/donut don't use axes — drop them to avoid the stray frame.
+    xAxis: undefined,
+    yAxis: undefined,
+    tooltip: spec.tooltip ?? { trigger: "item" },
+    legend: spec.legend ?? { bottom: 0 },
+    series: (spec.series ?? []).map((s) => {
+      if (s.type !== "donut" && s.type !== "pie") return s;
+      const flatData = Array.isArray(s.data) ? s.data : [];
+      const paired = flatData.map((value, i) => ({
+        name: typeof xLabels[i] === "string" ? (xLabels[i] as string) : `Item ${i + 1}`,
+        value: typeof value === "number" ? value : 0,
+      }));
+      return {
+        ...s,
+        type: "pie",
+        radius: s.type === "donut" ? ["40%", "70%"] : "65%",
+        avoidLabelOverlap: true,
+        data: paired,
+        label: {
+          formatter: "{b}: {c} ({d}%)",
+        },
+      };
+    }),
   };
 }
