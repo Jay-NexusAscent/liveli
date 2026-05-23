@@ -1,33 +1,53 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 const STORAGE_KEY = "liveli-theme";
 type Theme = "dark" | "light";
 
-export function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>("dark");
-  const [mounted, setMounted] = useState(false);
+/**
+ * useSyncExternalStore plumbing for the user's stored theme preference.
+ *
+ * Why useSyncExternalStore (not useState + useEffect): the latter reads
+ * localStorage in an effect and calls setState in the effect body,
+ * which trips `react-hooks/set-state-in-effect`. More importantly,
+ * useSyncExternalStore handles the SSR ↔ CSR transition natively:
+ * `getServerSnapshot` returns the SSR value, so hydration markup
+ * matches the server, then React immediately re-renders with
+ * `getSnapshot` for the real client value. No hydration mismatch,
+ * no setState-in-effect, and we additionally pick up cross-tab
+ * theme changes for free (the `storage` event fires in other tabs
+ * when our `localStorage.setItem` runs here).
+ */
+function subscribe(callback: () => void): () => void {
+  window.addEventListener("storage", callback);
+  return () => window.removeEventListener("storage", callback);
+}
 
-  useEffect(() => {
-    const stored = (localStorage.getItem(STORAGE_KEY) as Theme | null) ?? "dark";
-    setTheme(stored);
-    setMounted(true);
-  }, []);
+function getSnapshot(): Theme {
+  const stored = localStorage.getItem(STORAGE_KEY) as Theme | null;
+  return stored ?? "dark";
+}
+
+function getServerSnapshot(): Theme {
+  // Server has no localStorage and our default theme is dark — match
+  // the dark-mode markup on first paint so hydration is clean.
+  return "dark";
+}
+
+export function ThemeToggle() {
+  const theme = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const isDark = theme === "dark";
 
   const toggle = () => {
-    const next: Theme = theme === "dark" ? "light" : "dark";
-    setTheme(next);
+    const next: Theme = isDark ? "light" : "dark";
     localStorage.setItem(STORAGE_KEY, next);
     document.documentElement.setAttribute("data-theme", next);
+    // The `storage` event only fires for OTHER tabs, not the
+    // originating one. Dispatch a synthetic StorageEvent so this
+    // tab's useSyncExternalStore subscribers re-snapshot too.
+    window.dispatchEvent(new StorageEvent("storage", { key: STORAGE_KEY }));
   };
-
-  // Render an invisible placeholder until mounted to avoid SSR/CSR mismatch.
-  if (!mounted) {
-    return <div className="h-9 w-9" aria-hidden="true" />;
-  }
-
-  const isDark = theme === "dark";
 
   return (
     <button

@@ -273,15 +273,19 @@ export default function ConnectionsPage() {
   }, []);
 
   // Poll the per-connector progress endpoint while any connectors are
-  // syncing. Cheap (~one Cloud Logging read per call) and only runs when
-  // there's something to track. Clears the map entry once a connector
-  // leaves the syncing state so stale progress doesn't linger.
+  // syncing. Cheap (~one Cloud Logging read per call) and only runs
+  // when there's something to track.
+  //
+  // We don't clear `progressById` here when the syncing list goes
+  // empty — that would be a setState-in-effect (and the React docs
+  // recommend deriving over storing for this kind of "show stale data
+  // only when relevant" case). Instead, the JSX read site below
+  // filters: `const prog = c.status === "syncing" ? progressById[c.id]
+  // : undefined`, so stale entries for connectors that have left the
+  // syncing state are simply invisible.
   useEffect(() => {
     const syncing = connectors.filter((c) => c.status === "syncing");
-    if (syncing.length === 0) {
-      setProgressById((prev) => (Object.keys(prev).length ? {} : prev));
-      return;
-    }
+    if (syncing.length === 0) return;
     let cancelled = false;
     const pollOnce = async () => {
       const results = await Promise.all(
@@ -406,8 +410,13 @@ export default function ConnectionsPage() {
             style={{ gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))" }}
           >
             {connectors.map((c) => {
-              const prog = progressById[c.id];
               const isSyncing = c.status === "syncing";
+              // Only surface progress while actively syncing — the
+              // polling effect doesn't proactively clear stale entries
+              // when a connector leaves the syncing state (see comment
+              // on the effect above), so this filter is the boundary
+              // between "live progress" and "stale leftover".
+              const prog = isSyncing ? progressById[c.id] : undefined;
               return (
               <div key={c.id} className="card-elevated flex flex-col gap-3 p-4">
                 <div className="flex items-start justify-between gap-3">

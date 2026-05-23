@@ -481,7 +481,17 @@ async function finalizeDatasetDescription(
       parts: [
         {
           text:
-            "You write concise BigQuery dataset descriptions. Output a single 1-2 sentence description that names the source connector type and the data domain. Be concrete and scannable. No preamble, no markdown, no quotation marks around the output.",
+            // CRITICAL framing: the dataset description is read by the
+            // downstream chat agent when grounding SQL generation. The
+            // data LIVES IN BIGQUERY and is queried with BigQuery SQL —
+            // any phrasing that primes the reader toward a different
+            // SQL dialect ("Postgres database containing…") causes
+            // wasted turns when the chat agent later generates
+            // Postgres-flavoured syntax that BQ rejects (`::int` casts,
+            // `DISTINCT ON`, `EXTRACT(epoch FROM …)`, etc.). Lead with
+            // the business domain; mention the source as a qualifier
+            // only — never as the head noun.
+            "You write concise BigQuery dataset descriptions. The dataset lives in BigQuery and is queried with BigQuery SQL — descriptions must not suggest otherwise. Lead with what the data represents (the business domain); mention the source connector only as a parenthetical qualifier, never as the head noun. Output a single 1-2 sentence description. Be concrete and scannable. No preamble, no markdown, no quotation marks around the output.",
         },
       ],
     },
@@ -493,10 +503,12 @@ Dataset: ${ctx.bqDataset}
 Table descriptions (one row per table):
 ${tableDescriptions.map((t) => `- ${t.table}: ${t.description}`).join("\n")}
 
-Write the dataset description now. Example shapes:
-- "Postgres database containing retail e-commerce data: customers, orders, order_items, products, sessions, shipments, returns, and product reviews."
-- "Stripe payments connector — charges, customers, subscriptions, invoices, payouts, and refunds for the linked account."
-- "HubSpot CRM connector — contacts, deals, companies, engagements, tickets, owners, and products."
+Write the dataset description now. The data lives in BigQuery — lead
+with the business domain, not the source system. Example shapes
+(notice each one's grammatical subject is the data, not the source):
+- "Retail e-commerce data replicated from a Postgres source: customers, orders, order_items, products, sessions, shipments, returns, and product reviews."
+- "Stripe payments data — charges, customers, subscriptions, invoices, payouts, and refunds for the linked account."
+- "HubSpot CRM data — contacts, deals, companies, engagements, tickets, owners, and products."
 
 Output only the description.`;
 

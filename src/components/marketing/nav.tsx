@@ -6,8 +6,6 @@ import { EcgLogo, ArrowRightIcon } from "@/components/icons";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { cn } from "@/lib/utils";
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "/chat";
-
 export function MarketingNav() {
   const [scrolled, setScrolled] = useState(false);
 

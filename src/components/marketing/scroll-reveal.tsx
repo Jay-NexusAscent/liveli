@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 
 /**
  * Reveals its children with a subtle fade + lift-up animation when the
@@ -27,32 +33,66 @@ interface ScrollRevealProps {
   className?: string;
 }
 
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+function subscribeReducedMotion(callback: () => void): () => void {
+  const mql = window.matchMedia(REDUCED_MOTION_QUERY);
+  mql.addEventListener("change", callback);
+  return () => mql.removeEventListener("change", callback);
+}
+
+function getReducedMotionSnapshot(): boolean {
+  return window.matchMedia(REDUCED_MOTION_QUERY).matches;
+}
+
+function getReducedMotionServerSnapshot(): boolean {
+  // Server has no matchMedia; assume motion is allowed. If the user
+  // really has reduced-motion set, the first client render flips
+  // `visible` to true immediately, which is the desired outcome.
+  return false;
+}
+
 export function ScrollReveal({
   children,
   delay = 0,
   className = "",
 }: ScrollRevealProps) {
   const ref = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(false);
+  // Drive `prefersReducedMotion` via useSyncExternalStore rather than
+  // useState + useEffect: the latter would require a setState in the
+  // effect body to record the matchMedia result, which trips
+  // react-hooks/set-state-in-effect. SSR returns `false` (motion ok),
+  // post-hydration we get the real value and the visible derivation
+  // below shows content immediately if reduced-motion is on.
+  const prefersReducedMotion = useSyncExternalStore(
+    subscribeReducedMotion,
+    getReducedMotionSnapshot,
+    getReducedMotionServerSnapshot,
+  );
+  const [intersected, setIntersected] = useState(false);
+
+  // Visible when EITHER reduced-motion is set (show everything
+  // immediately, skip the animation) OR the IntersectionObserver has
+  // fired. Computing this during render rather than syncing into a
+  // separate state field keeps the effect below free of setState
+  // calls in its body.
+  const visible = prefersReducedMotion || intersected;
 
   useEffect(() => {
-    // Bypass animation entirely for users with the OS reduced-motion
-    // preference. Render content in its final state immediately.
-    if (
-      typeof window !== "undefined" &&
-      window.matchMedia("(prefers-reduced-motion: reduce)").matches
-    ) {
-      setVisible(true);
-      return;
-    }
-
+    // No observer needed when the user prefers reduced motion — we
+    // already render `visible: true` via the derivation above.
+    if (prefersReducedMotion) return;
     const el = ref.current;
     if (!el) return;
 
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
-          setVisible(true);
+          // setState INSIDE the observer callback (a subscription
+          // event handler) — explicitly allowed by the
+          // react-hooks/set-state-in-effect rule, which only flags
+          // setState in the effect body itself.
+          setIntersected(true);
           // Single-shot: don't replay the reveal if the user scrolls
           // back up past the element later.
           observer.disconnect();
@@ -72,7 +112,7 @@ export function ScrollReveal({
 
     observer.observe(el);
     return () => observer.disconnect();
-  }, []);
+  }, [prefersReducedMotion]);
 
   return (
     <div

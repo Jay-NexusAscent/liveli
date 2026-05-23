@@ -73,23 +73,6 @@ interface EditContext {
 export function ChatWindow({ initialChatId }: { initialChatId?: string } = {}) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [chatId, setChatId] = useState<string | undefined>(initialChatId);
-  const [input, setInput] = useState("");
-  const [streaming, setStreaming] = useState(false);
-  const [loadingHistory, setLoadingHistory] = useState(!!initialChatId);
-  const [datasetNames, setDatasetNames] = useState<Record<string, string>>({});
-  // Edit mode: when set, we render a banner above the chat and pass
-  // this through with each /api/chat call so the agent uses update_X
-  // tools instead of make_X. Persisted in sessionStorage until the
-  // user explicitly closes it or starts a new chat.
-  const [editContext, setEditContext] = useState<EditContext | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
-
-  // Auto-scroll on new content
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, streaming]);
-
   // Prefill from sessionStorage — used by the /insights "Query further"
   // CTAs to drop the user into chat with a starter question ready.
   // sessionStorage (not a URL param) is the right channel here for two
@@ -99,30 +82,52 @@ export function ChatWindow({ initialChatId }: { initialChatId?: string } = {}) {
   //      one-shot consumption is destructive: the second mount sees the
   //      already-stripped URL and can't repopulate state. sessionStorage
   //      remains readable until we explicitly clear it on send.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const prefill = sessionStorage.getItem("liveli.chatPrefill");
-    if (prefill) setInput(prefill);
-  }, []);
-
-  // Load edit context from sessionStorage when arriving from the
-  // Edit button on /dashboards or the FullscreenModal. Stays set
-  // across multiple sends so the user can iterate ("change to bar"
-  // → "make the bars green") on the same chart/dashboard. Cleared
-  // explicitly via the banner's close button or `New chat`.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
+  //
+  // Read via a lazy useState initialiser (not useEffect + setState):
+  // useState's lazy init runs on first render with `window` available
+  // on the client, so we can read sessionStorage directly without a
+  // setState-in-effect. The textarea below uses suppressHydrationWarning
+  // to tolerate the (intentional) server-empty / client-prefilled
+  // value divergence — the prefill is one-shot ephemeral state set by
+  // a client-side nav from /insights, never present at SSR time in
+  // practice.
+  const [input, setInput] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    return sessionStorage.getItem("liveli.chatPrefill") ?? "";
+  });
+  const [streaming, setStreaming] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(!!initialChatId);
+  const [datasetNames, setDatasetNames] = useState<Record<string, string>>({});
+  // Edit mode: when set, we render a banner above the chat and pass
+  // this through with each /api/chat call so the agent uses update_X
+  // tools instead of make_X. Persisted in sessionStorage until the
+  // user explicitly closes it or starts a new chat.
+  //
+  // Same lazy-init pattern as `input` above — read sessionStorage at
+  // first render, no setState-in-effect.
+  const [editContext, setEditContext] = useState<EditContext | null>(() => {
+    if (typeof window === "undefined") return null;
     const raw = sessionStorage.getItem("liveli.editing");
-    if (!raw) return;
+    if (!raw) return null;
     try {
       const parsed = JSON.parse(raw) as EditContext;
-      if (parsed.kind && parsed.id && parsed.title) {
-        setEditContext(parsed);
-      }
+      if (parsed.kind && parsed.id && parsed.title) return parsed;
     } catch {
-      sessionStorage.removeItem("liveli.editing");
+      // Don't sessionStorage.removeItem here — React StrictMode
+      // double-invokes lazy initialisers in development, and a
+      // removeItem on the second invocation would lose the value
+      // before the first commit. Cleanup of malformed entries
+      // happens lazily via stopEditing() below.
     }
-  }, []);
+    return null;
+  });
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll on new content
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, streaming]);
 
   const stopEditing = () => {
     setEditContext(null);
@@ -285,7 +290,13 @@ export function ChatWindow({ initialChatId }: { initialChatId?: string } = {}) {
 
   return (
     <div className="flex h-[calc(100vh-56px)] flex-col lg:h-screen">
-      {editContext && <EditBanner ctx={editContext} onStop={stopEditing} />}
+      {/* suppressHydrationWarning: editContext is read from sessionStorage
+          via a lazy useState initialiser, so the banner may render on
+          the client but not on the server. The mismatch is intentional
+          and confined to whether this banner exists or not. */}
+      <div suppressHydrationWarning>
+        {editContext && <EditBanner ctx={editContext} onStop={stopEditing} />}
+      </div>
       {/* Scrollable message area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl px-6 py-8">
@@ -335,6 +346,12 @@ export function ChatWindow({ initialChatId }: { initialChatId?: string } = {}) {
                 streaming ? "Liveli is thinking…" : "Ask a question or describe a chart…"
               }
               disabled={streaming}
+              // input is seeded from sessionStorage via lazy useState
+              // initialiser, so SSR may render "" while the client
+              // hydrates with a prefill. Tolerate that mismatch — the
+              // prefill is by definition client-side-only ephemeral
+              // state from /insights "Query further".
+              suppressHydrationWarning
               className="flex-1 bg-transparent text-[15px] text-text-primary placeholder:text-text-tertiary focus:outline-none disabled:opacity-50"
             />
             <button
