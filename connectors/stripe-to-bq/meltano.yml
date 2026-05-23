@@ -9,8 +9,16 @@ environments:
 plugins:
   extractors:
     - name: tap-stripe
-      variant: hotgluexyz
-      pip_url: git+https://github.com/hotgluexyz/tap-stripe.git
+      # `hotgluexyz` variant was REMOVED from the Meltano Hub registry
+      # — `meltano lock --update --all` fails with "variant 'hotgluexyz'
+      # is not known to Meltano". Hub default is now `singer-io`
+      # (Stitch Data's variant — actively maintained, canonical Singer
+      # reference). hotgluexyz was already 4 years stale (last release
+      # April 2022). This change was meant to ship in PR #59 but its
+      # second commit was lost during merge — re-applying here as the
+      # CI-unblock for stripe.
+      variant: singer-io
+      pip_url: tap-stripe
       # Required env at runtime:
       #   TAP_STRIPE_CLIENT_SECRET  (sk_live_... or sk_test_...)
       # Optional:
