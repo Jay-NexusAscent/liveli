@@ -86,7 +86,6 @@ export function logUsageEvent(event: UsageEventBase & Partial<UsageEventRow>): v
         }
       }
     }
-    // eslint-disable-next-line no-console
     console.error("[usage] insert failed", {
       eventType: row.eventType,
       clientId: row.clientId,

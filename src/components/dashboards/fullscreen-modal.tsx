@@ -68,6 +68,23 @@ interface FullscreenModalProps {
  */
 export function FullscreenModal({ content, onClose, onEdit }: FullscreenModalProps) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
+  // Track the last content.id we saw so we can reset copyState when
+  // the user navigates to a different chart/dashboard without the
+  // modal closing in between (e.g. flipping between tiles via Edit →
+  // open in fullscreen again).
+  //
+  // React docs recommend this "adjust state during render" pattern
+  // over the previous setState-in-effect approach
+  // (https://react.dev/reference/react/useState#storing-information-from-previous-renders).
+  // Setting state during render is collapsed into the same render
+  // pass — no cascading re-render, and no react-hooks/set-state-in-effect
+  // violation.
+  const currentContentId = content?.id ?? null;
+  const [seenContentId, setSeenContentId] = useState<string | null>(currentContentId);
+  if (currentContentId !== seenContentId) {
+    setSeenContentId(currentContentId);
+    setCopyState("idle");
+  }
   // Ref onto the modal panel itself — html-to-image walks this subtree
   // to produce the PNG. Buttons inside are tagged data-capture-exclude
   // so they don't appear in the screenshot.
@@ -76,7 +93,6 @@ export function FullscreenModal({ content, onClose, onEdit }: FullscreenModalPro
   // Bind Esc + lock body scroll while open. Cleanup removes both.
   useEffect(() => {
     if (!content) return;
-    setCopyState("idle");
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
