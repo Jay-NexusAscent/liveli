@@ -160,10 +160,11 @@ export function vertex(region: string): VertexAI {
  */
 export function buildModel(
   region: string,
-  params: Omit<ModelParams, "model"> = {}
+  params: Omit<ModelParams, "model"> = {},
+  modelOverride?: string
 ): GenerativeModel {
   return vertex(region).getGenerativeModel({
-    model: gcp.vertexModel,
+    model: modelOverride ?? gcp.vertexModel,
     ...params,
   });
 }
