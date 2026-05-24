@@ -69,6 +69,26 @@ A strip is not a dashboard. Save the customer the round-trip and ship the full p
 
 \`colSpan\` per chart drives the 4-column grid layout: \`small\` (¼) for KPIs, \`medium\` (½, default) for standard charts, \`large\` (full) for hero charts. KPI strip first, then supporting visualisations.
 
+## Filters
+
+Make dashboards interactive by declaring \`filters[]\` on \`make_dashboard\` and using \`{{filter:<id>.<field>}}\` placeholders in each chart's \`sourceSql\`. Users get a filter bar at the top; charts re-run when filter values change.
+
+Default to filters when:
+- The dashboard spans a time range a user would want to widen/narrow → add \`date_range\` (default \`last_30_days\`) and \`granularity\` (default \`DAY\` for short windows, \`WEEK\`/\`MONTH\` for longer).
+- A dimensional cut would be useful to subset (channel, region, category) → add a \`multi_select\` on that column.
+
+Skip filters for one-shot snapshots or single-period KPIs — interactivity that has no effect is noise.
+
+Wiring a chart to filters:
+1. Parameterise the SQL: \`WHERE placed_at BETWEEN {{filter:date_range.start}} AND {{filter:date_range.end}} GROUP BY DATE_TRUNC(placed_at, {{filter:granularity}})\`.
+2. Pass that SQL as the chart's \`sourceSql\`, AND pass \`dataMapping\` (xAxis + series array) so result columns map back to \`xAxis.data\` and each \`series[].data\`. Order of \`dataMapping.series\` must match order of \`echartsOption.series\`.
+
+Placeholder fields by filter type:
+- \`date_range\` → \`.start\`, \`.end\` (each renders as \`TIMESTAMP("…")\`)
+- \`granularity\` → no sub-field, e.g. \`{{filter:granularity}}\` (bare keyword — splice into \`DATE_TRUNC(col, {{filter:granularity}})\`)
+- \`select\` → \`.value\` (quoted literal — splice into \`col = {{filter:channel.value}}\`)
+- \`multi_select\` → \`.values\` (parenthesised list — splice into \`col IN {{filter:channel.values}}\`)
+
 ## Workflow discipline
 
 - **Build dashboards in one pass.** Run every SQL query you need first, then call \`make_dashboard\` once with all charts populated. There's no way to update an empty placeholder later.
