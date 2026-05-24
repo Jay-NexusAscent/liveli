@@ -9,6 +9,7 @@ import {
   DEFAULT_BQ_LOCATION,
 } from "@/lib/bigquery";
 import {
+  buildLiveliOauthEnv,
   buildTapEnv,
   UnsupportedConnectorTypeError,
 } from "@/lib/connector-env";
@@ -97,6 +98,12 @@ export async function POST(
   };
 
   try {
+    // Liveli's workspace-agnostic OAuth app creds first (no-op for
+    // non-OAuth connector types); per-customer creds second so
+    // customer values win on any key overlap. In practice the env
+    // var namespaces don't overlap — Liveli's are CLIENT_ID/SECRET,
+    // customer's are REFRESH_TOKEN/PROPERTY_ID/etc.
+    Object.assign(env, await buildLiveliOauthEnv(data.type));
     Object.assign(
       env,
       buildTapEnv(data.type, creds, {

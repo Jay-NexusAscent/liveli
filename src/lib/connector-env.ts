@@ -271,6 +271,43 @@ const TAP_ENV_BUILDERS: Record<string, EnvBuilder> = {
     TAP_ZENDESK_EMAIL: creds.email,
     TAP_ZENDESK_API_TOKEN: creds.api_token,
   }),
+
+  // ── Batch C (LIVELI-132): OAuth refresh-token SaaS connectors ──
+  //
+  // These types ALSO need Liveli's OAuth app creds at sync time —
+  // those come from `buildLiveliOauthEnv()` below, not from per-
+  // customer `creds`. Sync route merges both env maps before
+  // invoking the Cloud Run Job.
+
+  ga4: (creds) => ({
+    // tap-ga4 (MeltanoLabs SDK variant) uses nested config:
+    //   oauth_credentials.{client_id, client_secret, refresh_token}
+    //   property_id
+    //
+    // The dotted nested keys map to underscored env vars via Meltano's
+    // standard flattening, but we ALSO declare them explicitly in
+    // meltano.yml with $-substitution so the mapping doesn't depend
+    // on Meltano version quirks.
+    //
+    // CLIENT_ID + CLIENT_SECRET intentionally NOT here — those come
+    // from Liveli's google OAuth app via buildLiveliOauthEnv("ga4").
+    TAP_GA4_OAUTH_CREDENTIALS_REFRESH_TOKEN: creds.refresh_token,
+    TAP_GA4_OAUTH_CREDENTIALS_ACCESS_TOKEN: creds.access_token,
+    TAP_GA4_PROPERTY_ID: creds.property_id,
+  }),
+
+  quickbooks: (creds) => ({
+    // tap-quickbooks (hotgluexyz) flat config. `realmId` is the
+    // QuickBooks Company ID — non-secret but identifying, captured
+    // from the Intuit OAuth callback. `is_sandbox` toggles which
+    // QuickBooks API host the tap hits (sandbox vs production).
+    //
+    // CLIENT_ID + CLIENT_SECRET come from Liveli's intuit OAuth app
+    // via buildLiveliOauthEnv("quickbooks").
+    TAP_QUICKBOOKS_REFRESH_TOKEN: creds.refresh_token,
+    TAP_QUICKBOOKS_REALMID: creds.realmId,
+    TAP_QUICKBOOKS_IS_SANDBOX: creds.is_sandbox ?? "false",
+  }),
 };
 
 /**
@@ -291,4 +328,49 @@ export function buildTapEnv(
   const builder = TAP_ENV_BUILDERS[type];
   if (!builder) throw new UnsupportedConnectorTypeError(type);
   return builder(creds, options);
+}
+
+/**
+ * Per-connector-type map from Liveli's OAuth app creds to the env vars
+ * the tap expects. Returns {} for connector types that don't need
+ * Liveli-app creds (the API-key Batch A/B connectors).
+ *
+ * Async because credentials are fetched from Secret Manager. Cached
+ * in-process by `getLiveliAppCreds()` so the steady-state cost is one
+ * Secret Manager call per (provider, cold start).
+ *
+ * Why this is separate from buildTapEnv: the customer's refresh_token
+ * is tenant-scoped (lives in the per-connector secret payload), but
+ * Liveli's client_id + client_secret are workspace-agnostic — they're
+ * Liveli's OAuth app credentials, the same across all customers.
+ * Mixing them into the per-connector secret would (a) duplicate
+ * the same bytes across every customer's secret, and (b) make
+ * rotation a horror (we'd have to re-write every connector secret).
+ * Keeping them separate means rotation is `gcloud secrets versions
+ * add liveli-oauth-google-client-secret ...` and done.
+ */
+export async function buildLiveliOauthEnv(
+  type: string
+): Promise<Record<string, string>> {
+  // Dynamic import to keep the OAuth lib out of the connect-route +
+  // sync-route initial import cost for non-OAuth connectors. The
+  // OAuth code path pulls in Buffer-based HMAC + Secret Manager
+  // helpers we don't need for postgres/mysql/etc.
+  const { getLiveliAppCreds } = await import("@/lib/oauth/liveli-app-creds");
+
+  if (type === "ga4") {
+    const { clientId, clientSecret } = await getLiveliAppCreds("google");
+    return {
+      TAP_GA4_OAUTH_CREDENTIALS_CLIENT_ID: clientId,
+      TAP_GA4_OAUTH_CREDENTIALS_CLIENT_SECRET: clientSecret,
+    };
+  }
+  if (type === "quickbooks") {
+    const { clientId, clientSecret } = await getLiveliAppCreds("intuit");
+    return {
+      TAP_QUICKBOOKS_CLIENT_ID: clientId,
+      TAP_QUICKBOOKS_CLIENT_SECRET: clientSecret,
+    };
+  }
+  return {};
 }

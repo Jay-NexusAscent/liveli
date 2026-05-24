@@ -1,0 +1,47 @@
+version: 1
+default_environment: dev
+project_id: liveli-ga4-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-ga4
+      variant: meltanolabs
+      pip_url: git+https://github.com/MeltanoLabs/tap-google-analytics.git
+      # tap-ga4 nested config:
+      #   oauth_credentials: { client_id, client_secret, refresh_token }
+      #   property_id, start_date, end_date
+      #
+      # The CLIENT_ID + CLIENT_SECRET are Liveli's OAuth app creds —
+      # injected by the sync route via buildLiveliOauthEnv("ga4") in
+      # src/lib/connector-env.ts. REFRESH_TOKEN + PROPERTY_ID are
+      # per-customer, injected by buildTapEnv() from the connector's
+      # Secret Manager payload.
+      #
+      # We use $-substitution rather than relying on Meltano's
+      # auto-flattening of dotted env vars (TAP_GA4_OAUTH_CREDENTIALS_*)
+      # because the auto-flatten behaviour has changed across Meltano
+      # versions; explicit reference is robust.
+      config:
+        oauth_credentials:
+          client_id: $TAP_GA4_OAUTH_CREDENTIALS_CLIENT_ID
+          client_secret: $TAP_GA4_OAUTH_CREDENTIALS_CLIENT_SECRET
+          refresh_token: $TAP_GA4_OAUTH_CREDENTIALS_REFRESH_TOKEN
+        property_id: $TAP_GA4_PROPERTY_ID
+        # First-sync window. Most GA4 properties were created in 2023
+        # (post Universal Analytics sunset), so this is a sensible
+        # default. After first sync, GCS-persisted state takes over —
+        # this only affects the initial backfill.
+        start_date: "2023-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true

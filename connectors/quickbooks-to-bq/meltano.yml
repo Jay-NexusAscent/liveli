@@ -1,0 +1,38 @@
+version: 1
+default_environment: dev
+project_id: liveli-quickbooks-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-quickbooks
+      variant: hotgluexyz
+      pip_url: git+https://github.com/hotgluexyz/tap-quickbooks.git
+      # tap-quickbooks flat config:
+      #   client_id, client_secret: Liveli's Intuit OAuth app creds
+      #     (injected by buildLiveliOauthEnv("quickbooks"))
+      #   refresh_token, realmId: per-customer (from the OAuth callback)
+      #   is_sandbox: per-customer toggle, controls which QuickBooks
+      #               API host (sandbox-* vs production)
+      # No nested keys, so we don't need $-substitution overrides —
+      # Meltano will pick up TAP_QUICKBOOKS_* env vars directly.
+      config:
+        # First-sync window. Most customers have < 5 years of relevant
+        # history. After first sync, GCS-persisted state takes over.
+        start_date: "2023-01-01T00:00:00Z"
+        # Default to production. The actual value is injected as
+        # TAP_QUICKBOOKS_IS_SANDBOX at sync time, which Meltano will
+        # use to override this default.
+        is_sandbox: false
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true
