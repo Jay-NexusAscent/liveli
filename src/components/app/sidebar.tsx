@@ -27,8 +27,66 @@ const navItems = [
   { label: "Settings", href: "/settings", icon: SettingsIcon },
 ];
 
+/**
+ * Polls /api/insights/unseen-count for the red bubble next to the
+ * Insights nav item. Polls every 60s while the tab is visible; on
+ * tab visibility change (user comes back after a while) refetches
+ * immediately so the bubble isn't stale. Stops polling when the
+ * tab is hidden — no need to burn requests on a backgrounded tab.
+ *
+ * 60s is the right cadence because insight eval cadence is 5min+
+ * — anything tighter than the eval cadence is wasted requests.
+ * Could lift to 30s if we ever add a 1min eval bucket.
+ */
+function useInsightsUnseenCount(): number {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const fetchCount = async () => {
+      try {
+        const res = await fetch("/api/insights/unseen-count");
+        if (!res.ok) return;
+        const payload = await res.json();
+        if (!cancelled && typeof payload.count === "number") {
+          setCount(payload.count);
+        }
+      } catch {
+        // Network blip — keep last known count. Bubble doesn't
+        // disappear just because one poll failed.
+      }
+    };
+    fetchCount();
+    const interval = setInterval(() => {
+      if (!document.hidden) fetchCount();
+    }, 60_000);
+    const onVisibility = () => {
+      if (!document.hidden) fetchCount();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+  return count;
+}
+
+function UnseenBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span
+      className="ml-auto inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-[color:var(--status-error)] px-1.5 text-[11px] font-semibold text-white"
+      aria-label={`${count} unseen fired insight${count === 1 ? "" : "s"}`}
+    >
+      {count > 99 ? "99+" : count}
+    </span>
+  );
+}
+
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
+  const unseenInsights = useInsightsUnseenCount();
 
   return (
     <div className="flex h-full flex-col">
@@ -82,7 +140,8 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                   )}
                 >
                   <item.icon className={cn("shrink-0", isActive ? "text-accent" : "text-text-tertiary")} />
-                  {item.label}
+                  <span className="flex-1">{item.label}</span>
+                  {item.href === "/insights" && <UnseenBadge count={unseenInsights} />}
                 </Link>
               </li>
             );

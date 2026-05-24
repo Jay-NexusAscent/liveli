@@ -184,7 +184,34 @@ export async function evaluateInsight(
   await ref.update(updates);
 
   const fresh = (await ref.get()).data() as Insight;
-  return { ok: true, insight: { ...fresh, id: insightId } };
+  const result: Insight & { id: string } = { ...fresh, id: insightId };
+
+  // Fan out notifications ONLY on the idle → fired transition. Each
+  // subsequent re-eval that still returns "fired" does NOT re-notify
+  // (would spam Slack with duplicates on every 5-minute tick).
+  //
+  // Fire-and-forget — we don't await this from the eval path because
+  // a slow external endpoint shouldn't block evaluateInsight's
+  // response. The notify module logs its own failures to each
+  // channel's lastSendError. Dynamic import keeps evaluate.ts free
+  // of the channel-formatter dependency graph for tree-shaking.
+  if (justFired) {
+    import("./notify")
+      .then(({ notifyInsightFired }) =>
+        notifyInsightFired(result, {
+          clientId: ctx.clientId,
+          workspaceId: ctx.workspaceId,
+        })
+      )
+      .catch((err) => {
+        console.warn("[insights/evaluate] notify dispatch failed", {
+          insightId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+  }
+
+  return { ok: true, insight: result };
 }
 
 /**
