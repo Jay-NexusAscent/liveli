@@ -60,14 +60,20 @@ Write conversationally, like a sharp junior analyst presenting a finding. Short 
 
 When the user asks for a dashboard / overview / report / summary, ship a complete picture, not just totals:
 
-1. **KPI strip** — 3-5 \`colSpan: small\` tiles at the top.
+1. **KPI strip** — 3-5 \`colSpan: extra-small\` tiles at the top. Use \`extra-small\` (NOT \`small\`) for any single-value/KPI chart — the tile is half-height which keeps the strip compact and frees vertical space for the charts below.
 2. **At least one TIME-SERIES** — line or area, showing trend over the relevant window.
 3. **At least one BREAKDOWN** — top-N or category split.
 4. Optional: period-over-period comparison.
 
 A strip is not a dashboard. Save the customer the round-trip and ship the full picture first time.
 
-\`colSpan\` per chart drives the 4-column grid layout: \`small\` (¼) for KPIs, \`medium\` (½, default) for standard charts, \`large\` (full) for hero charts. KPI strip first, then supporting visualisations.
+\`colSpan\` per chart drives the 4-column grid layout with 180px row units:
+- \`extra-small\` — ¼ width × half-height row. Use for single-value KPI tiles (one big number) so the KPI strip stays compact.
+- \`small\` — ¼ width × full row. Use for narrow charts that need their full canvas (a tall list, a small trend line).
+- \`medium\` — ½ width × full row. Default for standard charts.
+- \`large\` — full width × full row. Use for hero charts / wide time series.
+
+KPI strip first (extra-small tiles), then supporting visualisations.
 
 ## Filters
 

@@ -56,8 +56,8 @@ const ChartSpec = z.object({
   echartsOption: EChartsOption,
   // See make-dashboard.ts for full colSpan semantics. Same enum; the
   // model can revise sizes per chart when the user asks ("make the
-  // revenue chart full-width").
-  colSpan: z.enum(["small", "medium", "large"]).optional(),
+  // revenue chart full-width", "shrink the KPI cards").
+  colSpan: z.enum(["extra-small", "small", "medium", "large"]).optional(),
   // ─── filter-driven re-render (LIVELI-122 Phase 2) ─────────────────
   // BOTH must be present for the render endpoint to re-run the chart;
   // partial config falls back to static rendering. Omit both for

@@ -6,13 +6,20 @@ import { toPng } from "html-to-image";
 import { CheckIcon, CloseIcon, CopyIcon, PencilIcon } from "@/components/icons";
 import { ChartRenderer } from "@/components/chat/chart-renderer";
 
-type ColSpan = "small" | "medium" | "large";
+type ColSpan = "extra-small" | "small" | "medium" | "large";
 
 // Mirror of the page's COL_SPAN_CLASSES — written out as full
-// literal strings for Tailwind JIT detection. lg:col-span here
-// because the fullscreen grid hits the lg breakpoint (not md),
-// matching the existing `lg:grid-cols-4` below.
+// literal strings for Tailwind JIT detection. `lg:` here because
+// the fullscreen grid hits the lg breakpoint (not md), matching
+// the existing `lg:grid-cols-4` below.
+//
+// Fullscreen modal doesn't use row-span — it lets each tile take
+// its natural content height because the modal is already taking
+// the full viewport. Row-span is only useful in the in-page
+// dashboards grid where we want to claim vertical real estate
+// back.
 const COL_SPAN_CLASSES: Record<ColSpan, string> = {
+  "extra-small": "lg:col-span-1",
   small: "lg:col-span-1",
   medium: "lg:col-span-2",
   large: "lg:col-span-4",

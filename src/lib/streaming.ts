@@ -22,7 +22,7 @@ export type ChatStreamEvent =
         order: number;
         title: string;
         spec: unknown;
-        colSpan?: "small" | "medium" | "large";
+        colSpan?: "extra-small" | "small" | "medium" | "large";
       }>;
     }
   | { type: "message_start"; chatId: string; messageId: string }
