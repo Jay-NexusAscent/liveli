@@ -9,6 +9,7 @@ import {
   PlusIcon,
   TrashIcon,
 } from "@/components/icons";
+import { ActionButton } from "@/components/ui/action-button";
 import { EmptyState } from "@/components/ui/empty-state";
 
 interface ChatListItem {
@@ -110,13 +111,10 @@ export default function ChatHistoryPage() {
             Your past conversations with the agent. Click one to continue where you left off.
           </p>
         </div>
-        <Link
-          href="/chat"
-          className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-text-inverted transition-opacity hover:opacity-90"
-        >
+        <ActionButton variant="primary" size="sm" href="/chat">
           <PlusIcon />
           New chat
-        </Link>
+        </ActionButton>
       </header>
 
       {loading && <p className="text-[13px] text-text-tertiary">Loading…</p>}
@@ -127,13 +125,10 @@ export default function ChatHistoryPage() {
           title="No past chats yet"
           description="Open the Chat tab and ask the agent a question. Your conversations will appear here so you can continue them later."
           action={
-            <Link
-              href="/chat"
-              className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-text-inverted"
-            >
+            <ActionButton variant="primary" size="sm" href="/chat">
               <PlusIcon />
               Start a chat
-            </Link>
+            </ActionButton>
           }
         />
       )}
