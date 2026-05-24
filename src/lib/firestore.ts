@@ -88,6 +88,10 @@ export function dashboardsIn(clientId: string, workspaceId: string) {
   return workspaceDoc(clientId, workspaceId).collection("dashboards");
 }
 
+export function insightsIn(clientId: string, workspaceId: string) {
+  return workspaceDoc(clientId, workspaceId).collection("insights");
+}
+
 export function userDoc(userId: string) {
   return db().collection("users").doc(userId);
 }
