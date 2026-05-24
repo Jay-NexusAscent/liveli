@@ -2,6 +2,8 @@ import { z } from "zod";
 import { FieldValue } from "@google-cloud/firestore";
 import { dashboardsIn } from "@/lib/firestore";
 import type { ToolDefinition } from "./types";
+import type { FilterDef } from "@/lib/dashboards/types";
+import { narrowFilter } from "@/lib/dashboards/filter-narrow";
 
 // Schemas mirror make-dashboard.ts. Inline (not imported) for the same
 // Gemini function-declaration robustness reasons.
@@ -32,6 +34,23 @@ const EChartsOption = z.object({
   series: z.array(SeriesSchema).min(1).max(8),
 });
 
+// Per-chart filter re-render shape — see make-dashboard.ts for the
+// full semantics. The xAxis is optional because KPI charts have no
+// axis; series is required because every chart has at least one
+// series and we need to know which column populates it.
+const DataMappingSchema = z.object({
+  xAxis: z.object({ dataColumn: z.string().min(1) }).optional(),
+  series: z
+    .array(
+      z.object({
+        dataColumn: z.string().min(1),
+        name: z.string().optional(),
+      })
+    )
+    .min(1)
+    .max(8),
+});
+
 const ChartSpec = z.object({
   title: z.string().min(1).max(120),
   echartsOption: EChartsOption,
@@ -39,6 +58,52 @@ const ChartSpec = z.object({
   // model can revise sizes per chart when the user asks ("make the
   // revenue chart full-width").
   colSpan: z.enum(["small", "medium", "large"]).optional(),
+  // ─── filter-driven re-render (LIVELI-122 Phase 2) ─────────────────
+  // BOTH must be present for the render endpoint to re-run the chart;
+  // partial config falls back to static rendering. Omit both for
+  // charts that don't depend on filters.
+  sourceSql: z.string().min(1).optional(),
+  dataMapping: DataMappingSchema.optional(),
+});
+
+// ─── filter input schema (Gemini-flat shape) ─────────────────────────
+// Flat single-object shape because Gemini's Schema proto rejects
+// z.union(). The handler narrows back to the strict FilterDef union
+// via the shared narrowFilter helper.
+
+const DateRangeDefault = z.object({
+  mode: z.enum(["preset", "custom"]),
+  preset: z
+    .enum([
+      "last_7_days",
+      "last_30_days",
+      "last_90_days",
+      "last_year",
+      "this_month",
+      "last_month",
+      "this_quarter",
+      "this_year",
+      "year_to_date",
+    ])
+    .optional(),
+  start: z.string().optional(),
+  end: z.string().optional(),
+});
+
+const FilterInputSchema = z.object({
+  id: z
+    .string()
+    .min(1)
+    .max(40)
+    .describe("Stable identifier used in sourceSql placeholders, e.g. 'date_range'."),
+  type: z.enum(["date_range", "granularity", "select", "multi_select"]),
+  label: z.string().min(1).max(60),
+  column: z.string().optional(),
+  options: z.array(z.string()).max(200).optional(),
+  defaultDateRange: DateRangeDefault.optional(),
+  defaultGranularity: z.enum(["DAY", "WEEK", "MONTH", "QUARTER", "YEAR"]).optional(),
+  defaultSelect: z.string().optional(),
+  defaultMultiSelect: z.array(z.string()).max(200).optional(),
 });
 
 const Input = z.object({
@@ -54,6 +119,13 @@ const Input = z.object({
     .max(8)
     .describe(
       "FULL replacement list of charts that compose this dashboard. Include EVERY chart that should be on the dashboard, not just the changed ones."
+    ),
+  filters: z
+    .array(FilterInputSchema)
+    .max(6)
+    .optional()
+    .describe(
+      "FULL replacement list of dashboard filters. To keep existing filters, repeat them. To remove all filters, pass [] (or omit and the dashboard's filters[] is cleared)."
     ),
 });
 
@@ -89,10 +161,11 @@ function normalizeInput(raw: unknown): unknown {
 export const updateDashboardTool: ToolDefinition = {
   name: "update_dashboard",
   description:
-    "Update an EXISTING dashboard's title, description, and FULL chart list. Use when the user is editing a dashboard and asks for changes — the `dashboardId` comes from the edit context. The `charts` field REPLACES the existing list entirely, so include every chart that should be on the dashboard after the edit (not just the changed ones). Do NOT use to create a new dashboard — use `make_dashboard` for that.",
+    "Update an EXISTING dashboard's title, description, FULL chart list, and FULL filter list. Use when the user is editing a dashboard and asks for changes — the `dashboardId` comes from the edit context. Both `charts` and `filters` REPLACE the existing lists entirely, so include every chart and filter that should be on the dashboard after the edit (not just the changed ones). Do NOT use to create a new dashboard — use `make_dashboard` for that.",
   inputSchema: Input,
   handler: async (raw, ctx) => {
-    const { dashboardId, title, description, charts } = Input.parse(normalizeInput(raw));
+    const { dashboardId, title, description, charts, filters } = Input.parse(normalizeInput(raw));
+    const narrowedFilters: FilterDef[] = (filters ?? []).map(narrowFilter);
     const ref = dashboardsIn(ctx.clientId, ctx.workspaceId).doc(dashboardId);
     const snap = await ref.get();
     if (!snap.exists) {
@@ -105,15 +178,28 @@ export const updateDashboardTool: ToolDefinition = {
       title: c.title,
       spec: c.echartsOption as unknown,
       ...(c.colSpan ? { colSpan: c.colSpan } : {}),
+      ...(c.sourceSql ? { sourceSql: c.sourceSql } : {}),
+      ...(c.dataMapping ? { dataMapping: c.dataMapping } : {}),
     }));
     await ref.update({
       title,
       description: description ?? null,
       charts: chartSpecs,
+      // Always write filters — when caller passes [] (or omits, → []
+      // after narrowFilter map) we explicitly clear the field rather
+      // than leave a stale list. This matches the FULL-replacement
+      // semantic already used for charts.
+      filters: narrowedFilters,
       updatedAt: FieldValue.serverTimestamp(),
     });
     return {
-      content: { ok: true, dashboardId, title, chartCount: charts.length },
+      content: {
+        ok: true,
+        dashboardId,
+        title,
+        chartCount: charts.length,
+        filterCount: narrowedFilters.length,
+      },
       clientRender: {
         kind: "dashboard",
         dashboardId,
