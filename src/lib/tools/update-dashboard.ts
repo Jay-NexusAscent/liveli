@@ -2,7 +2,7 @@ import { z } from "zod";
 import { FieldValue } from "@google-cloud/firestore";
 import { dashboardsIn } from "@/lib/firestore";
 import type { ToolDefinition } from "./types";
-import type { FilterDef } from "@/lib/dashboards/types";
+import { COL_SPAN_VALUES, type FilterDef } from "@/lib/dashboards/types";
 import { narrowFilter } from "@/lib/dashboards/filter-narrow";
 
 // Schemas mirror make-dashboard.ts. Inline (not imported) for the same
@@ -57,7 +57,7 @@ const ChartSpec = z.object({
   // See make-dashboard.ts for full colSpan semantics. Same enum; the
   // model can revise sizes per chart when the user asks ("make the
   // revenue chart full-width", "shrink the KPI cards").
-  colSpan: z.enum(["extra-small", "small", "medium", "large"]).optional(),
+  colSpan: z.enum(COL_SPAN_VALUES).optional(),
   // ─── filter-driven re-render (LIVELI-122 Phase 2) ─────────────────
   // BOTH must be present for the render endpoint to re-run the chart;
   // partial config falls back to static rendering. Omit both for

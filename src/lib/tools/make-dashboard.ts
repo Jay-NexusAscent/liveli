@@ -2,7 +2,7 @@ import { z } from "zod";
 import { FieldValue } from "@google-cloud/firestore";
 import { dashboardsIn } from "@/lib/firestore";
 import type { ToolDefinition } from "./types";
-import type { FilterDef } from "@/lib/dashboards/types";
+import { COL_SPAN_VALUES, type FilterDef } from "@/lib/dashboards/types";
 import { narrowFilter } from "@/lib/dashboards/filter-narrow";
 
 /**
@@ -74,7 +74,7 @@ const ChartSpec = z.object({
   // Use `extra-small` for KPI / single-value charts; the agent should
   // prefer it whenever the chart spec is a single big number rather
   // than a multi-series visualisation.
-  colSpan: z.enum(["extra-small", "small", "medium", "large"]).optional(),
+  colSpan: z.enum(COL_SPAN_VALUES).optional(),
   // ─── filter-driven re-render (LIVELI-122 Phase 2) ─────────────────
   // BOTH fields must be present for the render endpoint to re-run the
   // chart. If either is missing, the chart falls back to its static

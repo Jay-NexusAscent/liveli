@@ -17,6 +17,7 @@ import { ChartRenderer } from "@/components/chat/chart-renderer";
 import { defaultFilterValues } from "@/lib/dashboards/filter-defaults";
 import type {
   ChartDataMapping,
+  ColSpan,
   FilterDef,
   FilterValues,
 } from "@/lib/dashboards/types";
@@ -37,19 +38,6 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-
-/**
- * Per-chart width bucket on a dashboard's 4-column grid.
- *
- *   small  → 1/4 width  (KPI tiles)
- *   medium → 1/2 width  (default; bar, line, area, scatter, donut)
- *   large  → full width (hero time-series)
- *
- * Stored as a string enum (not a number) so the data model stays
- * stable if we ever change the underlying grid resolution. The UI
- * layer maps to col-span classes below.
- */
-type ColSpan = "extra-small" | "small" | "medium" | "large";
 
 const DEFAULT_COL_SPAN: ColSpan = "medium";
 
