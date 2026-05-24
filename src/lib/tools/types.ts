@@ -39,6 +39,14 @@ export interface ToolResult {
         title: string;
         description?: string;
         charts: Array<{ order: number; title: string; spec: unknown }>;
+      }
+    | {
+        // propose_insights — list of proposals rendered inline in chat
+        // as cards with per-card Save buttons. The proposals are NOT
+        // yet persisted; user clicks Save to POST each one to
+        // /api/insights. See InsightProposal shape in @/lib/streaming.
+        kind: "insight-proposals";
+        proposals: import("@/lib/streaming").InsightProposal[];
       };
 }
 

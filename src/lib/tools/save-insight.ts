@@ -1,14 +1,6 @@
 import { z } from "zod";
-import { FieldValue } from "@google-cloud/firestore";
-import { insightsIn } from "@/lib/firestore";
-import { safeQuery } from "@/lib/bigquery";
-import { applyRule, extractScalarValue } from "@/lib/insights/evaluate";
-import type {
-  Insight,
-  InsightCategory,
-  InsightStatus,
-  RuleType,
-} from "@/lib/insights/types";
+import { createInsight } from "@/lib/insights/create";
+import type { InsightCategory, RuleType } from "@/lib/insights/types";
 import type { ToolDefinition } from "./types";
 
 /**
@@ -17,6 +9,12 @@ import type { ToolDefinition } from "./types";
  * different threshold semantics) is collapsed into a single
  * `ruleType` enum + a single `threshold` number; semantics differ by
  * ruleType (pct vs absolute) but the shape is uniform.
+ *
+ * IMPORTANT: keep this shape in sync with the per-proposal schema in
+ * propose-insights.ts. When the user clicks Save on a proposal card,
+ * the UI POSTs the proposal payload straight to /api/insights, which
+ * runs the SAME createInsight() helper. If the two schemas drift,
+ * agent-direct-save and user-accept-proposal silently diverge.
  */
 const Input = z.object({
   title: z
@@ -67,68 +65,28 @@ const Input = z.object({
 export const saveInsightTool: ToolDefinition = {
   name: "save_insight",
   description:
-    "Save a live-evaluated alert insight. The insight runs `sourceSql` once at save time to seed the baseline, and again on each re-evaluation (manual button or scheduled cron). Fires when the rule's condition is met. Use this when the user asks to TRACK or MONITOR something, OR when they ask you to suggest insights from their data.",
+    "Save a live-evaluated alert insight DIRECTLY (no preview step). The insight runs `sourceSql` once at save time to seed the baseline, and again on each re-evaluation (manual button or scheduled cron). Fires when the rule's condition is met. Use ONLY when the user has asked to TRACK / MONITOR / ALERT on a SPECIFIC metric they've already named (e.g. 'track my AOV weekly'). For 'suggest insights' or 'recommend insights' requests, use `propose_insights` instead so the user can pick.",
   inputSchema: Input,
   handler: async (raw, ctx) => {
     const input = Input.parse(raw);
-
-    // Run the SQL once at save time. Two goals:
-    //   1. Verify the query is valid + meets the 1-row-1-numeric-col
-    //      contract before we persist anything — otherwise we'd have
-    //      a permanently-broken insight that errors on every eval.
-    //   2. Seed currentValue so value_* rules can fire immediately
-    //      and the UI has something to display on the first render.
-    const queryResult = await safeQuery(input.sourceSql, {
-      maxRows: 2, // 2 so we can detect "should have been 1" cleanly
-      context: {
-        clientId: ctx.clientId,
-        workspaceId: ctx.workspaceId,
-        userId: ctx.userId,
+    const result = await createInsight(
+      {
+        title: input.title,
+        description: input.description,
+        category: input.category as InsightCategory,
+        sourceSql: input.sourceSql,
+        sourceConnector: input.sourceConnector,
+        ruleType: input.ruleType as RuleType,
+        threshold: input.threshold,
+        prefill: input.prefill,
       },
-    });
-    const currentValue = extractScalarValue(queryResult.rows);
-
-    // First evaluation — no previousValue yet. value_* rules can fire
-    // immediately; change_pct_* rules return idle (need a baseline).
-    const initialStatus: InsightStatus = applyRule(
-      { type: input.ruleType as RuleType, threshold: input.threshold },
-      currentValue,
-      null
+      ctx
     );
-
-    const ref = insightsIn(ctx.clientId, ctx.workspaceId).doc();
-    const docData: Omit<Insight, "id" | "createdAt" | "firedAt" | "lastEvaluatedAt"> & {
-      createdAt: FirebaseFirestore.FieldValue;
-      lastEvaluatedAt: FirebaseFirestore.FieldValue;
-      firedAt: FirebaseFirestore.FieldValue | null;
-    } = {
-      title: input.title,
-      description: input.description,
-      category: input.category as InsightCategory,
-      sourceSql: input.sourceSql,
-      ...(input.sourceConnector ? { sourceConnector: input.sourceConnector } : {}),
-      rule: { type: input.ruleType as RuleType, threshold: input.threshold },
-      currentValue,
-      previousValue: null,
-      status: initialStatus,
-      firedAt: initialStatus === "fired" ? FieldValue.serverTimestamp() : null,
-      lastEvaluatedAt: FieldValue.serverTimestamp(),
-      lastEvalError: null,
-      prefill: input.prefill,
-      createdBy: ctx.userId,
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: null,
-    };
-    await ref.set(docData);
 
     return {
       content: {
         ok: true,
-        insightId: ref.id,
-        title: input.title,
-        currentValue,
-        status: initialStatus,
-        firedImmediately: initialStatus === "fired",
+        ...result,
       },
       // No clientRender — the chat just gets prose confirmation and
       // the user navigates to /insights to see the saved alert.
