@@ -9,8 +9,13 @@ environments:
 plugins:
   extractors:
     - name: tap-intercom
-      variant: meltanolabs
-      pip_url: git+https://github.com/MeltanoLabs/tap-intercom.git
+      # tap-intercom is maintained by Stitch Data (singer-io), not
+      # MeltanoLabs — the hub registry rejects `variant: meltanolabs`
+      # for this tap. Available variants per hub: singer-io (default),
+      # airbyte, ticketswap, bytecodeio. PyPI package `tap-intercom`
+      # resolves cleanly.
+      variant: singer-io
+      pip_url: tap-intercom
       # Required env at runtime:
       #   TAP_INTERCOM_ACCESS_TOKEN  (Intercom Access Token from
       #                               Settings → Developer Hub → Your apps)

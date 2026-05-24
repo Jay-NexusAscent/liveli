@@ -17,6 +17,7 @@ import { ChartRenderer } from "@/components/chat/chart-renderer";
 import { defaultFilterValues } from "@/lib/dashboards/filter-defaults";
 import type {
   ChartDataMapping,
+  ColSpan,
   FilterDef,
   FilterValues,
 } from "@/lib/dashboards/types";
@@ -38,19 +39,6 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
-/**
- * Per-chart width bucket on a dashboard's 4-column grid.
- *
- *   small  → 1/4 width  (KPI tiles)
- *   medium → 1/2 width  (default; bar, line, area, scatter, donut)
- *   large  → full width (hero time-series)
- *
- * Stored as a string enum (not a number) so the data model stays
- * stable if we ever change the underlying grid resolution. The UI
- * layer maps to col-span classes below.
- */
-type ColSpan = "small" | "medium" | "large";
-
 const DEFAULT_COL_SPAN: ColSpan = "medium";
 
 /**
@@ -58,23 +46,32 @@ const DEFAULT_COL_SPAN: ColSpan = "medium";
  * dashboard 4-col grid. Written out as full literal strings so
  * Tailwind's content-detection picks them up — never compose class
  * names dynamically with concatenation (JIT will miss them).
+ *
+ * Each "block unit" is `md:auto-rows-[180px]` tall on the grid
+ * container. Small / Medium / Large span 2 row units (≈376px with
+ * the gap) which is comfortable for bar / line / pie charts.
+ * Extra small spans only 1 row unit (180px) — designed for single-
+ * value KPI cards where a full-height tile is wasted real estate.
  */
 const COL_SPAN_CLASSES: Record<ColSpan, string> = {
-  small: "md:col-span-1",
-  medium: "md:col-span-2",
-  large: "md:col-span-4",
+  "extra-small": "md:col-span-1 md:row-span-1",
+  small: "md:col-span-1 md:row-span-2",
+  medium: "md:col-span-2 md:row-span-2",
+  large: "md:col-span-4 md:row-span-2",
 };
 
 const COL_SPAN_LABELS: Record<ColSpan, string> = {
-  small: "Small (¼)",
-  medium: "Medium (½)",
-  large: "Large (full)",
+  "extra-small": "Extra small",
+  small: "Small",
+  medium: "Medium",
+  large: "Large",
 };
 
 const COL_SPAN_BUTTON_LABELS: Record<ColSpan, string> = {
-  small: "¼",
-  medium: "½",
-  large: "Full",
+  "extra-small": "XS",
+  small: "S",
+  medium: "M",
+  large: "L",
 };
 
 interface SavedChart {
@@ -693,12 +690,17 @@ export default function DashboardsPage() {
                     strategy={rectSortingStrategy}
                   >
                     {/*
-                      4-column grid. Each tile picks col-span-1/2/4
-                      based on its colSpan (Small / Medium / Large).
+                      4-column grid with 180px row units. Each tile
+                      picks (col-span-N, row-span-M) based on its
+                      colSpan:
+                        Extra small — col-span-1 row-span-1 (¼ wide,  half tall)
+                        Small       — col-span-1 row-span-2 (¼ wide,  full tall)
+                        Medium      — col-span-2 row-span-2 (½ wide,  full tall)
+                        Large       — col-span-4 row-span-2 (full,    full tall)
                       Existing charts without a colSpan field render
                       at Medium so layouts stay identical to before.
                     */}
-                    <div className="grid gap-4 md:grid-cols-4">
+                    <div className="grid gap-4 md:grid-cols-4 md:auto-rows-[180px]">
                       {d.charts.map((c, i) => (
                         <SortableChartTile
                           key={c._localId}
@@ -874,6 +876,7 @@ function SortableChartTile({
         spec={spec}
         renderError={renderError}
         onExpand={onExpand}
+        compact={colSpan === "extra-small"}
         dragHandle={
           <button
             type="button"
@@ -944,7 +947,7 @@ function SizePicker({
           aria-label="Chart width"
           className="absolute right-0 top-full z-20 mt-1 w-40 rounded-lg border border-border bg-surface p-1 shadow-lg"
         >
-          {(["small", "medium", "large"] as const).map((size) => {
+          {(["extra-small", "small", "medium", "large"] as const).map((size) => {
             const selected = size === current;
             return (
               <button
@@ -983,6 +986,7 @@ function ChartTile({
   dragHandle,
   sizePicker,
   renderError,
+  compact = false,
 }: {
   title: string;
   spec: unknown;
@@ -1001,9 +1005,17 @@ function ChartTile({
   // error message. We surface it as a small inline banner so the
   // user doesn't read stale numbers without knowing they're stale.
   renderError?: string;
+  /**
+   * Extra-small tiles only occupy 1 row unit (≈180px). Compact mode
+   * shrinks the chart canvas to fit so the tile doesn't overflow.
+   * KPI-style single-value charts read fine at this height; bar /
+   * line / pie charts will look cramped — those should use Small
+   * or larger.
+   */
+  compact?: boolean;
 }) {
   return (
-    <div className="card-elevated overflow-hidden">
+    <div className="card-elevated flex h-full flex-col overflow-hidden">
       <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2.5">
         <div className="flex min-w-0 items-center gap-1">
           {dragHandle}
@@ -1053,7 +1065,7 @@ function ChartTile({
             </span>
           </div>
         )}
-        <ChartRenderer spec={spec} height={260} />
+        <ChartRenderer spec={spec} height={compact ? 110 : 260} />
       </div>
     </div>
   );

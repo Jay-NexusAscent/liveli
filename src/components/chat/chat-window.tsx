@@ -9,15 +9,16 @@ import { ToolCallBlock } from "./tool-call-block";
 import { TableBlock } from "./table-block";
 import { DashboardBlock } from "./dashboard-block";
 import { InsightProposalsBlock } from "./insight-proposals-block";
+import type { ColSpan } from "@/lib/dashboards/types";
 
 type DashboardChart = {
   order: number;
   title: string;
   spec: unknown;
-  // Per-tile width on the dashboard grid. Mirror of the enum on the
-  // dashboards page; threaded through so the inline preview shown
-  // after make_dashboard matches the /dashboards rendering.
-  colSpan?: "small" | "medium" | "large";
+  // Per-tile width on the dashboard grid. Threaded through so the
+  // inline preview shown after make_dashboard matches the
+  // /dashboards rendering exactly.
+  colSpan?: ColSpan;
 };
 
 type MessageBlock =
