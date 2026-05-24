@@ -1,156 +1,227 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  ArrowRightIcon,
   InsightIcon,
   SparkleIcon,
-  TrendUpIcon,
+  TrashIcon,
   TrendDownIcon,
-  ArrowRightIcon,
+  TrendUpIcon,
 } from "@/components/icons";
+import type {
+  FirestoreTimestamp,
+  Insight,
+  InsightCategory,
+  InsightRule,
+  RuleType,
+} from "@/lib/insights/types";
 
 const PREFILL_STORAGE_KEY = "liveli.chatPrefill";
 
 /**
- * Mocked insights for the Phase-1 UI scaffold. The actual generation
- * agent is tracked in LIVELI-91 — when it ships, this static list is
- * replaced by a Firestore-backed feed keyed by clientId/workspaceId.
- *
- * Each `prefill` is the natural question that opens this insight in
- * the chat for deeper exploration. Clicking "Query further" stashes
- * the prompt in sessionStorage under PREFILL_STORAGE_KEY and routes
- * to /chat, where ChatWindow reads it on mount and pre-fills the
- * input (then clears it on send).
+ * Default suggest prefill — fires the agent's "look at data and
+ * propose 3-5 insights" flow via the chat prefill mechanism. The same
+ * tool (save_insight) handles both user-authored and agent-suggested
+ * insights, so there's no separate code path here — just a prompt
+ * that nudges the agent into proposal mode.
  */
-type Trend = "up" | "down" | "flat";
-type Category = "Sales" | "Customer" | "Operational" | "Growth";
+const SUGGEST_PREFILL =
+  "Look at my data and create 3-5 alert insights worth tracking. For each: pick a metric, write a SELECT that returns exactly one row with one numeric column, choose an appropriate rule type and threshold that would be meaningful to act on, then save it with save_insight. Walk me through what you're saving as you go.";
 
-interface MockInsight {
-  id: string;
-  category: Category;
-  title: string;
-  description: string;
-  metric?: string;
-  trend?: Trend;
-  source: string;
-  freshness: string;
-  isNew?: boolean;
-  prefill: string;
-}
+/**
+ * Server-side Insight shape with the local id added. Spread from the
+ * /api/insights response. Matches Insight from @/lib/insights/types
+ * with the id surfaced as a top-level field (Firestore docs don't
+ * include their own id; we attach it server-side in GET /api/insights).
+ */
+type ApiInsight = Insight & { id: string };
 
-const MOCK_INSIGHTS: MockInsight[] = [
-  {
-    id: "i1",
-    category: "Sales",
-    title: "Average order value up 8% this week",
-    description:
-      "AOV climbed from £42.10 to £45.50 over the last 7 days, driven by larger basket sizes on Tuesdays and Wednesdays.",
-    metric: "+8%",
-    trend: "up",
-    source: "Postgres Demo",
-    freshness: "2h ago",
-    isNew: true,
-    prefill:
-      "Break down the 8% AOV increase this week — which product categories drove it, and which days saw the biggest lift?",
-  },
-  {
-    id: "i2",
-    category: "Sales",
-    title: "Revenue down 12% week-over-week",
-    description:
-      "Total revenue dropped from £18.4k to £16.2k. The decline is concentrated in returning customers, not new acquisitions.",
-    metric: "−12%",
-    trend: "down",
-    source: "Postgres Demo",
-    freshness: "2h ago",
-    isNew: true,
-    prefill:
-      "Investigate the 12% revenue drop — show me which customer cohorts contributed most, broken down by country and product category.",
-  },
-  {
-    id: "i3",
-    category: "Customer",
-    title: "5 high-value customers haven't ordered in 30 days",
-    description:
-      "Five customers in the top revenue decile haven't placed an order since 2026-04-19. Worth a re-engagement nudge.",
-    source: "Postgres Demo",
-    freshness: "5h ago",
-    prefill:
-      "Show me the 5 high-value customers who haven't ordered in 30 days, including their previous order history and average order value.",
-  },
-  {
-    id: "i4",
-    category: "Growth",
-    title: "New customer cohort emerging from Spain",
-    description:
-      "Spanish signups up 4× in the last 14 days vs. the prior 14. None of these customers have placed a second order yet — early funnel.",
-    metric: "4×",
-    trend: "up",
-    source: "Postgres Demo",
-    freshness: "1d ago",
-    prefill:
-      "Tell me more about the Spanish customer cohort — when they signed up, what they've purchased, and how they compare to the German and French cohorts at the same stage.",
-  },
-  {
-    id: "i5",
-    category: "Sales",
-    title: "Tuesday is your peak sales day",
-    description:
-      "Tuesdays consistently outperform other weekdays by 18% on average. Friday is the weakest, 22% below Tuesday.",
-    metric: "+18%",
-    trend: "up",
-    source: "Postgres Demo",
-    freshness: "1d ago",
-    prefill:
-      "Show me a chart of sales by day of week for the last 90 days, and highlight what makes Tuesdays different.",
-  },
-  {
-    id: "i6",
-    category: "Operational",
-    title: "Postgres sync taking 4× longer this week",
-    description:
-      "Average sync time rose from 38s to 2m 32s. Likely a row-count or schema-change effect — worth checking before it impacts freshness.",
-    metric: "4×",
-    trend: "down",
-    source: "Postgres Demo",
-    freshness: "3h ago",
-    prefill:
-      "Why are my Postgres syncs taking longer this week? Show me sync durations and row counts over the last 30 days.",
-  },
-];
-
-const CATEGORY_STYLES: Record<Category, string> = {
+const CATEGORY_STYLES: Record<InsightCategory, string> = {
   Sales: "bg-accent-muted text-accent",
   Customer: "bg-[#10B981]/15 text-[#10B981]",
   Operational: "bg-[#F59E0B]/15 text-[#F59E0B]",
   Growth: "bg-[#8B5CF6]/15 text-[#8B5CF6]",
 };
 
-function TrendBadge({ trend, metric }: { trend?: Trend; metric?: string }) {
-  if (!metric) return null;
-  const isUp = trend === "up";
-  const isDown = trend === "down";
-  const color = isUp
-    ? "text-[#10B981]"
-    : isDown
-      ? "text-[#EF4444]"
-      : "text-text-tertiary";
-  return (
-    <div className={`flex items-center gap-1 text-[13px] font-mono tabular-nums ${color}`}>
-      {isUp && <TrendUpIcon />}
-      {isDown && <TrendDownIcon />}
-      <span>{metric}</span>
-    </div>
-  );
+/**
+ * Human-readable rule label. Kept here (not imported from
+ * lib/insights/evaluate) because that module pulls in Firestore +
+ * BigQuery clients which we don't want bundled into the client
+ * component.
+ */
+function describeRuleClient(rule: InsightRule): string {
+  switch (rule.type) {
+    case "change_pct_above":
+      return `Fires when value rises by more than ${rule.threshold}%`;
+    case "change_pct_below":
+      return `Fires when value drops by more than ${rule.threshold}%`;
+    case "value_above":
+      return `Fires when value exceeds ${rule.threshold}`;
+    case "value_below":
+      return `Fires when value falls below ${rule.threshold}`;
+  }
+}
+
+/**
+ * Compute change percent between current and previous values. Returns
+ * null when no comparison is meaningful (no previous value, or
+ * previous value is zero — division-by-zero). Sign indicates direction.
+ */
+function changePct(current: number | null, previous: number | null): number | null {
+  if (current == null || previous == null || previous === 0) return null;
+  return ((current - previous) / Math.abs(previous)) * 100;
+}
+
+/**
+ * Format a tracked value for display. Insights don't carry unit hints
+ * in v1 — we just render the number with sensible precision. Large
+ * numbers get thousands separators; small numbers get up to 2 decimals.
+ * Bigger formatting (currency / percent) can come when the agent
+ * starts emitting a unit hint per insight.
+ */
+function formatValue(v: number | null): string {
+  if (v == null) return "—";
+  if (Math.abs(v) >= 1000) return v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+/**
+ * Lightweight "n ago" formatter for Firestore timestamps. Exact
+ * minute/hour/day buckets — anything fancier (Intl.RelativeTimeFormat
+ * with smart pluralisation) is overkill for these cards.
+ */
+function timeAgo(ts: FirestoreTimestamp | null | undefined): string {
+  if (!ts) return "never";
+  const seconds = Math.floor(Date.now() / 1000 - ts._seconds);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }
 
 export default function InsightsPage() {
   const router = useRouter();
+  const [insights, setInsights] = useState<ApiInsight[]>([]);
+  const [loading, setLoading] = useState(true);
+  // Per-id pending state for re-evaluate / delete — prevents
+  // double-clicks and lets the action button dim while in-flight.
+  const [evaluating, setEvaluating] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState<Set<string>>(new Set());
+  // Bulk-evaluate state. Single boolean — only one bulk run at a time.
+  const [evaluatingAll, setEvaluatingAll] = useState(false);
 
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/insights");
+        if (res.ok) {
+          const items: ApiInsight[] = (await res.json()).items ?? [];
+          setInsights(items);
+        }
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  /**
+   * Stash a prompt and navigate to /chat. Same mechanism the old
+   * mock-data version used — ChatWindow reads liveli.chatPrefill on
+   * mount and pre-fills the input.
+   */
   const openInChat = (prefill: string) => {
     sessionStorage.setItem(PREFILL_STORAGE_KEY, prefill);
     router.push("/chat");
   };
+
+  /**
+   * Re-evaluate one insight via /api/insights/<id>/evaluate. Updates
+   * the card in place from the response — no full refetch needed.
+   */
+  const reevaluate = async (id: string) => {
+    setEvaluating((s) => new Set(s).add(id));
+    try {
+      const res = await fetch(`/api/insights/${id}/evaluate`, { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const payload = await res.json();
+      if (payload.insight) {
+        setInsights((items) =>
+          items.map((i) => (i.id === id ? payload.insight : i))
+        );
+      } else if (payload.error) {
+        // Eval ran but failed (SQL error etc) — fetch fresh row so
+        // the lastEvalError field shows on the card.
+        const fresh = await fetch("/api/insights");
+        if (fresh.ok) {
+          const items: ApiInsight[] = (await fresh.json()).items ?? [];
+          setInsights(items);
+        }
+      }
+    } catch (err) {
+      alert(`Couldn't re-evaluate: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setEvaluating((s) => {
+        const next = new Set(s);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  /**
+   * Re-evaluate ALL insights in the workspace. Fires one bulk request
+   * to /api/insights/evaluate-all, then refetches the full list so
+   * every card reflects the new state. Heavier than per-card but
+   * easier to reason about than threading per-id updates through the
+   * bulk-response shape.
+   */
+  const reevaluateAll = async () => {
+    if (insights.length === 0) return;
+    setEvaluatingAll(true);
+    try {
+      const res = await fetch("/api/insights/evaluate-all", { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const fresh = await fetch("/api/insights");
+      if (fresh.ok) {
+        const items: ApiInsight[] = (await fresh.json()).items ?? [];
+        setInsights(items);
+      }
+    } catch (err) {
+      alert(`Couldn't re-evaluate all: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setEvaluatingAll(false);
+    }
+  };
+
+  const deleteInsight = async (id: string, title: string) => {
+    if (!confirm(`Delete insight "${title}"? This can't be undone.`)) return;
+    setDeleting((s) => new Set(s).add(id));
+    try {
+      const res = await fetch(`/api/insights/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setInsights((items) => items.filter((i) => i.id !== id));
+    } catch (err) {
+      alert(`Couldn't delete: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setDeleting((s) => {
+        const next = new Set(s);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  // Split into fired + idle. Fired-first ordering puts active alerts
+  // at the top where the user is most likely to look. Within each
+  // bucket, preserve the server's createdAt-desc order.
+  const fired = insights.filter((i) => i.status === "fired");
+  const tracking = insights.filter((i) => i.status === "idle");
+  const isEmpty = !loading && insights.length === 0;
 
   return (
     <div className="container-page py-8">
@@ -160,69 +231,296 @@ export default function InsightsPage() {
             Insights
           </h1>
           <p className="mt-1 text-[14px] text-text-secondary">
-            Findings the agent has surfaced from your data. Click&nbsp;
-            <span className="text-text-primary">Query further</span> on any
-            insight to open it in chat and dig deeper.
+            Live-evaluated alerts the agent is watching for you. Click&nbsp;
+            <span className="text-text-primary">Open in chat</span> on any
+            insight to dig deeper, or ask the agent to suggest more.
           </p>
         </div>
-        <div className="flex items-center gap-2 rounded-md border border-border bg-elevated px-3 py-1.5 text-[12px] text-text-tertiary">
-          <SparkleIcon className="text-accent" />
-          <span>Preview — agent generation pending</span>
+        <div className="flex shrink-0 items-center gap-2">
+          {insights.length > 0 && (
+            <button
+              type="button"
+              onClick={reevaluateAll}
+              disabled={evaluatingAll}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-elevated px-3 py-1.5 text-[12px] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {evaluatingAll ? "Re-evaluating…" : "Re-evaluate all"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => openInChat(SUGGEST_PREFILL)}
+            className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-accent/90"
+          >
+            <SparkleIcon />
+            Suggest insights
+          </button>
         </div>
       </header>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {MOCK_INSIGHTS.map((insight) => (
-          <article
-            key={insight.id}
-            className="card-elevated flex flex-col gap-4 p-5"
+      {loading && <p className="text-[13px] text-text-tertiary">Loading…</p>}
+
+      {isEmpty && (
+        <div className="card-elevated flex flex-col items-center justify-center gap-3 py-20 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-accent-muted text-accent">
+            <InsightIcon className="text-accent" />
+          </div>
+          <h2 className="text-[18px] font-semibold tracking-tight text-text-primary font-heading">
+            No insights yet
+          </h2>
+          <p className="max-w-md text-[14px] text-text-secondary">
+            Insights are live-evaluated alerts. Ask the agent to suggest some
+            from your data — it&apos;ll write the SQL and pick thresholds.
+          </p>
+          <button
+            type="button"
+            onClick={() => openInChat(SUGGEST_PREFILL)}
+            className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-accent/90"
           >
-            <div className="flex items-center justify-between gap-3">
-              <span
-                className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-wider ${CATEGORY_STYLES[insight.category]}`}
-              >
-                {insight.category}
-              </span>
-              <div className="flex items-center gap-2">
-                {insight.isNew && (
-                  <span className="rounded-full bg-accent px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-white">
-                    New
-                  </span>
-                )}
-                <span className="text-[12px] text-text-tertiary">
-                  {insight.freshness}
-                </span>
-              </div>
-            </div>
+            <SparkleIcon />
+            Ask the agent to suggest insights
+          </button>
+        </div>
+      )}
 
-            <div className="flex items-start justify-between gap-3">
-              <h2 className="text-[16px] font-semibold leading-snug tracking-tight text-text-primary font-heading">
-                {insight.title}
-              </h2>
-              <TrendBadge trend={insight.trend} metric={insight.metric} />
-            </div>
+      {fired.length > 0 && (
+        <section className="mb-10">
+          <h2 className="mb-4 flex items-center gap-2 text-[13px] font-medium uppercase tracking-wider text-[color:var(--status-error)]">
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[color:var(--status-error)]" />
+            Active alerts ({fired.length})
+          </h2>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {fired.map((insight) => (
+              <InsightCard
+                key={insight.id}
+                insight={insight}
+                isFired
+                isEvaluating={evaluating.has(insight.id)}
+                isDeleting={deleting.has(insight.id)}
+                onReevaluate={() => reevaluate(insight.id)}
+                onOpenInChat={() => openInChat(insight.prefill)}
+                onDelete={() => deleteInsight(insight.id, insight.title)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
 
-            <p className="text-[13px] leading-relaxed text-text-secondary">
-              {insight.description}
-            </p>
-
-            <div className="mt-auto flex items-center justify-between gap-3 border-t border-border pt-3">
-              <span className="flex items-center gap-1.5 text-[12px] text-text-tertiary">
-                <InsightIcon className="opacity-60" />
-                <span>{insight.source}</span>
-              </span>
-              <button
-                type="button"
-                onClick={() => openInChat(insight.prefill)}
-                className="inline-flex items-center gap-1.5 rounded-md bg-accent-muted px-3 py-1.5 text-[12px] font-medium text-accent transition-colors hover:bg-accent hover:text-white"
-              >
-                Query further
-                <ArrowRightIcon className="h-3 w-3" />
-              </button>
-            </div>
-          </article>
-        ))}
-      </div>
+      {tracking.length > 0 && (
+        <section>
+          <h2 className="mb-4 text-[13px] font-medium uppercase tracking-wider text-text-tertiary">
+            Tracking ({tracking.length})
+          </h2>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {tracking.map((insight) => (
+              <InsightCard
+                key={insight.id}
+                insight={insight}
+                isFired={false}
+                isEvaluating={evaluating.has(insight.id)}
+                isDeleting={deleting.has(insight.id)}
+                onReevaluate={() => reevaluate(insight.id)}
+                onOpenInChat={() => openInChat(insight.prefill)}
+                onDelete={() => deleteInsight(insight.id, insight.title)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
+
+/**
+ * One insight card. Variant differences for fired vs idle live here —
+ * the alert badge, the change-delta callout, the slightly redder
+ * frame on fired. Keeping it one component avoids two near-identical
+ * card definitions drifting apart.
+ */
+function InsightCard({
+  insight,
+  isFired,
+  isEvaluating,
+  isDeleting,
+  onReevaluate,
+  onOpenInChat,
+  onDelete,
+}: {
+  insight: ApiInsight;
+  isFired: boolean;
+  isEvaluating: boolean;
+  isDeleting: boolean;
+  onReevaluate: () => void;
+  onOpenInChat: () => void;
+  onDelete: () => void;
+}) {
+  const pct = changePct(insight.currentValue, insight.previousValue);
+  const ruleTypeIsChange =
+    insight.rule.type === "change_pct_above" ||
+    insight.rule.type === "change_pct_below";
+
+  return (
+    <article
+      className={`card-elevated flex flex-col gap-4 p-5 ${
+        isFired ? "border-[color:var(--status-error)]/40" : ""
+      }`}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <span
+          className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-wider ${CATEGORY_STYLES[insight.category]}`}
+        >
+          {insight.category}
+        </span>
+        <div className="flex items-center gap-2">
+          {isFired && (
+            <span className="rounded-full bg-[color:var(--status-error)]/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[color:var(--status-error)]">
+              Fired {timeAgo(insight.firedAt)}
+            </span>
+          )}
+          <span className="text-[12px] text-text-tertiary" title={`Last evaluated ${timeAgo(insight.lastEvaluatedAt)}`}>
+            {timeAgo(insight.lastEvaluatedAt)}
+          </span>
+        </div>
+      </div>
+
+      <div className="flex items-start justify-between gap-3">
+        <h2 className="text-[16px] font-semibold leading-snug tracking-tight text-text-primary font-heading">
+          {insight.title}
+        </h2>
+        <ValueBadge
+          current={insight.currentValue}
+          previous={insight.previousValue}
+          pct={pct}
+          ruleType={insight.rule.type}
+        />
+      </div>
+
+      <p className="text-[13px] leading-relaxed text-text-secondary">
+        {insight.description}
+      </p>
+
+      <p className="text-[12px] text-text-tertiary">
+        {describeRuleClient(insight.rule)}
+        {ruleTypeIsChange && insight.previousValue == null && (
+          <span className="ml-1 italic">
+            (needs another evaluation to compare against)
+          </span>
+        )}
+      </p>
+
+      {insight.lastEvalError && (
+        <div
+          className="rounded-md border border-[color:var(--status-error)]/30 bg-[color:var(--status-error)]/10 px-2.5 py-1.5 text-[12px] text-[color:var(--status-error)]"
+          role="status"
+        >
+          Last evaluation failed.{" "}
+          <span className="text-text-tertiary" title={insight.lastEvalError}>
+            (details)
+          </span>
+        </div>
+      )}
+
+      <div className="mt-auto flex items-center justify-between gap-3 border-t border-border pt-3">
+        <span className="flex min-w-0 items-center gap-1.5 text-[12px] text-text-tertiary">
+          <InsightIcon className="opacity-60" />
+          <span className="truncate">{insight.sourceConnector ?? "Custom SQL"}</span>
+        </span>
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={onReevaluate}
+            disabled={isEvaluating}
+            className="rounded-md px-2 py-1 text-[12px] text-text-secondary transition-colors hover:bg-hover hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isEvaluating ? "…" : "Re-evaluate"}
+          </button>
+          <button
+            type="button"
+            onClick={onOpenInChat}
+            className="inline-flex items-center gap-1.5 rounded-md bg-accent-muted px-3 py-1.5 text-[12px] font-medium text-accent transition-colors hover:bg-accent hover:text-white"
+          >
+            Open in chat
+            <ArrowRightIcon className="h-3 w-3" />
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={isDeleting}
+            aria-label={`Delete insight ${insight.title}`}
+            className="rounded-md p-1.5 text-text-tertiary transition-colors hover:bg-[color:var(--status-error)]/10 hover:text-[color:var(--status-error)] disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <TrashIcon />
+          </button>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+/**
+ * The headline value + delta to the previous evaluation. For change_pct
+ * rules we lead with the percent (the rule-relevant number); for
+ * value rules we lead with the raw value. The previous value is shown
+ * underneath when available so users can sanity-check the comparison.
+ */
+function ValueBadge({
+  current,
+  previous,
+  pct,
+  ruleType,
+}: {
+  current: number | null;
+  previous: number | null;
+  pct: number | null;
+  ruleType: RuleType;
+}) {
+  const ruleTypeIsChange = ruleType === "change_pct_above" || ruleType === "change_pct_below";
+
+  if (current == null) {
+    return <span className="text-[13px] text-text-tertiary">—</span>;
+  }
+
+  if (ruleTypeIsChange) {
+    // Lead with percent change. Previous + current shown as context.
+    if (pct == null) {
+      return (
+        <div className="flex flex-col items-end gap-0.5 text-right">
+          <span className="font-mono text-[14px] tabular-nums text-text-primary">
+            {formatValue(current)}
+          </span>
+          <span className="text-[11px] text-text-tertiary">no baseline yet</span>
+        </div>
+      );
+    }
+    const isUp = pct > 0;
+    const isDown = pct < 0;
+    const color = isUp
+      ? "text-[#10B981]"
+      : isDown
+        ? "text-[#EF4444]"
+        : "text-text-tertiary";
+    return (
+      <div className="flex flex-col items-end gap-0.5 text-right">
+        <div className={`flex items-center gap-1 font-mono text-[14px] tabular-nums ${color}`}>
+          {isUp && <TrendUpIcon />}
+          {isDown && <TrendDownIcon />}
+          <span>
+            {pct > 0 ? "+" : ""}
+            {pct.toFixed(1)}%
+          </span>
+        </div>
+        <span className="text-[11px] text-text-tertiary tabular-nums">
+          {formatValue(previous)} → {formatValue(current)}
+        </span>
+      </div>
+    );
+  }
+
+  // value_above / value_below — lead with raw value.
+  return (
+    <span className="font-mono text-[15px] tabular-nums text-text-primary">
+      {formatValue(current)}
+    </span>
+  );
+}
+
