@@ -173,15 +173,21 @@ const TAP_ENV_BUILDERS: Record<string, EnvBuilder> = {
   },
 
   "google-ads": (creds) => {
+    // Connector TYPE stays "google-ads" (hyphen) for backward compat
+    // with existing Firestore docs, Cloud Run Job names, etc. — only
+    // the underlying tap name + env var prefix changed when we
+    // migrated from hotgluexyz/tap-google-ads to Matatika/tap-googleads
+    // (the Meltano Hub renamed the tap; old name de-registered).
+    // See LIVELI-124.
     const env: Record<string, string> = {
-      TAP_GOOGLE_ADS_DEVELOPER_TOKEN: creds.developer_token,
-      TAP_GOOGLE_ADS_CLIENT_ID: creds.client_id,
-      TAP_GOOGLE_ADS_CLIENT_SECRET: creds.client_secret,
-      TAP_GOOGLE_ADS_REFRESH_TOKEN: creds.refresh_token,
-      TAP_GOOGLE_ADS_CUSTOMER_IDS: creds.customer_ids,
+      TAP_GOOGLEADS_DEVELOPER_TOKEN: creds.developer_token,
+      TAP_GOOGLEADS_CLIENT_ID: creds.client_id,
+      TAP_GOOGLEADS_CLIENT_SECRET: creds.client_secret,
+      TAP_GOOGLEADS_REFRESH_TOKEN: creds.refresh_token,
+      TAP_GOOGLEADS_CUSTOMER_IDS: creds.customer_ids,
     };
     if (creds.login_customer_id) {
-      env.TAP_GOOGLE_ADS_LOGIN_CUSTOMER_ID = creds.login_customer_id;
+      env.TAP_GOOGLEADS_LOGIN_CUSTOMER_ID = creds.login_customer_id;
     }
     return env;
   },

@@ -8,20 +8,42 @@ environments:
 
 plugins:
   extractors:
-    - name: tap-google-ads
-      variant: hotgluexyz
-      pip_url: git+https://github.com/hotgluexyz/tap-google-ads.git
+    # Renamed in the Meltano Hub registry: tap-google-ads (with hyphen)
+    # was de-registered; the canonical name is now tap-googleads. We
+    # use the Matatika variant (Hub default, gold-tier Active+Stable).
+    # See LIVELI-124 for the migration rationale.
+    #
+    # The internal Liveli connector type stays `google-ads` (Cloud Run
+    # Job name, directory name, wizard, connect route) for backward
+    # compat with any existing Firestore connector docs that recorded
+    # `type: "google-ads"`. Only the tap-side naming changes here.
+    - name: tap-googleads
+      variant: matatika
+      pip_url: git+https://github.com/Matatika/tap-googleads.git
       # Required env at runtime (Google Ads API OAuth):
-      #   TAP_GOOGLE_ADS_DEVELOPER_TOKEN
-      #   TAP_GOOGLE_ADS_CLIENT_ID
-      #   TAP_GOOGLE_ADS_CLIENT_SECRET
-      #   TAP_GOOGLE_ADS_REFRESH_TOKEN
-      #   TAP_GOOGLE_ADS_CUSTOMER_IDS   (comma-separated 10-digit IDs)
+      #   TAP_GOOGLEADS_DEVELOPER_TOKEN
+      #   TAP_GOOGLEADS_CLIENT_ID
+      #   TAP_GOOGLEADS_CLIENT_SECRET
+      #   TAP_GOOGLEADS_REFRESH_TOKEN
+      #   TAP_GOOGLEADS_CUSTOMER_IDS   (comma-separated 10-digit IDs)
       # Optional:
-      #   TAP_GOOGLE_ADS_LOGIN_CUSTOMER_ID  (manager account, if you sit
+      #   TAP_GOOGLEADS_LOGIN_CUSTOMER_ID  (manager account, if you sit
       #     above the operating customers in an MCC tree)
+      #
+      # Matatika's tap-googleads expects OAuth fields under a NESTED
+      # `oauth_credentials` key (not flat). Meltano's auto env-var
+      # mapping for nested config uses awkward names like
+      # `TAP_GOOGLEADS_OAUTH_CREDENTIALS_CLIENT_ID`, so we map cleaner
+      # env vars into the nested structure explicitly here. The other
+      # fields (developer_token, customer_ids, login_customer_id) are
+      # top-level on the tap's schema and use Meltano's default
+      # TAP_GOOGLEADS_* mapping with no explicit reference needed.
       config:
         start_date: "2024-01-01T00:00:00Z"
+        oauth_credentials:
+          client_id: $TAP_GOOGLEADS_CLIENT_ID
+          client_secret: $TAP_GOOGLEADS_CLIENT_SECRET
+          refresh_token: $TAP_GOOGLEADS_REFRESH_TOKEN
 
   loaders:
     - name: target-bigquery
