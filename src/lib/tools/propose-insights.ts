@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { FREQUENCY_VALUES, type InsightFrequency } from "@/lib/insights/frequency";
 import type { ToolDefinition } from "./types";
 import type { InsightProposal } from "@/lib/streaming";
 
@@ -26,6 +27,12 @@ const ProposalSchema = z.object({
   ]),
   threshold: z.number(),
   prefill: z.string().min(1).max(400),
+  // Optional — defaults to "1h" at save time when omitted. See
+  // save-insight.ts for the description the agent reads when
+  // deciding which frequency to suggest.
+  frequency: z
+    .enum(FREQUENCY_VALUES as readonly [InsightFrequency, ...InsightFrequency[]])
+    .optional(),
 });
 
 const Input = z.object({

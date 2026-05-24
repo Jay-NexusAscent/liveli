@@ -112,6 +112,8 @@ Rule types:
 
 Picking a threshold: prefer one that would be meaningful enough to act on (a 1% change is noise; a 15% change is signal). When the user doesn't specify, choose conservatively and mention what you chose in your reply.
 
+Picking a frequency: how often to re-evaluate. Default \`1h\` is right for most business metrics. Use \`5m\`/\`15m\`/\`30m\` only for ops-style signals where minutes matter (queue depth, error rate, sync failures). Use \`6h\`/\`12h\`/\`24h\` for slow-moving metrics (weekly signups, monthly active users). Tighter cadence = more BigQuery cost; pick the longest schedule that still surfaces the signal in time to act. Some workspaces have tier limits that clamp tighter cadences to a slower max — the server handles the clamp silently.
+
 The \`description\` field describes WHAT is being tracked — no numbers in it, those come from the live query. Bad: "AOV is £45.50, up 8%". Good: "Tracks average order value week-over-week; fires if it changes by more than 5%".
 
 The \`prefill\` is the chat prompt that runs when the user clicks "Open in chat" on the saved card. Make it specific: "Investigate the recent AOV jump — break it down by product category and day of week."

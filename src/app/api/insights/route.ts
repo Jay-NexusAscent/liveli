@@ -2,6 +2,11 @@ import { z } from "zod";
 import { requireWorkspaceContext, UnauthorizedError } from "@/lib/clients";
 import { dbReady, insightsIn } from "@/lib/firestore";
 import { createInsight } from "@/lib/insights/create";
+import {
+  clampFrequency,
+  FREQUENCY_VALUES,
+  type InsightFrequency,
+} from "@/lib/insights/frequency";
 import type { InsightCategory, RuleType } from "@/lib/insights/types";
 
 export const runtime = "nodejs";
@@ -65,6 +70,9 @@ const PostBody = z.object({
   ]),
   threshold: z.number(),
   prefill: z.string().min(1).max(400),
+  frequency: z
+    .enum(FREQUENCY_VALUES as readonly [InsightFrequency, ...InsightFrequency[]])
+    .optional(),
 });
 
 /**
@@ -112,6 +120,16 @@ export async function POST(req: Request) {
         ruleType: body.ruleType as RuleType,
         threshold: body.threshold,
         prefill: body.prefill,
+        // Tier-clamp before persistence. Today this is a passthrough
+        // (no gate); when LIVELI-125 adds tier limits, requests for
+        // a tighter cadence than the workspace's tier allows get
+        // downgraded here rather than the API erroring — the user
+        // wanted the insight; we give them the tightest schedule we
+        // can on their plan and the UI explains the clamp.
+        frequency: clampFrequency(
+          body.frequency as InsightFrequency | undefined,
+          undefined /* tier — wire from ctx.workspace once tier is on workspace doc */
+        ),
       },
       {
         clientId: ctx.clientId,

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { CheckIcon, SparkleIcon, TrendDownIcon, TrendUpIcon } from "@/components/icons";
+import { FREQUENCY_LABELS } from "@/lib/insights/frequency";
 import type { InsightProposal } from "@/lib/streaming";
 
 /**
@@ -154,6 +155,11 @@ function ProposalCard({
 
       <p className="text-[11px] text-text-tertiary">
         {describeRule({ type: proposal.ruleType, threshold: proposal.threshold })}
+        {proposal.frequency && (
+          <span className="ml-1">
+            · checked {FREQUENCY_LABELS[proposal.frequency].toLowerCase()}
+          </span>
+        )}
       </p>
 
       {state.status === "error" && (
