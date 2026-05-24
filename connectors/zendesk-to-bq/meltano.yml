@@ -1,0 +1,34 @@
+version: 1
+default_environment: dev
+project_id: liveli-zendesk-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-zendesk
+      # singer-io (Stitch Data) is the canonical maintainer — verified
+      # at github.com/singer-io/tap-zendesk; PyPI `tap-zendesk` is
+      # published by the same org.
+      variant: singer-io
+      pip_url: tap-zendesk
+      # Required env at runtime:
+      #   TAP_ZENDESK_SUBDOMAIN  (e.g. "yourcompany" from
+      #                           yourcompany.zendesk.com)
+      #   TAP_ZENDESK_EMAIL      (Zendesk account email for the user
+      #                           who owns the API token)
+      #   TAP_ZENDESK_API_TOKEN  (Zendesk API token — Admin Center
+      #                           → Apps and integrations → Zendesk API)
+      config:
+        start_date: "2023-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true

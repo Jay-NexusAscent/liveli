@@ -234,6 +234,43 @@ const TAP_ENV_BUILDERS: Record<string, EnvBuilder> = {
   linear: (creds) => ({
     TAP_LINEAR_AUTH_TOKEN: creds.auth_token,
   }),
+
+  // ── Batch B (LIVELI-128): API-key + identifier SaaS connectors ──
+
+  mixpanel: (creds) => ({
+    // tap-mixpanel uses HTTP Basic with the Project API Secret as the
+    // username (no password). One field, one env var.
+    TAP_MIXPANEL_API_SECRET: creds.api_secret,
+  }),
+
+  amplitude: (creds) => ({
+    // tap-amplitude (singer-io) — both halves of the Basic-auth pair.
+    // Deliberately NOT the default Airbyte wrapper variant: that one
+    // needs Docker-in-Docker, which Cloud Run Jobs can't provide.
+    TAP_AMPLITUDE_API_KEY: creds.api_key,
+    TAP_AMPLITUDE_API_SECRET: creds.api_secret,
+  }),
+
+  jira: (creds) => ({
+    // tap-jira (MeltanoLabs variant) supports both OAuth and basic
+    // auth; we only wire basic (email + API token), which is what the
+    // wizard collects. Atlassian Cloud only — `domain` MUST be a
+    // *.atlassian.net host (enforced at the connect route).
+    TAP_JIRA_DOMAIN: creds.domain,
+    TAP_JIRA_EMAIL: creds.email,
+    TAP_JIRA_API_TOKEN: creds.api_token,
+  }),
+
+  zendesk: (creds) => ({
+    // tap-zendesk (singer-io) — bare subdomain slug, not the full
+    // host. The connect route's regex ensures we never store
+    // "yourcompany.zendesk.com" by accident; if that drifts in here
+    // the tap will hit https://yourcompany.zendesk.com.zendesk.com
+    // and 4xx with a useless DNS error.
+    TAP_ZENDESK_SUBDOMAIN: creds.subdomain,
+    TAP_ZENDESK_EMAIL: creds.email,
+    TAP_ZENDESK_API_TOKEN: creds.api_token,
+  }),
 };
 
 /**

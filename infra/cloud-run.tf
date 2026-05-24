@@ -32,6 +32,11 @@ locals {
     "slack-to-bq",
     "github-to-bq",
     "linear-to-bq",
+    # Batch B (LIVELI-128): API-key + identifier SaaS connectors.
+    "mixpanel-to-bq",
+    "amplitude-to-bq",
+    "jira-to-bq",
+    "zendesk-to-bq",
   ]
 
   # Residency footprints. Must match cloudComputeRegionForResidency()
