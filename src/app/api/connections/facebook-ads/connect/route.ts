@@ -61,7 +61,9 @@ export async function POST(req: Request) {
       message: "Meta Ads connection saved. Click Sync to start the first import.",
     });
   } catch (err) {
-    const responseBody = connectErrorEnvelope("facebook-ads", step.current, err);
+    const responseBody = connectErrorEnvelope("facebook-ads", step.current, err, [
+      body.accessToken,
+    ]);
     console.error("[facebook-ads/connect]", JSON.stringify(responseBody).slice(0, 2000));
     return Response.json(responseBody, { status: 500 });
   }

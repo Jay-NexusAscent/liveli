@@ -80,7 +80,14 @@ export async function POST(req: Request) {
       message: "Google Ads connection saved. Click Sync to start the first import.",
     });
   } catch (err) {
-    const responseBody = connectErrorEnvelope("google-ads", step.current, err);
+    const responseBody = connectErrorEnvelope("google-ads", step.current, err, [
+      // clientId is a public OAuth client identifier, NOT a secret —
+      // omit. Developer token / client secret / refresh token are all
+      // sensitive.
+      body.developerToken,
+      body.clientSecret,
+      body.refreshToken,
+    ]);
     console.error("[google-ads/connect]", JSON.stringify(responseBody).slice(0, 2000));
     return Response.json(responseBody, { status: 500 });
   }
