@@ -3,6 +3,8 @@
  * Client splits on "\n\n", JSON-parses each event, dispatches by `type`.
  */
 
+import type { ColSpan } from "@/lib/dashboards/types";
+
 /**
  * One proposed insight from `propose_insights`. Shape mirrors
  * save_insight input so the UI can POST it straight through to
@@ -38,12 +40,12 @@ export type ChatStreamEvent =
       description?: string;
       // colSpan threads through from make_dashboard / update_dashboard
       // clientRender so the inline chat preview can render with the
-      // same Small/Medium/Large tile widths as /dashboards.
+      // same tile sizes as /dashboards.
       charts: Array<{
         order: number;
         title: string;
         spec: unknown;
-        colSpan?: "extra-small" | "small" | "medium" | "large";
+        colSpan?: ColSpan;
       }>;
     }
   | {
