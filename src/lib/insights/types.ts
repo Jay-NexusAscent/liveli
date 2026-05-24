@@ -107,6 +107,15 @@ export interface Insight {
 
   rule: InsightRule;
 
+  /**
+   * How often this insight is evaluated. Discrete bucket from
+   * FREQUENCY_VALUES so the Cloud Scheduler binding (LIVELI-126) can
+   * group insights by frequency and dispatch them in batches.
+   * Optional in the type because pre-LIVELI-91-Phase-2 docs may not
+   * have it yet — readers should default to "1h" when missing.
+   */
+  frequency?: import("./frequency").InsightFrequency;
+
   /** Latest evaluated value. null when no successful evaluation yet. */
   currentValue: number | null;
   /** Prior evaluated value, used by change_pct_* rules. */

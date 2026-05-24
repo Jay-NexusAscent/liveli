@@ -2,6 +2,7 @@ import { FieldValue } from "@google-cloud/firestore";
 import { insightsIn } from "@/lib/firestore";
 import { safeQuery } from "@/lib/bigquery";
 import { applyRule, extractScalarValue } from "./evaluate";
+import { DEFAULT_FREQUENCY, type InsightFrequency } from "./frequency";
 import type {
   Insight,
   InsightCategory,
@@ -31,6 +32,14 @@ export interface CreateInsightInput {
   ruleType: RuleType;
   threshold: number;
   prefill: string;
+  /**
+   * Evaluation frequency. Defaults to DEFAULT_FREQUENCY ("1h") when
+   * the caller omits it. Tier gating happens in the API route layer
+   * (the agent doesn't know which tier the workspace is on) — by
+   * the time inputs reach createInsight, this value has been
+   * clamped to the workspace's allowed range.
+   */
+  frequency?: InsightFrequency;
 }
 
 export interface CreateInsightResult {
@@ -39,6 +48,7 @@ export interface CreateInsightResult {
   currentValue: number;
   status: InsightStatus;
   firedImmediately: boolean;
+  frequency: InsightFrequency;
 }
 
 /**
@@ -83,6 +93,7 @@ export async function createInsight(
   );
 
   const ref = insightsIn(ctx.clientId, ctx.workspaceId).doc();
+  const frequency: InsightFrequency = input.frequency ?? DEFAULT_FREQUENCY;
   const docData: Omit<Insight, "id" | "createdAt" | "firedAt" | "lastEvaluatedAt"> & {
     createdAt: FirebaseFirestore.FieldValue;
     lastEvaluatedAt: FirebaseFirestore.FieldValue;
@@ -94,6 +105,7 @@ export async function createInsight(
     sourceSql: input.sourceSql,
     ...(input.sourceConnector ? { sourceConnector: input.sourceConnector } : {}),
     rule: { type: input.ruleType, threshold: input.threshold },
+    frequency,
     currentValue,
     previousValue: null,
     status: initialStatus,
@@ -113,5 +125,6 @@ export async function createInsight(
     currentValue,
     status: initialStatus,
     firedImmediately: initialStatus === "fired",
+    frequency,
   };
 }

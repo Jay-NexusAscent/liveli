@@ -1,5 +1,12 @@
 import { z } from "zod";
 import { createInsight } from "@/lib/insights/create";
+import {
+  clampFrequency,
+  FREQUENCY_VALUES,
+  type InsightFrequency,
+} from "@/lib/insights/frequency";
+// DEFAULT_FREQUENCY no longer imported directly — clampFrequency
+// applies it when input.frequency is undefined.
 import type { InsightCategory, RuleType } from "@/lib/insights/types";
 import type { ToolDefinition } from "./types";
 
@@ -60,6 +67,12 @@ const Input = z.object({
     .describe(
       "Prompt the user sees when clicking 'Open in chat' on the saved insight card. Should ask the agent to dig deeper into this metric."
     ),
+  frequency: z
+    .enum(FREQUENCY_VALUES as readonly [InsightFrequency, ...InsightFrequency[]])
+    .optional()
+    .describe(
+      "How often the insight is evaluated. '5m'/'15m'/'30m' for ops alerts that need fast detection; '1h'/'6h' for business metrics; '12h'/'24h' for slow-moving signals. Defaults to '1h' when omitted. Pick the longest cadence that still surfaces the signal in time to act — faster is more expensive in compute."
+    ),
 });
 
 export const saveInsightTool: ToolDefinition = {
@@ -79,6 +92,13 @@ export const saveInsightTool: ToolDefinition = {
         ruleType: input.ruleType as RuleType,
         threshold: input.threshold,
         prefill: input.prefill,
+        // Tier-clamp before persistence — same as the POST endpoint.
+        // The agent can pick any frequency; the gate downgrades
+        // tighter-than-tier picks to the tier max rather than erroring.
+        frequency: clampFrequency(
+          input.frequency as InsightFrequency | undefined,
+          undefined /* tier — wire from ctx.workspace once tier is on workspace doc */
+        ),
       },
       ctx
     );

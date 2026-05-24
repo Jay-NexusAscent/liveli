@@ -24,6 +24,8 @@ export interface InsightProposal {
   ruleType: "change_pct_above" | "change_pct_below" | "value_above" | "value_below";
   threshold: number;
   prefill: string;
+  /** Optional; defaults to "1h" at save time when omitted. */
+  frequency?: "5m" | "15m" | "30m" | "1h" | "6h" | "12h" | "24h";
 }
 
 export type ChatStreamEvent =
