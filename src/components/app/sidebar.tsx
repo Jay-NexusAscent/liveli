@@ -62,29 +62,20 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <div className="flex h-full flex-col">
+      {/* Top — wordmark only. The Clerk account chrome (organization
+          switcher + user button) used to sit here at the top, with
+          the user button orphaned at the bottom. That split read as
+          two unrelated bubbles in different corners. Both live in
+          the footer now so the "account" surface is one cohesive
+          block; the top of the sidebar is reserved for brand. */}
       <div className="flex items-center gap-2.5 px-5 pt-6 pb-4">
         <EcgLogo className="text-accent shrink-0" size={26} />
-        <span className="text-[17px] font-semibold tracking-tight text-text-primary font-heading">Liveli</span>
+        <span className="text-[17px] font-semibold tracking-tight text-text-primary font-heading">
+          Liveli
+        </span>
       </div>
 
-      <div className="px-3 pb-4">
-        <OrganizationSwitcher
-          hidePersonal
-          afterSelectOrganizationUrl="/chat"
-          afterCreateOrganizationUrl="/connections"
-          appearance={{
-            elements: {
-              rootBox: "w-full",
-              organizationSwitcherTrigger:
-                "w-full rounded-md border border-border bg-elevated px-3 py-2 text-[13px] text-text-primary hover:bg-hover transition-colors",
-            },
-          }}
-        />
-      </div>
-
-      <div className="mx-4 border-t border-border" />
-
-      <nav className="flex-1 overflow-y-auto px-3 pt-4">
+      <nav className="flex-1 overflow-y-auto px-3">
         {navGroups.map((group, gi) => (
           <div key={group.label} className={cn(gi > 0 && "mt-6")}>
             <div className="px-3 pb-2 text-[11px] font-medium uppercase tracking-[0.1em] text-text-tertiary">
@@ -136,8 +127,25 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         ))}
       </nav>
 
-      <div className="border-t border-border px-5 py-4">
-        <div className="flex items-center justify-between gap-3">
+      {/* Unified account footer — org switcher above, user button +
+          theme toggle below. One visual block bordered off from the
+          nav. Pattern matches Linear / Vercel / Notion sidebars
+          where account chrome lives in a single sidebar-footer
+          rather than split between top and bottom corners. */}
+      <div className="space-y-2 border-t border-border p-3">
+        <OrganizationSwitcher
+          hidePersonal
+          afterSelectOrganizationUrl="/chat"
+          afterCreateOrganizationUrl="/connections"
+          appearance={{
+            elements: {
+              rootBox: "w-full",
+              organizationSwitcherTrigger:
+                "w-full justify-between rounded-md border border-border bg-elevated px-3 py-2 text-[13px] text-text-primary hover:bg-hover transition-colors",
+            },
+          }}
+        />
+        <div className="flex items-center justify-between gap-2 pt-1">
           <UserButton />
           <ThemeToggle />
         </div>
