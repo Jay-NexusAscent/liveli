@@ -17,6 +17,14 @@ const PatchBody = z.object({
         // Optional per-tile size hint. See make-dashboard.ts for the
         // small/medium/large → 1/4 / 1/2 / full mapping.
         colSpan: z.enum(["small", "medium", "large"]).optional(),
+        // Filter-driven re-render fields (LIVELI-122 Phase 2). The
+        // client passes these through on reorder/resize so we don't
+        // silently downgrade a filter-driven chart to static. Both are
+        // opaque to this endpoint — schema validation happens at
+        // chart-create / update time in make_dashboard /
+        // update_dashboard. We just round-trip the bytes.
+        sourceSql: z.string().min(1).optional(),
+        dataMapping: z.unknown().optional(),
       })
     )
     .min(1)
@@ -83,9 +91,14 @@ export async function PATCH(
       order: c.order ?? i,
       title: c.title,
       spec: c.spec,
-      // Only include colSpan when explicitly set so we don't write a
-      // null over existing data when the caller didn't touch sizing.
+      // Only include optional fields when explicitly set so we don't
+      // write a null over existing data when the caller didn't touch
+      // them. sourceSql + dataMapping are persisted intact so reorder
+      // and resize on a filter-driven chart don't silently downgrade
+      // it to static.
       ...(c.colSpan ? { colSpan: c.colSpan } : {}),
+      ...(c.sourceSql ? { sourceSql: c.sourceSql } : {}),
+      ...(c.dataMapping !== undefined ? { dataMapping: c.dataMapping } : {}),
     }));
   }
   await ref.update(update);
