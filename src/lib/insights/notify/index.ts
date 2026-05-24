@@ -62,6 +62,16 @@ export async function notifyInsightFired(
     .get();
   if (snap.empty) return;
 
+  // Per-insight channel subscription. When the insight specifies
+  // channelIds, fan out only to that subset (intersected with
+  // currently-enabled channels — a disabled-then-subscribed channel
+  // still doesn't fire). When channelIds is missing/empty, the
+  // default applies: every enabled channel gets notified.
+  const subscribed: Set<string> | null =
+    insight.channelIds && insight.channelIds.length > 0
+      ? new Set(insight.channelIds)
+      : null;
+
   const payload: NotificationPayload = {
     insightId: insight.id,
     title: insight.title,
@@ -77,6 +87,10 @@ export async function notifyInsightFired(
   // multiple channels fail with different errors. Per-channel HTTP
   // takes <1s typically; 4 channels = 4s tops.
   for (const doc of snap.docs) {
+    // Apply per-insight subscription filter when set. Skip channels
+    // not on the subscription list silently — not a failure, just
+    // out of scope for this particular insight.
+    if (subscribed && !subscribed.has(doc.id)) continue;
     const ch = { id: doc.id, ...doc.data() } as AlertChannel;
     try {
       await sendForChannel(ch.config, payload);
