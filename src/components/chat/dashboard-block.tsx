@@ -120,7 +120,7 @@ export function DashboardBlock({ title, description, dashboardId, charts }: Dash
       <div className="p-3">
         <Link
           href={`/dashboards#${dashboardId}`}
-          className="flex w-full items-center justify-center gap-2 rounded-md bg-accent-muted px-4 py-2.5 text-[13px] font-medium text-accent transition-colors hover:bg-accent hover:text-white"
+          className="flex w-full items-center justify-center gap-2 rounded-md bg-accent-muted px-4 py-2.5 text-[13px] font-medium text-accent transition-colors hover:bg-accent hover:text-text-inverted"
         >
           Open dashboard
           <ArrowRightIcon className="h-3.5 w-3.5" />
