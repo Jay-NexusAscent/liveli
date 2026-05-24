@@ -238,10 +238,10 @@ export function Sidebar() {
   // inside SidebarContent. Drives the page title shown in the
   // mobile top bar, which gives the user orientation that the
   // desktop sidebar's active state provides natively.
-  const activeNavItem = navItems.find(
+  const activeNavItem = allNavItems.find(
     (item) =>
       pathname.startsWith(item.href) &&
-      !navItems.some(
+      !allNavItems.some(
         (other) =>
           other.href !== item.href &&
           other.href.length > item.href.length &&
