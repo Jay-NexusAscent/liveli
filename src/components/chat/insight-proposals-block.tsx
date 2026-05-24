@@ -201,7 +201,7 @@ function SaveButton({ state, onSave }: { state: SaveState; onSave: () => void })
     <button
       type="button"
       onClick={onSave}
-      className="inline-flex items-center gap-1 rounded-md bg-accent-muted px-2.5 py-1 text-[11px] font-medium text-accent transition-colors hover:bg-accent hover:text-white"
+      className="inline-flex items-center gap-1 rounded-md bg-accent-muted px-2.5 py-1 text-[11px] font-medium text-accent transition-colors hover:bg-accent hover:text-text-inverted"
     >
       {state.status === "error" ? "Retry" : "Save"}
     </button>

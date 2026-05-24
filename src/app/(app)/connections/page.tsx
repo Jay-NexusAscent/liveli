@@ -13,6 +13,7 @@ import {
   KanbanIcon,
   MegaphoneIcon,
   ProductivityIcon,
+  SearchIcon,
   ShoppingBagIcon,
 } from "@/components/icons";
 import { BrandIcon, hasBrandIcon } from "@/components/connections/brand-icon";
@@ -683,14 +684,19 @@ export default function ConnectionsPage() {
             </p>
           </div>
 
-          {/* Search box */}
+          {/* Search box — leading magnifying-glass icon makes the
+              input read as "searchable" at a glance instead of a
+              generic text field. */}
           <div className="relative w-full sm:w-72">
+            <SearchIcon
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary"
+            />
             <input
               type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search sources…"
-              className="w-full rounded-md border border-border bg-elevated px-3 py-2 text-[13px] text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30"
+              className="w-full rounded-md border border-border bg-elevated py-2 pl-9 pr-3 text-[13px] text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30"
             />
           </div>
         </div>

@@ -112,9 +112,24 @@ export interface Insight {
    * FREQUENCY_VALUES so the Cloud Scheduler binding (LIVELI-126) can
    * group insights by frequency and dispatch them in batches.
    * Optional in the type because pre-LIVELI-91-Phase-2 docs may not
-   * have it yet — readers should default to "1h" when missing.
+   * have it yet — readers should default to DEFAULT_FREQUENCY (24h)
+   * when missing.
    */
   frequency?: import("./frequency").InsightFrequency;
+
+  /**
+   * Per-insight channel subscription. When undefined or empty, fire
+   * notifications fan out to EVERY enabled alert channel in the
+   * workspace (the original behaviour). When non-empty, fan out only
+   * to the listed channel ids — provided each is also enabled.
+   *
+   * Letting customers route specific insights to specific channels
+   * (e.g. "critical revenue drops to PagerDuty; weekly signup nudges
+   * to email") without forcing them to set up multiple "modes" of
+   * routing config. Default-to-all preserves backward compat for
+   * pre-edit-modal insights.
+   */
+  channelIds?: string[];
 
   /** Latest evaluated value. null when no successful evaluation yet. */
   currentValue: number | null;

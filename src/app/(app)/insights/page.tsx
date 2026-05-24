@@ -1,15 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowRightIcon,
+  CheckIcon,
+  CloseIcon,
   InsightIcon,
+  PencilIcon,
   SparkleIcon,
   TrashIcon,
   TrendDownIcon,
   TrendUpIcon,
 } from "@/components/icons";
+import { EmptyState } from "@/components/ui/empty-state";
+import type { AlertChannelPublic } from "@/lib/insights/notify";
 import type {
   FirestoreTimestamp,
   Insight,
@@ -124,20 +130,97 @@ export default function InsightsPage() {
   const [deleting, setDeleting] = useState<Set<string>>(new Set());
   // Bulk-evaluate state. Single boolean — only one bulk run at a time.
   const [evaluatingAll, setEvaluatingAll] = useState(false);
+  // Set of insight ids that fired since the user last visited the
+  // tab. Used to ring + scroll-into-view on mount. Populated from
+  // user.insightsLastSeenAt (fetched alongside insights). After the
+  // highlight finishes, /api/users/me/insights-seen is POSTed so the
+  // bubble in the sidebar clears.
+  const [newlyFiredIds, setNewlyFiredIds] = useState<Set<string>>(new Set());
+  // Currently-editing insight, or null when modal is closed. Single
+  // piece of state so only one edit modal is ever open at once —
+  // keeps the back/forward stack clean and avoids stacking dialogs.
+  const [editingInsight, setEditingInsight] = useState<ApiInsight | null>(null);
+  // Ref to the FIRST newly-fired card so we can scrollIntoView it
+  // when the page first renders the list. Subsequent newly-fired
+  // cards just get the ring — only the first one scrolls.
+  const firstNewlyFiredRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch("/api/insights");
-        if (res.ok) {
-          const items: ApiInsight[] = (await res.json()).items ?? [];
-          setInsights(items);
+        // Two parallel fetches: insights + this user's
+        // insightsLastSeenAt. We need both before we can compute
+        // newlyFiredIds, so wait on Promise.all rather than
+        // sequencing.
+        const [insightsRes, seenRes] = await Promise.all([
+          fetch("/api/insights"),
+          fetch("/api/users/me/insights-seen"),
+        ]);
+
+        const items: ApiInsight[] = insightsRes.ok
+          ? ((await insightsRes.json()).items ?? [])
+          : [];
+        setInsights(items);
+
+        // lastSeenMs is the cutoff for "new" — anything fired AFTER
+        // this counts. Undefined / 404 → cutoff is 0 → all fired
+        // insights count as new (first-visit experience).
+        let lastSeenMs = 0;
+        if (seenRes.ok) {
+          const payload = await seenRes.json();
+          lastSeenMs = typeof payload.lastSeenMs === "number" ? payload.lastSeenMs : 0;
         }
+
+        const newIds = new Set<string>();
+        for (const i of items) {
+          if (i.status !== "fired") continue;
+          const firedAtMs = i.firedAt ? i.firedAt._seconds * 1000 : 0;
+          if (firedAtMs > lastSeenMs) newIds.add(i.id);
+        }
+        setNewlyFiredIds(newIds);
       } finally {
         setLoading(false);
       }
     })();
   }, []);
+
+  /**
+   * After the page renders any newly-fired cards, scroll the first
+   * one into view AND start the 1.2s timer to mark insights as
+   * seen. The ring animation on each card is driven by its own
+   * isNewlyFired prop — this effect handles cross-card concerns
+   * (scroll + the mark-seen network call) only.
+   *
+   * We wait until !loading so the cards have rendered + the ref is
+   * attached. The 1.2s mark-seen delay gives the customer enough
+   * time to see the highlight before the bubble clears server-side
+   * — otherwise a fast-cached refresh would clear the marker
+   * before they could even see what fired.
+   */
+  useEffect(() => {
+    if (loading) return;
+    if (newlyFiredIds.size === 0) return;
+
+    // Scroll the first newly-fired card into view. behavior:"smooth"
+    // gives the customer a clear "this is what changed" cue rather
+    // than a jump.
+    if (firstNewlyFiredRef.current) {
+      firstNewlyFiredRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }
+
+    const t = setTimeout(() => {
+      fetch("/api/users/me/insights-seen", { method: "POST" }).catch(() => {
+        // Marking-seen failure isn't user-visible — worst case the
+        // bubble shows the same count again on the next sidebar
+        // poll. Better than a noisy error toast.
+      });
+    }, 1200);
+
+    return () => clearTimeout(t);
+  }, [loading, newlyFiredIds]);
 
   /**
    * Stash a prompt and navigate to /chat. Same mechanism the old
@@ -286,6 +369,12 @@ export default function InsightsPage() {
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <Link
+            href="/insights/channels"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-elevated px-3 py-1.5 text-[12px] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
+          >
+            Channels
+          </Link>
           {insights.length > 0 && (
             <button
               type="button"
@@ -310,26 +399,26 @@ export default function InsightsPage() {
       {loading && <p className="text-[13px] text-text-tertiary">Loading…</p>}
 
       {isEmpty && (
-        <div className="card-elevated flex flex-col items-center justify-center gap-3 py-20 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-accent-muted text-accent">
-            <InsightIcon className="text-accent" />
-          </div>
-          <h2 className="text-[18px] font-semibold tracking-tight text-text-primary font-heading">
-            No insights yet
-          </h2>
-          <p className="max-w-md text-[14px] text-text-secondary">
-            Insights are live-evaluated alerts. Ask the agent to suggest some
-            from your data — it&apos;ll write the SQL and pick thresholds.
-          </p>
-          <button
-            type="button"
-            onClick={() => openInChat(SUGGEST_PREFILL)}
-            className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-[13px] font-medium text-text-inverted transition-colors hover:bg-accent-hover"
-          >
-            <SparkleIcon />
-            Ask the agent to suggest insights
-          </button>
-        </div>
+        <EmptyState
+          icon={<InsightIcon className="text-accent" />}
+          title="No insights yet"
+          description={
+            <>
+              Insights are live-evaluated alerts. Ask the agent to suggest some
+              from your data — it&apos;ll write the SQL and pick thresholds.
+            </>
+          }
+          action={
+            <button
+              type="button"
+              onClick={() => openInChat(SUGGEST_PREFILL)}
+              className="inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-[13px] font-medium text-text-inverted transition-colors hover:bg-accent-hover"
+            >
+              <SparkleIcon />
+              Ask the agent to suggest insights
+            </button>
+          }
+        />
       )}
 
       {fired.length > 0 && (
@@ -339,19 +428,31 @@ export default function InsightsPage() {
             Active alerts ({fired.length})
           </h2>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {fired.map((insight) => (
-              <InsightCard
-                key={insight.id}
-                insight={insight}
-                isFired
-                isEvaluating={evaluating.has(insight.id)}
-                isDeleting={deleting.has(insight.id)}
-                onReevaluate={() => reevaluate(insight.id)}
-                onOpenInChat={() => openInChat(insight.prefill)}
-                onDelete={() => deleteInsight(insight.id, insight.title)}
-                onChangeFrequency={(f) => changeFrequency(insight.id, f)}
-              />
-            ))}
+            {fired.map((insight, idx) => {
+              const isNew = newlyFiredIds.has(insight.id);
+              // Only the FIRST newly-fired card gets the ref —
+              // we scroll exactly one card into view, not the last
+              // one. Subsequent newly-fired cards just get the ring.
+              const isFirstNew =
+                isNew &&
+                fired.findIndex((f) => newlyFiredIds.has(f.id)) === idx;
+              return (
+                <InsightCard
+                  key={insight.id}
+                  insight={insight}
+                  isFired
+                  isNewlyFired={isNew}
+                  scrollRef={isFirstNew ? firstNewlyFiredRef : undefined}
+                  isEvaluating={evaluating.has(insight.id)}
+                  isDeleting={deleting.has(insight.id)}
+                  onReevaluate={() => reevaluate(insight.id)}
+                  onOpenInChat={() => openInChat(insight.prefill)}
+                  onDelete={() => deleteInsight(insight.id, insight.title)}
+                  onChangeFrequency={(f) => changeFrequency(insight.id, f)}
+                  onEdit={() => setEditingInsight(insight)}
+                />
+              );
+            })}
           </div>
         </section>
       )}
@@ -373,10 +474,24 @@ export default function InsightsPage() {
                 onOpenInChat={() => openInChat(insight.prefill)}
                 onDelete={() => deleteInsight(insight.id, insight.title)}
                 onChangeFrequency={(f) => changeFrequency(insight.id, f)}
+                onEdit={() => setEditingInsight(insight)}
               />
             ))}
           </div>
         </section>
+      )}
+
+      {editingInsight && (
+        <InsightEditModal
+          insight={editingInsight}
+          onClose={() => setEditingInsight(null)}
+          onSaved={(updated) => {
+            setInsights((items) =>
+              items.map((i) => (i.id === updated.id ? updated : i))
+            );
+            setEditingInsight(null);
+          }}
+        />
       )}
     </div>
   );
@@ -397,6 +512,9 @@ function InsightCard({
   onOpenInChat,
   onDelete,
   onChangeFrequency,
+  onEdit,
+  isNewlyFired,
+  scrollRef,
 }: {
   insight: ApiInsight;
   isFired: boolean;
@@ -406,17 +524,34 @@ function InsightCard({
   onOpenInChat: () => void;
   onDelete: () => void;
   onChangeFrequency: (next: InsightFrequency) => void;
+  onEdit: () => void;
+  /** True when this card fired since the user last visited /insights. */
+  isNewlyFired?: boolean;
+  /** Attached to the FIRST newly-fired card so the page can scrollIntoView. */
+  scrollRef?: React.Ref<HTMLDivElement>;
 }) {
   const pct = changePct(insight.currentValue, insight.previousValue);
   const ruleTypeIsChange =
     insight.rule.type === "change_pct_above" ||
     insight.rule.type === "change_pct_below";
 
+  // Newly-fired highlight: ring fades to nothing over 4s. State-
+  // driven so we can use a CSS transition for the fade rather than
+  // keyframe animation in globals.css. Auto-clears so the card
+  // returns to its base styling without the customer touching it.
+  const [showRing, setShowRing] = useState(!!isNewlyFired);
+  useEffect(() => {
+    if (!isNewlyFired) return;
+    const t = setTimeout(() => setShowRing(false), 4000);
+    return () => clearTimeout(t);
+  }, [isNewlyFired]);
+
   return (
     <article
-      className={`card-elevated flex flex-col gap-4 p-5 ${
+      ref={scrollRef}
+      className={`card-elevated flex flex-col gap-4 p-5 transition-all duration-700 ${
         isFired ? "border-[color:var(--status-error)]/40" : ""
-      }`}
+      } ${showRing ? "ring-2 ring-[color:var(--status-error)] ring-offset-2 ring-offset-background shadow-[0_0_30px_rgba(239,68,68,0.35)]" : ""}`}
     >
       <div className="flex items-center justify-between gap-3">
         <span
@@ -484,6 +619,14 @@ function InsightCard({
           title={insight.title}
         />
         <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={onEdit}
+            aria-label={`Edit insight ${insight.title}`}
+            className="rounded-md p-1.5 text-text-tertiary transition-colors hover:bg-hover hover:text-text-primary"
+          >
+            <PencilIcon />
+          </button>
           <button
             type="button"
             onClick={onReevaluate}
@@ -616,6 +759,235 @@ function ValueBadge({
     <span className="font-mono text-[15px] tabular-nums text-text-primary">
       {formatValue(current)}
     </span>
+  );
+}
+
+/**
+ * Edit modal — frequency + channel subscription for an existing
+ * insight. Fetches the workspace's channels on open so the customer
+ * can pick from the up-to-date list.
+ *
+ * Channel subscription semantics:
+ *   - No channels selected = "fan out to all enabled channels"
+ *     (the default). Saved as `channelIds: null` on the server.
+ *   - One or more selected = subscription. Saved as the array.
+ *
+ * The "all enabled" fallback is the deliberate default — most
+ * customers wire up one channel and want every fired insight there;
+ * forcing them to re-select per insight would be tedious.
+ */
+function InsightEditModal({
+  insight,
+  onClose,
+  onSaved,
+}: {
+  insight: ApiInsight;
+  onClose: () => void;
+  onSaved: (updated: ApiInsight) => void;
+}) {
+  const [channels, setChannels] = useState<AlertChannelPublic[]>([]);
+  const [channelsLoading, setChannelsLoading] = useState(true);
+  const [frequency, setFrequency] = useState<InsightFrequency>(
+    insight.frequency ?? DEFAULT_FREQUENCY
+  );
+  // Set initial selection from the insight's current channelIds.
+  // Empty/undefined → empty Set → "all channels" default reflected
+  // visually as no checkboxes ticked.
+  const [selected, setSelected] = useState<Set<string>>(
+    new Set(insight.channelIds ?? [])
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/insights/channels");
+        if (res.ok) {
+          const items: AlertChannelPublic[] = (await res.json()).items ?? [];
+          setChannels(items);
+        }
+      } finally {
+        setChannelsLoading(false);
+      }
+    })();
+  }, []);
+
+  const toggleChannel = (id: string) => {
+    setSelected((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    // Empty set → null on the wire → server deletes the field →
+    // insight reverts to the "all enabled channels" default. The
+    // three-way semantic (set / clear / no-change) is documented on
+    // the PATCH endpoint.
+    const channelIds = selected.size === 0 ? null : Array.from(selected);
+    try {
+      const res = await fetch(`/api/insights/${insight.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ frequency, channelIds }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(payload?.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      // Mirror the saved state into local insight, including any
+      // server-clamped frequency. channelIds: empty → undefined on
+      // the local object to keep "no channelIds field" canonical.
+      onSaved({
+        ...insight,
+        frequency: (payload.frequency as InsightFrequency) ?? frequency,
+        channelIds: channelIds ?? undefined,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Enabled channels only — disabled ones can be subscribed to but
+  // won't fire. We could show them disabled-style; for v1 we just
+  // omit them to keep the modal focused.
+  const enabledChannels = channels.filter((c) => c.enabled);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="card-elevated max-h-[90vh] w-full max-w-md overflow-y-auto p-6">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] uppercase tracking-wider text-text-tertiary">
+              Edit insight
+            </p>
+            <h2 className="text-[18px] font-semibold text-text-primary font-heading">
+              {insight.title}
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded-md p-1 text-text-tertiary transition-colors hover:bg-hover hover:text-text-primary"
+          >
+            <CloseIcon />
+          </button>
+        </div>
+
+        <div className="space-y-5">
+          <div>
+            <label className="mb-1 block text-[12px] font-medium text-text-secondary">
+              Evaluation frequency
+            </label>
+            <select
+              value={frequency}
+              onChange={(e) => setFrequency(e.target.value as InsightFrequency)}
+              className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-[13px] text-text-primary focus:border-accent focus:outline-none"
+            >
+              {FREQUENCY_VALUES.map((f) => (
+                <option key={f} value={f}>
+                  {FREQUENCY_LABELS[f]}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[12px] font-medium text-text-secondary">
+              Alert channels
+            </label>
+            {channelsLoading && (
+              <p className="text-[12px] text-text-tertiary">Loading channels…</p>
+            )}
+            {!channelsLoading && enabledChannels.length === 0 && (
+              <p className="text-[12px] text-text-tertiary">
+                No channels configured yet.{" "}
+                <Link
+                  href="/insights/channels"
+                  className="text-accent hover:underline"
+                  onClick={onClose}
+                >
+                  Add a channel →
+                </Link>
+              </p>
+            )}
+            {!channelsLoading && enabledChannels.length > 0 && (
+              <>
+                <div className="space-y-1">
+                  {enabledChannels.map((channel) => {
+                    const isSelected = selected.has(channel.id);
+                    return (
+                      <button
+                        key={channel.id}
+                        type="button"
+                        onClick={() => toggleChannel(channel.id)}
+                        className={`flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left transition-colors ${
+                          isSelected
+                            ? "border-accent bg-accent-muted"
+                            : "border-border bg-surface hover:bg-hover"
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <p className="text-[13px] font-medium text-text-primary">
+                            {channel.name}
+                          </p>
+                          <p className="truncate text-[11px] text-text-tertiary">
+                            {channel.type} · {channel.configPreview}
+                          </p>
+                        </div>
+                        {isSelected && <CheckIcon className="text-accent" />}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-2 text-[11px] text-text-tertiary">
+                  {selected.size === 0
+                    ? "No selection → fires to ALL enabled channels (default)."
+                    : `Fires to ${selected.size} selected channel${selected.size === 1 ? "" : "s"} only.`}
+                </p>
+              </>
+            )}
+          </div>
+
+          {error && (
+            <div className="rounded-md border border-[color:var(--status-error)]/30 bg-[color:var(--status-error)]/10 px-2.5 py-1.5 text-[12px] text-[color:var(--status-error)]">
+              {error}
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2 border-t border-border pt-4">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md px-3 py-1.5 text-[13px] text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={save}
+              disabled={saving}
+              className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {saving ? "Saving…" : (
+                <>
+                  <CheckIcon /> Save changes
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

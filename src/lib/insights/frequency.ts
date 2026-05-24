@@ -34,11 +34,22 @@ export const FREQUENCY_VALUES: readonly InsightFrequency[] = [
 ] as const;
 
 /**
- * Sensible default for newly-created insights. Frequent enough to
- * surface most signals same-day; infrequent enough to keep
- * BigQuery scan costs predictable per workspace.
+ * Sensible default for newly-created insights. Daily cadence matches
+ * the rhythm of most business metrics customers actually want to
+ * track (weekly revenue, monthly active users, daily order counts) —
+ * tighter cadences are opt-in for genuine ops signals.
+ *
+ * Was 1h previously — flipped to 24h because:
+ *   1. Customers don't get asked at creation time, so the default is
+ *      what gets used. 1h burned BigQuery scan budget on metrics
+ *      that move on day/week timescales.
+ *   2. The Cloud Scheduler binding (LIVELI-126) is going to charge
+ *      per-bucket; defaulting to the slowest bucket aligns with
+ *      "least surprise" billing.
+ *   3. Customers who actually need 5m/15m know it — they'll set it
+ *      explicitly via the edit modal.
  */
-export const DEFAULT_FREQUENCY: InsightFrequency = "1h";
+export const DEFAULT_FREQUENCY: InsightFrequency = "24h";
 
 /**
  * Human-readable labels for the frequency picker. Single source of

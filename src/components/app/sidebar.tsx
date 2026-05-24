@@ -13,6 +13,7 @@ import {
   CloseIcon,
   HistoryIcon,
   InsightIcon,
+  PlusIcon,
   SettingsIcon,
 } from "@/components/icons";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
@@ -57,8 +58,66 @@ const navGroups: Array<{
 // once at module load so the per-render path doesn't re-flatten.
 const allNavItems = navGroups.flatMap((g) => g.items);
 
+/**
+ * Polls /api/insights/unseen-count for the red bubble next to the
+ * Insights nav item. Polls every 60s while the tab is visible; on
+ * tab visibility change (user comes back after a while) refetches
+ * immediately so the bubble isn't stale. Stops polling when the
+ * tab is hidden — no need to burn requests on a backgrounded tab.
+ *
+ * 60s is the right cadence because insight eval cadence is 5min+
+ * — anything tighter than the eval cadence is wasted requests.
+ * Could lift to 30s if we ever add a 1min eval bucket.
+ */
+function useInsightsUnseenCount(): number {
+  const [count, setCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const fetchCount = async () => {
+      try {
+        const res = await fetch("/api/insights/unseen-count");
+        if (!res.ok) return;
+        const payload = await res.json();
+        if (!cancelled && typeof payload.count === "number") {
+          setCount(payload.count);
+        }
+      } catch {
+        // Network blip — keep last known count. Bubble doesn't
+        // disappear just because one poll failed.
+      }
+    };
+    fetchCount();
+    const interval = setInterval(() => {
+      if (!document.hidden) fetchCount();
+    }, 60_000);
+    const onVisibility = () => {
+      if (!document.hidden) fetchCount();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+  return count;
+}
+
+function UnseenBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span
+      className="ml-auto inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-[color:var(--status-error)] px-1.5 text-[11px] font-semibold text-white"
+      aria-label={`${count} unseen fired insight${count === 1 ? "" : "s"}`}
+    >
+      {count > 99 ? "99+" : count}
+    </span>
+  );
+}
+
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
+  const unseenInsights = useInsightsUnseenCount();
 
   return (
     <div className="flex h-full flex-col">
@@ -117,7 +176,10 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                           isActive ? "text-accent" : "text-text-tertiary"
                         )}
                       />
-                      {item.label}
+                      <span className="flex-1">{item.label}</span>
+                      {item.href === "/insights" && (
+                        <UnseenBadge count={unseenInsights} />
+                      )}
                     </Link>
                   </li>
                 );
@@ -172,10 +234,34 @@ export function Sidebar() {
     };
   }, [mobileOpen]);
 
+  // Resolve the current nav item — same longest-prefix logic used
+  // inside SidebarContent. Drives the page title shown in the
+  // mobile top bar, which gives the user orientation that the
+  // desktop sidebar's active state provides natively.
+  const activeNavItem = allNavItems.find(
+    (item) =>
+      pathname.startsWith(item.href) &&
+      !allNavItems.some(
+        (other) =>
+          other.href !== item.href &&
+          other.href.length > item.href.length &&
+          pathname.startsWith(other.href)
+      )
+  );
+  const pageTitle = activeNavItem?.label ?? "Liveli";
+
+  // Context-aware action affordance on the mobile bar. "+ New chat"
+  // when the user is anywhere in the chat surface — equivalent of
+  // the desktop sidebar's "Chat" link being one click away, but
+  // surfaced as a deliberate action on mobile where the sidebar is
+  // a drawer the user has to open.
+  const showNewChatAction = pathname.startsWith("/chat");
+
   return (
     <>
-      {/* Mobile top bar */}
-      <div className="fixed inset-x-0 top-0 z-40 flex h-14 items-center gap-3 border-b border-border bg-background px-4 lg:hidden">
+      {/* Mobile top bar — frosted glass for elevation, page title
+          for orientation, context-aware action button on the right. */}
+      <div className="fixed inset-x-0 top-0 z-40 flex h-14 items-center gap-3 border-b border-border-subtle bg-background/80 px-4 backdrop-blur-md lg:hidden">
         <button
           type="button"
           onClick={() => setMobileOpen(true)}
@@ -184,8 +270,21 @@ export function Sidebar() {
         >
           <HamburgerIcon />
         </button>
-        <EcgLogo className="text-accent" size={22} />
-        <span className="text-[15px] font-semibold text-text-primary font-heading">Liveli</span>
+        <EcgLogo className="text-accent shrink-0" size={22} />
+        <span className="truncate text-[15px] font-semibold text-text-primary font-heading">
+          {pageTitle}
+        </span>
+
+        {showNewChatAction && (
+          <Link
+            href="/chat"
+            aria-label="New chat"
+            className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-text-inverted transition-colors hover:bg-accent-hover"
+          >
+            <PlusIcon />
+            <span className="hidden sm:inline">New chat</span>
+          </Link>
+        )}
       </div>
 
       {/* Mobile drawer */}

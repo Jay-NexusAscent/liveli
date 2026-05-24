@@ -33,13 +33,20 @@ export interface CreateInsightInput {
   threshold: number;
   prefill: string;
   /**
-   * Evaluation frequency. Defaults to DEFAULT_FREQUENCY ("1h") when
+   * Evaluation frequency. Defaults to DEFAULT_FREQUENCY (24h) when
    * the caller omits it. Tier gating happens in the API route layer
    * (the agent doesn't know which tier the workspace is on) — by
    * the time inputs reach createInsight, this value has been
    * clamped to the workspace's allowed range.
    */
   frequency?: InsightFrequency;
+  /**
+   * Per-insight channel subscription. Undefined / empty = fan out to
+   * every enabled channel in the workspace; non-empty = fan out only
+   * to the listed channel ids. See Insight.channelIds for the full
+   * routing rationale.
+   */
+  channelIds?: string[];
 }
 
 export interface CreateInsightResult {
@@ -106,6 +113,13 @@ export async function createInsight(
     ...(input.sourceConnector ? { sourceConnector: input.sourceConnector } : {}),
     rule: { type: input.ruleType, threshold: input.threshold },
     frequency,
+    // Only persist channelIds when non-empty. Empty / undefined =
+    // "fan out to all enabled channels" — keeping the field absent
+    // for that case avoids ambiguity (is [] "no channels" or "all
+    // channels"?). The notify dispatcher checks length.
+    ...(input.channelIds && input.channelIds.length > 0
+      ? { channelIds: input.channelIds }
+      : {}),
     currentValue,
     previousValue: null,
     status: initialStatus,
