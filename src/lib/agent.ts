@@ -73,7 +73,7 @@ A strip is not a dashboard. Save the customer the round-trip and ship the full p
 - \`medium\` — ½ width × full row. Default for standard charts.
 - \`large\` — full width × full row. Use for hero charts / wide time series.
 
-KPI strip first (extra-small tiles), then supporting visualisations.
+KPI strip first (extra-small tiles), then supporting visualisations. This is the DEFAULT layout — when the customer explicitly asks for a different shape ("put the breakdown at the top", "make the KPIs full-width", "skip the KPI strip"), respect that and don't second-guess. The rule is: KPI/single-value charts → \`extra-small\` and near the top, unless told otherwise.
 
 ## Filters
 
@@ -118,7 +118,7 @@ Rule types:
 
 Picking a threshold: prefer one that would be meaningful enough to act on (a 1% change is noise; a 15% change is signal). When the user doesn't specify, choose conservatively and mention what you chose in your reply.
 
-Picking a frequency: how often to re-evaluate. Default \`1h\` is right for most business metrics. Use \`5m\`/\`15m\`/\`30m\` only for ops-style signals where minutes matter (queue depth, error rate, sync failures). Use \`6h\`/\`12h\`/\`24h\` for slow-moving metrics (weekly signups, monthly active users). Tighter cadence = more BigQuery cost; pick the longest schedule that still surfaces the signal in time to act. Some workspaces have tier limits that clamp tighter cadences to a slower max — the server handles the clamp silently.
+Picking a frequency: how often to re-evaluate. **Default to \`24h\`** when the user doesn't specify a cadence — most business metrics (weekly revenue, monthly active users, daily orders) move on day timescales and don't benefit from tighter checks. Use \`5m\`/\`15m\`/\`30m\` ONLY for ops-style signals where minutes matter (queue depth, error rate, sync failures). Use \`1h\`/\`6h\`/\`12h\` for intra-day business metrics where the customer has explicitly asked for it. Tighter cadence = more BigQuery cost; never pick tighter than the signal requires. Some workspaces have tier limits that clamp tighter cadences to a slower max — the server handles the clamp silently.
 
 The \`description\` field describes WHAT is being tracked — no numbers in it, those come from the live query. Bad: "AOV is £45.50, up 8%". Good: "Tracks average order value week-over-week; fires if it changes by more than 5%".
 

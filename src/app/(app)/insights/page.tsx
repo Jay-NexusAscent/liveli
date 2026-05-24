@@ -5,13 +5,17 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowRightIcon,
+  CheckIcon,
+  CloseIcon,
   InsightIcon,
+  PencilIcon,
   SparkleIcon,
   TrashIcon,
   TrendDownIcon,
   TrendUpIcon,
 } from "@/components/icons";
 import { EmptyState } from "@/components/ui/empty-state";
+import type { AlertChannelPublic } from "@/lib/insights/notify";
 import type {
   FirestoreTimestamp,
   Insight,
@@ -132,6 +136,10 @@ export default function InsightsPage() {
   // highlight finishes, /api/users/me/insights-seen is POSTed so the
   // bubble in the sidebar clears.
   const [newlyFiredIds, setNewlyFiredIds] = useState<Set<string>>(new Set());
+  // Currently-editing insight, or null when modal is closed. Single
+  // piece of state so only one edit modal is ever open at once —
+  // keeps the back/forward stack clean and avoids stacking dialogs.
+  const [editingInsight, setEditingInsight] = useState<ApiInsight | null>(null);
   // Ref to the FIRST newly-fired card so we can scrollIntoView it
   // when the page first renders the list. Subsequent newly-fired
   // cards just get the ring — only the first one scrolls.
@@ -441,6 +449,7 @@ export default function InsightsPage() {
                   onOpenInChat={() => openInChat(insight.prefill)}
                   onDelete={() => deleteInsight(insight.id, insight.title)}
                   onChangeFrequency={(f) => changeFrequency(insight.id, f)}
+                  onEdit={() => setEditingInsight(insight)}
                 />
               );
             })}
@@ -465,10 +474,24 @@ export default function InsightsPage() {
                 onOpenInChat={() => openInChat(insight.prefill)}
                 onDelete={() => deleteInsight(insight.id, insight.title)}
                 onChangeFrequency={(f) => changeFrequency(insight.id, f)}
+                onEdit={() => setEditingInsight(insight)}
               />
             ))}
           </div>
         </section>
+      )}
+
+      {editingInsight && (
+        <InsightEditModal
+          insight={editingInsight}
+          onClose={() => setEditingInsight(null)}
+          onSaved={(updated) => {
+            setInsights((items) =>
+              items.map((i) => (i.id === updated.id ? updated : i))
+            );
+            setEditingInsight(null);
+          }}
+        />
       )}
     </div>
   );
@@ -489,6 +512,7 @@ function InsightCard({
   onOpenInChat,
   onDelete,
   onChangeFrequency,
+  onEdit,
   isNewlyFired,
   scrollRef,
 }: {
@@ -500,6 +524,7 @@ function InsightCard({
   onOpenInChat: () => void;
   onDelete: () => void;
   onChangeFrequency: (next: InsightFrequency) => void;
+  onEdit: () => void;
   /** True when this card fired since the user last visited /insights. */
   isNewlyFired?: boolean;
   /** Attached to the FIRST newly-fired card so the page can scrollIntoView. */
@@ -594,6 +619,14 @@ function InsightCard({
           title={insight.title}
         />
         <div className="flex shrink-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={onEdit}
+            aria-label={`Edit insight ${insight.title}`}
+            className="rounded-md p-1.5 text-text-tertiary transition-colors hover:bg-hover hover:text-text-primary"
+          >
+            <PencilIcon />
+          </button>
           <button
             type="button"
             onClick={onReevaluate}
@@ -726,6 +759,235 @@ function ValueBadge({
     <span className="font-mono text-[15px] tabular-nums text-text-primary">
       {formatValue(current)}
     </span>
+  );
+}
+
+/**
+ * Edit modal — frequency + channel subscription for an existing
+ * insight. Fetches the workspace's channels on open so the customer
+ * can pick from the up-to-date list.
+ *
+ * Channel subscription semantics:
+ *   - No channels selected = "fan out to all enabled channels"
+ *     (the default). Saved as `channelIds: null` on the server.
+ *   - One or more selected = subscription. Saved as the array.
+ *
+ * The "all enabled" fallback is the deliberate default — most
+ * customers wire up one channel and want every fired insight there;
+ * forcing them to re-select per insight would be tedious.
+ */
+function InsightEditModal({
+  insight,
+  onClose,
+  onSaved,
+}: {
+  insight: ApiInsight;
+  onClose: () => void;
+  onSaved: (updated: ApiInsight) => void;
+}) {
+  const [channels, setChannels] = useState<AlertChannelPublic[]>([]);
+  const [channelsLoading, setChannelsLoading] = useState(true);
+  const [frequency, setFrequency] = useState<InsightFrequency>(
+    insight.frequency ?? DEFAULT_FREQUENCY
+  );
+  // Set initial selection from the insight's current channelIds.
+  // Empty/undefined → empty Set → "all channels" default reflected
+  // visually as no checkboxes ticked.
+  const [selected, setSelected] = useState<Set<string>>(
+    new Set(insight.channelIds ?? [])
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/insights/channels");
+        if (res.ok) {
+          const items: AlertChannelPublic[] = (await res.json()).items ?? [];
+          setChannels(items);
+        }
+      } finally {
+        setChannelsLoading(false);
+      }
+    })();
+  }, []);
+
+  const toggleChannel = (id: string) => {
+    setSelected((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    // Empty set → null on the wire → server deletes the field →
+    // insight reverts to the "all enabled channels" default. The
+    // three-way semantic (set / clear / no-change) is documented on
+    // the PATCH endpoint.
+    const channelIds = selected.size === 0 ? null : Array.from(selected);
+    try {
+      const res = await fetch(`/api/insights/${insight.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ frequency, channelIds }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(payload?.error ?? `HTTP ${res.status}`);
+        return;
+      }
+      // Mirror the saved state into local insight, including any
+      // server-clamped frequency. channelIds: empty → undefined on
+      // the local object to keep "no channelIds field" canonical.
+      onSaved({
+        ...insight,
+        frequency: (payload.frequency as InsightFrequency) ?? frequency,
+        channelIds: channelIds ?? undefined,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Enabled channels only — disabled ones can be subscribed to but
+  // won't fire. We could show them disabled-style; for v1 we just
+  // omit them to keep the modal focused.
+  const enabledChannels = channels.filter((c) => c.enabled);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="card-elevated max-h-[90vh] w-full max-w-md overflow-y-auto p-6">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] uppercase tracking-wider text-text-tertiary">
+              Edit insight
+            </p>
+            <h2 className="text-[18px] font-semibold text-text-primary font-heading">
+              {insight.title}
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded-md p-1 text-text-tertiary transition-colors hover:bg-hover hover:text-text-primary"
+          >
+            <CloseIcon />
+          </button>
+        </div>
+
+        <div className="space-y-5">
+          <div>
+            <label className="mb-1 block text-[12px] font-medium text-text-secondary">
+              Evaluation frequency
+            </label>
+            <select
+              value={frequency}
+              onChange={(e) => setFrequency(e.target.value as InsightFrequency)}
+              className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-[13px] text-text-primary focus:border-accent focus:outline-none"
+            >
+              {FREQUENCY_VALUES.map((f) => (
+                <option key={f} value={f}>
+                  {FREQUENCY_LABELS[f]}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-[12px] font-medium text-text-secondary">
+              Alert channels
+            </label>
+            {channelsLoading && (
+              <p className="text-[12px] text-text-tertiary">Loading channels…</p>
+            )}
+            {!channelsLoading && enabledChannels.length === 0 && (
+              <p className="text-[12px] text-text-tertiary">
+                No channels configured yet.{" "}
+                <Link
+                  href="/insights/channels"
+                  className="text-accent hover:underline"
+                  onClick={onClose}
+                >
+                  Add a channel →
+                </Link>
+              </p>
+            )}
+            {!channelsLoading && enabledChannels.length > 0 && (
+              <>
+                <div className="space-y-1">
+                  {enabledChannels.map((channel) => {
+                    const isSelected = selected.has(channel.id);
+                    return (
+                      <button
+                        key={channel.id}
+                        type="button"
+                        onClick={() => toggleChannel(channel.id)}
+                        className={`flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left transition-colors ${
+                          isSelected
+                            ? "border-accent bg-accent-muted"
+                            : "border-border bg-surface hover:bg-hover"
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <p className="text-[13px] font-medium text-text-primary">
+                            {channel.name}
+                          </p>
+                          <p className="truncate text-[11px] text-text-tertiary">
+                            {channel.type} · {channel.configPreview}
+                          </p>
+                        </div>
+                        {isSelected && <CheckIcon className="text-accent" />}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-2 text-[11px] text-text-tertiary">
+                  {selected.size === 0
+                    ? "No selection → fires to ALL enabled channels (default)."
+                    : `Fires to ${selected.size} selected channel${selected.size === 1 ? "" : "s"} only.`}
+                </p>
+              </>
+            )}
+          </div>
+
+          {error && (
+            <div className="rounded-md border border-[color:var(--status-error)]/30 bg-[color:var(--status-error)]/10 px-2.5 py-1.5 text-[12px] text-[color:var(--status-error)]">
+              {error}
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2 border-t border-border pt-4">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md px-3 py-1.5 text-[13px] text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={save}
+              disabled={saving}
+              className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {saving ? "Saving…" : (
+                <>
+                  <CheckIcon /> Save changes
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

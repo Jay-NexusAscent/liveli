@@ -71,8 +71,13 @@ const Input = z.object({
     .enum(FREQUENCY_VALUES as readonly [InsightFrequency, ...InsightFrequency[]])
     .optional()
     .describe(
-      "How often the insight is evaluated. '5m'/'15m'/'30m' for ops alerts that need fast detection; '1h'/'6h' for business metrics; '12h'/'24h' for slow-moving signals. Defaults to '1h' when omitted. Pick the longest cadence that still surfaces the signal in time to act — faster is more expensive in compute."
+      "How often the insight is evaluated. DEFAULT '24h' (daily) — match the rhythm of most business metrics. Use '5m'/'15m'/'30m' ONLY for ops-style signals where minutes matter. Use '1h'/'6h'/'12h' for intra-day business metrics the user explicitly asked for. Tighter cadence = more BigQuery cost; don't pick tighter than the signal requires."
     ),
+  // channelIds: per-insight channel subscription. Omit unless the
+  // user has explicitly asked to route this insight to specific
+  // channels (and the agent has been told their ids). The default
+  // — undefined — means fan out to all enabled channels, which is
+  // what most customers expect.
 });
 
 export const saveInsightTool: ToolDefinition = {
