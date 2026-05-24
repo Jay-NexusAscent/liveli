@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowRightIcon,
@@ -10,6 +11,7 @@ import {
   TrendDownIcon,
   TrendUpIcon,
 } from "@/components/icons";
+import { EmptyState } from "@/components/ui/empty-state";
 import type {
   FirestoreTimestamp,
   Insight,
@@ -124,20 +126,93 @@ export default function InsightsPage() {
   const [deleting, setDeleting] = useState<Set<string>>(new Set());
   // Bulk-evaluate state. Single boolean — only one bulk run at a time.
   const [evaluatingAll, setEvaluatingAll] = useState(false);
+  // Set of insight ids that fired since the user last visited the
+  // tab. Used to ring + scroll-into-view on mount. Populated from
+  // user.insightsLastSeenAt (fetched alongside insights). After the
+  // highlight finishes, /api/users/me/insights-seen is POSTed so the
+  // bubble in the sidebar clears.
+  const [newlyFiredIds, setNewlyFiredIds] = useState<Set<string>>(new Set());
+  // Ref to the FIRST newly-fired card so we can scrollIntoView it
+  // when the page first renders the list. Subsequent newly-fired
+  // cards just get the ring — only the first one scrolls.
+  const firstNewlyFiredRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch("/api/insights");
-        if (res.ok) {
-          const items: ApiInsight[] = (await res.json()).items ?? [];
-          setInsights(items);
+        // Two parallel fetches: insights + this user's
+        // insightsLastSeenAt. We need both before we can compute
+        // newlyFiredIds, so wait on Promise.all rather than
+        // sequencing.
+        const [insightsRes, seenRes] = await Promise.all([
+          fetch("/api/insights"),
+          fetch("/api/users/me/insights-seen"),
+        ]);
+
+        const items: ApiInsight[] = insightsRes.ok
+          ? ((await insightsRes.json()).items ?? [])
+          : [];
+        setInsights(items);
+
+        // lastSeenMs is the cutoff for "new" — anything fired AFTER
+        // this counts. Undefined / 404 → cutoff is 0 → all fired
+        // insights count as new (first-visit experience).
+        let lastSeenMs = 0;
+        if (seenRes.ok) {
+          const payload = await seenRes.json();
+          lastSeenMs = typeof payload.lastSeenMs === "number" ? payload.lastSeenMs : 0;
         }
+
+        const newIds = new Set<string>();
+        for (const i of items) {
+          if (i.status !== "fired") continue;
+          const firedAtMs = i.firedAt ? i.firedAt._seconds * 1000 : 0;
+          if (firedAtMs > lastSeenMs) newIds.add(i.id);
+        }
+        setNewlyFiredIds(newIds);
       } finally {
         setLoading(false);
       }
     })();
   }, []);
+
+  /**
+   * After the page renders any newly-fired cards, scroll the first
+   * one into view AND start the 1.2s timer to mark insights as
+   * seen. The ring animation on each card is driven by its own
+   * isNewlyFired prop — this effect handles cross-card concerns
+   * (scroll + the mark-seen network call) only.
+   *
+   * We wait until !loading so the cards have rendered + the ref is
+   * attached. The 1.2s mark-seen delay gives the customer enough
+   * time to see the highlight before the bubble clears server-side
+   * — otherwise a fast-cached refresh would clear the marker
+   * before they could even see what fired.
+   */
+  useEffect(() => {
+    if (loading) return;
+    if (newlyFiredIds.size === 0) return;
+
+    // Scroll the first newly-fired card into view. behavior:"smooth"
+    // gives the customer a clear "this is what changed" cue rather
+    // than a jump.
+    if (firstNewlyFiredRef.current) {
+      firstNewlyFiredRef.current.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+      });
+    }
+
+    const t = setTimeout(() => {
+      fetch("/api/users/me/insights-seen", { method: "POST" }).catch(() => {
+        // Marking-seen failure isn't user-visible — worst case the
+        // bubble shows the same count again on the next sidebar
+        // poll. Better than a noisy error toast.
+      });
+    }, 1200);
+
+    return () => clearTimeout(t);
+  }, [loading, newlyFiredIds]);
 
   /**
    * Stash a prompt and navigate to /chat. Same mechanism the old
@@ -286,6 +361,12 @@ export default function InsightsPage() {
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <Link
+            href="/insights/channels"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-elevated px-3 py-1.5 text-[12px] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
+          >
+            Channels
+          </Link>
           {insights.length > 0 && (
             <button
               type="button"
@@ -310,26 +391,26 @@ export default function InsightsPage() {
       {loading && <p className="text-[13px] text-text-tertiary">Loading…</p>}
 
       {isEmpty && (
-        <div className="card-elevated flex flex-col items-center justify-center gap-3 py-20 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-accent-muted text-accent">
-            <InsightIcon className="text-accent" />
-          </div>
-          <h2 className="text-[18px] font-semibold tracking-tight text-text-primary font-heading">
-            No insights yet
-          </h2>
-          <p className="max-w-md text-[14px] text-text-secondary">
-            Insights are live-evaluated alerts. Ask the agent to suggest some
-            from your data — it&apos;ll write the SQL and pick thresholds.
-          </p>
-          <button
-            type="button"
-            onClick={() => openInChat(SUGGEST_PREFILL)}
-            className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-[13px] font-medium text-text-inverted transition-colors hover:bg-accent-hover"
-          >
-            <SparkleIcon />
-            Ask the agent to suggest insights
-          </button>
-        </div>
+        <EmptyState
+          icon={<InsightIcon className="text-accent" />}
+          title="No insights yet"
+          description={
+            <>
+              Insights are live-evaluated alerts. Ask the agent to suggest some
+              from your data — it&apos;ll write the SQL and pick thresholds.
+            </>
+          }
+          action={
+            <button
+              type="button"
+              onClick={() => openInChat(SUGGEST_PREFILL)}
+              className="inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-[13px] font-medium text-text-inverted transition-colors hover:bg-accent-hover"
+            >
+              <SparkleIcon />
+              Ask the agent to suggest insights
+            </button>
+          }
+        />
       )}
 
       {fired.length > 0 && (
@@ -339,19 +420,30 @@ export default function InsightsPage() {
             Active alerts ({fired.length})
           </h2>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {fired.map((insight) => (
-              <InsightCard
-                key={insight.id}
-                insight={insight}
-                isFired
-                isEvaluating={evaluating.has(insight.id)}
-                isDeleting={deleting.has(insight.id)}
-                onReevaluate={() => reevaluate(insight.id)}
-                onOpenInChat={() => openInChat(insight.prefill)}
-                onDelete={() => deleteInsight(insight.id, insight.title)}
-                onChangeFrequency={(f) => changeFrequency(insight.id, f)}
-              />
-            ))}
+            {fired.map((insight, idx) => {
+              const isNew = newlyFiredIds.has(insight.id);
+              // Only the FIRST newly-fired card gets the ref —
+              // we scroll exactly one card into view, not the last
+              // one. Subsequent newly-fired cards just get the ring.
+              const isFirstNew =
+                isNew &&
+                fired.findIndex((f) => newlyFiredIds.has(f.id)) === idx;
+              return (
+                <InsightCard
+                  key={insight.id}
+                  insight={insight}
+                  isFired
+                  isNewlyFired={isNew}
+                  scrollRef={isFirstNew ? firstNewlyFiredRef : undefined}
+                  isEvaluating={evaluating.has(insight.id)}
+                  isDeleting={deleting.has(insight.id)}
+                  onReevaluate={() => reevaluate(insight.id)}
+                  onOpenInChat={() => openInChat(insight.prefill)}
+                  onDelete={() => deleteInsight(insight.id, insight.title)}
+                  onChangeFrequency={(f) => changeFrequency(insight.id, f)}
+                />
+              );
+            })}
           </div>
         </section>
       )}
@@ -397,6 +489,8 @@ function InsightCard({
   onOpenInChat,
   onDelete,
   onChangeFrequency,
+  isNewlyFired,
+  scrollRef,
 }: {
   insight: ApiInsight;
   isFired: boolean;
@@ -406,17 +500,33 @@ function InsightCard({
   onOpenInChat: () => void;
   onDelete: () => void;
   onChangeFrequency: (next: InsightFrequency) => void;
+  /** True when this card fired since the user last visited /insights. */
+  isNewlyFired?: boolean;
+  /** Attached to the FIRST newly-fired card so the page can scrollIntoView. */
+  scrollRef?: React.Ref<HTMLDivElement>;
 }) {
   const pct = changePct(insight.currentValue, insight.previousValue);
   const ruleTypeIsChange =
     insight.rule.type === "change_pct_above" ||
     insight.rule.type === "change_pct_below";
 
+  // Newly-fired highlight: ring fades to nothing over 4s. State-
+  // driven so we can use a CSS transition for the fade rather than
+  // keyframe animation in globals.css. Auto-clears so the card
+  // returns to its base styling without the customer touching it.
+  const [showRing, setShowRing] = useState(!!isNewlyFired);
+  useEffect(() => {
+    if (!isNewlyFired) return;
+    const t = setTimeout(() => setShowRing(false), 4000);
+    return () => clearTimeout(t);
+  }, [isNewlyFired]);
+
   return (
     <article
-      className={`card-elevated flex flex-col gap-4 p-5 ${
+      ref={scrollRef}
+      className={`card-elevated flex flex-col gap-4 p-5 transition-all duration-700 ${
         isFired ? "border-[color:var(--status-error)]/40" : ""
-      }`}
+      } ${showRing ? "ring-2 ring-[color:var(--status-error)] ring-offset-2 ring-offset-background shadow-[0_0_30px_rgba(239,68,68,0.35)]" : ""}`}
     >
       <div className="flex items-center justify-between gap-3">
         <span
