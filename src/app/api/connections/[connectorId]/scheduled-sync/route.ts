@@ -14,6 +14,7 @@ import {
   DEFAULT_BQ_LOCATION,
 } from "@/lib/bigquery";
 import {
+  buildLiveliOauthEnv,
   buildTapEnv,
   UnsupportedConnectorTypeError,
 } from "@/lib/connector-env";
@@ -176,6 +177,9 @@ export async function POST(
   };
 
   try {
+    // Liveli's OAuth app creds (no-op for non-OAuth types) then
+    // per-customer creds. See sync/route.ts for the rationale.
+    Object.assign(env, await buildLiveliOauthEnv(data.type));
     Object.assign(
       env,
       buildTapEnv(data.type, creds, {

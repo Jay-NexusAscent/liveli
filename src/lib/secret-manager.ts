@@ -75,6 +75,48 @@ export async function readConnectorSecret(
 }
 
 /**
+ * Read a workspace-agnostic Liveli app secret by name.
+ *
+ * Differs from `readConnectorSecret()` in two ways:
+ *   - No tenant scoping in the name — these secrets are global to the
+ *     Liveli installation (e.g. OAuth client credentials for Liveli's
+ *     own apps registered with Google / Intuit). NEVER use this for
+ *     per-customer data.
+ *   - Returns the raw string payload, not a JSON-parsed object. The
+ *     OAuth client_id / client_secret / HMAC-key secrets are stored
+ *     as plain strings (created via `gcloud secrets create ... --data-file`).
+ *
+ * Caller is responsible for trimming whitespace if their consumer
+ * cares — some Secret Manager UIs trail a newline on create.
+ */
+export async function readLiveliAppSecret(name: string): Promise<string> {
+  const [version] = await sm().accessSecretVersion({
+    name: `projects/${gcp.projectId}/secrets/${name}/versions/latest`,
+  });
+  const data = version.payload?.data?.toString();
+  if (!data) throw new Error(`Empty secret ${name}`);
+  return data;
+}
+
+/**
+ * Read the HMAC key used to sign OAuth `state` blobs.
+ *
+ * Separated from `readLiveliAppSecret()` because the consumer wants a
+ * Buffer (HMAC inputs are bytes, not strings) — easier to centralise
+ * the encoding here than have every caller deal with `Buffer.from(...)`.
+ *
+ * Secret was created via:
+ *   openssl rand -base64 32 | gcloud secrets create liveli-oauth-state-hmac-key --data-file=-
+ *
+ * 32 bytes (256 bit) of entropy, base64-encoded → ~44 chars stored.
+ * We base64-decode back to the raw 32-byte buffer for HMAC-SHA256.
+ */
+export async function readOauthStateHmacKey(): Promise<Buffer> {
+  const raw = await readLiveliAppSecret("liveli-oauth-state-hmac-key");
+  return Buffer.from(raw.trim(), "base64");
+}
+
+/**
  * Delete the connector secret entirely (all versions). Idempotent —
  * NotFound is treated as success so deletes are safe to retry.
  */

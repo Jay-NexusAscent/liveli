@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ChartLineIcon,
   CoinIcon,
@@ -34,6 +35,8 @@ import { MixpanelWizard } from "@/components/connections/mixpanel-wizard";
 import { AmplitudeWizard } from "@/components/connections/amplitude-wizard";
 import { JiraWizard } from "@/components/connections/jira-wizard";
 import { ZendeskWizard } from "@/components/connections/zendesk-wizard";
+import { Ga4Wizard } from "@/components/connections/ga4-wizard";
+import { QuickbooksWizard } from "@/components/connections/quickbooks-wizard";
 import { EditConnectorModal } from "@/components/connections/edit-connector-modal";
 
 interface ConnectorRecord {
@@ -121,6 +124,35 @@ function formatLastSynced(
   });
 }
 
+/**
+ * Map the `?error=oauth_*` codes the callback route emits to
+ * human-readable strings. Unknown codes fall through to a generic
+ * message — better than rendering the raw code.
+ */
+function oauthErrorMessage(code: string): string {
+  // Codes mirror src/app/api/auth/oauth/[provider]/callback/route.ts.
+  // Keep in sync — a renamed code there should be renamed here too.
+  const map: Record<string, string> = {
+    oauth_provider_error:
+      "The OAuth provider rejected the request. Try again — if it keeps failing, check that the redirect URI in our app config matches.",
+    oauth_missing_state_or_code:
+      "The OAuth provider didn't return the expected parameters. Start the connection flow again.",
+    oauth_invalid_state:
+      "Your connection request expired or couldn't be verified. Start the connection flow again.",
+    oauth_tenant_mismatch:
+      "You switched workspace mid-flow. Start the connection in the workspace you want the source attached to.",
+    oauth_token_exchange_failed:
+      "Couldn't exchange the OAuth code for an access token. Provider may have rejected the request — try again.",
+    oauth_no_refresh_token:
+      "The OAuth provider didn't issue a refresh token. The connector would die after an hour, so we didn't save it. Try again — if you'd previously connected this provider, revoke the old grant first.",
+    oauth_provision_failed:
+      "Couldn't save the connector after the OAuth dance succeeded. Check your workspace permissions and try again.",
+    oauth_unknown_provider:
+      "Unknown OAuth provider. This is a bug — contact support.",
+  };
+  return map[code] ?? `OAuth flow failed: ${code}`;
+}
+
 const SYNC_FREQUENCY_LABELS: Record<NonNullable<ConnectorRecord["syncFrequency"]>, string> = {
   "5m": "every 5 min",
   "15m": "every 15 min",
@@ -156,6 +188,9 @@ type ConnectAction =
   | "amplitude"
   | "jira"
   | "zendesk"
+  // Batch C — OAuth refresh-token SaaS connectors (LIVELI-132):
+  | "ga4"
+  | "quickbooks"
   | null;
 
 type SourceCategory =
@@ -256,7 +291,7 @@ const popularSources: PopularSource[] = [
   { name: "ActiveCampaign", desc: "Automations, deals, contacts", category: "Marketing", action: null },
 
   // Analytics
-  { name: "Google Analytics 4", desc: "Sessions, events, conversions", category: "Analytics", action: null },
+  { name: "Google Analytics 4", desc: "Sessions, events, conversions", category: "Analytics", action: "ga4" },
   { name: "Mixpanel", desc: "Product events + funnels", category: "Analytics", action: "mixpanel" },
   { name: "Amplitude", desc: "Product events + cohorts", category: "Analytics", action: "amplitude" },
   { name: "Segment", desc: "Customer events from any Segment source", category: "Analytics", action: null },
@@ -273,7 +308,7 @@ const popularSources: PopularSource[] = [
   { name: "Freshdesk", desc: "Tickets, agents, conversations", category: "Support", action: null },
 
   // Finance
-  { name: "QuickBooks", desc: "Invoices, P&L, accounts, customers", category: "Finance", action: null },
+  { name: "QuickBooks", desc: "Invoices, P&L, accounts, customers", category: "Finance", action: "quickbooks" },
   { name: "Xero", desc: "Invoices, contacts, balance sheet, P&L", category: "Finance", action: null },
   { name: "Sage Intacct", desc: "GL, AR/AP, vendors, customers", category: "Finance", action: null },
 
@@ -284,8 +319,19 @@ const popularSources: PopularSource[] = [
 ];
 
 export default function ConnectionsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [connectors, setConnectors] = useState<ConnectorRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // OAuth-callback error code from the URL (?error=oauth_*). Derived
+  // during render so the React-19 set-state-in-effect lint stays
+  // happy. Cleared automatically when the on-mount effect calls
+  // router.replace to scrub the params.
+  const oauthErrorCode = searchParams.get("error");
+  const oauthErrorMsg = oauthErrorCode ? oauthErrorMessage(oauthErrorCode) : null;
+  /** Composite of the inline `error` state and the OAuth URL error.
+   * Inline state wins (it's user-action-triggered, more recent). */
+  const displayError = error ?? oauthErrorMsg;
   // One wizard at a time — clicking a tile sets this to its action,
   // each wizard's onClose clears it. Cleaner than 9 boolean flags.
   const [activeWizard, setActiveWizard] = useState<ConnectAction>(null);
@@ -320,6 +366,34 @@ export default function ConnectionsPage() {
     refresh();
     const id = setInterval(refresh, 5000);
     return () => clearInterval(id);
+  }, []);
+
+  // OAuth callback result handling. The Batch C callback routes
+  // (/api/auth/oauth/[provider]/callback) redirect back here with
+  // either `?connected=<id>` on success or `?error=oauth_<code>` on
+  // failure.
+  //
+  // The error text is derived from the URL in render below (see
+  // `oauthError` near the displayed error banner), so the user sees it
+  // immediately without a state round-trip. This effect handles only
+  // the side effects: pull the new connector in faster than the 5s
+  // poll would, then scrub the URL via router.replace (which clears
+  // the param reactively for useSearchParams without re-mounting the
+  // page).
+  useEffect(() => {
+    const connected = searchParams.get("connected");
+    const oauthError = searchParams.get("error");
+    if (!connected && !oauthError) return;
+
+    if (connected) refresh();
+
+    // Drop the OAuth result params; keep the rest of the URL intact.
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("connected");
+    next.delete("error");
+    const qs = next.toString();
+    router.replace(qs ? `/connections?${qs}` : "/connections", { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount; subsequent param changes are router-driven and don't need a re-trigger
   }, []);
 
   // Poll the per-connector progress endpoint while any connectors are
@@ -430,9 +504,9 @@ export default function ConnectionsPage() {
         </p>
       </header>
 
-      {error && (
+      {displayError && (
         <div className="mb-6 whitespace-pre-wrap rounded-md border border-[color:var(--status-error)]/30 bg-[color:var(--status-error)]/10 px-4 py-2 text-[12px] text-[color:var(--status-error)]">
-          {error}
+          {displayError}
         </div>
       )}
 
@@ -839,6 +913,16 @@ export default function ConnectionsPage() {
       />
       <ZendeskWizard
         open={activeWizard === "zendesk"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <Ga4Wizard
+        open={activeWizard === "ga4"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <QuickbooksWizard
+        open={activeWizard === "quickbooks"}
         onClose={closeWizard}
         onConnected={onWizardConnected}
       />

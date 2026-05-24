@@ -37,6 +37,12 @@ locals {
     "amplitude-to-bq",
     "jira-to-bq",
     "zendesk-to-bq",
+    # Batch C (LIVELI-132): OAuth refresh-token SaaS connectors.
+    # The Cloud Run Job pulls Liveli's OAuth app creds at run time from
+    # Secret Manager (liveli-oauth-{google,intuit}-client-{id,secret})
+    # via buildLiveliOauthEnv() — no Job-spec changes needed for that.
+    "ga4-to-bq",
+    "quickbooks-to-bq",
   ]
 
   # Residency footprints. Must match cloudComputeRegionForResidency()
