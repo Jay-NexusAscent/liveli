@@ -19,6 +19,28 @@
  */
 
 /**
+ * Per-tile size on the dashboard grid. Single source of truth — all
+ * other modules that need this enum (the dashboards page, the
+ * fullscreen modal, the chat inline preview, the streaming event
+ * union, the Zod schemas on the agent tools and the dashboard PATCH
+ * route) import from here.
+ *
+ * Tuple is exported alongside the type so Zod can consume it via
+ * `z.enum(COL_SPAN_VALUES)` — Zod requires a tuple, plain string
+ * arrays don't satisfy its `[string, ...string[]]` constraint.
+ *
+ * Order matches the size picker dropdown.
+ */
+export const COL_SPAN_VALUES = [
+  "extra-small",
+  "small",
+  "medium",
+  "large",
+] as const;
+
+export type ColSpan = (typeof COL_SPAN_VALUES)[number];
+
+/**
  * Time-range filter — covers "last 7/30/90 days", "this month",
  * "this quarter", "YTD", or a custom date range. Drives any chart
  * whose sourceSql references `{{filter:date_range.start}}` and
@@ -138,7 +160,7 @@ export interface DynamicChartEntry {
   title: string;
   /** Original/last-rendered chart spec — static fallback when no sourceSql. */
   spec: unknown;
-  colSpan?: "extra-small" | "small" | "medium" | "large";
+  colSpan?: ColSpan;
   /**
    * Parameterised SQL template. Placeholders are `{{filter:<id>.<field>}}`
    * — substituted by the render endpoint before execution.

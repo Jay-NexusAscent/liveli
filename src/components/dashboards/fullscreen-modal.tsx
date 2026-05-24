@@ -6,7 +6,7 @@ import { toPng } from "html-to-image";
 import { CheckIcon, CloseIcon, CopyIcon, PencilIcon } from "@/components/icons";
 import { ChartRenderer } from "@/components/chat/chart-renderer";
 
-type ColSpan = "extra-small" | "small" | "medium" | "large";
+import type { ColSpan } from "@/lib/dashboards/types";
 
 // Mirror of the page's COL_SPAN_CLASSES — written out as full
 // literal strings for Tailwind JIT detection. `lg:` here because

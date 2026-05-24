@@ -17,6 +17,12 @@ import type {
   InsightRule,
   RuleType,
 } from "@/lib/insights/types";
+import {
+  DEFAULT_FREQUENCY,
+  FREQUENCY_LABELS,
+  FREQUENCY_VALUES,
+  type InsightFrequency,
+} from "@/lib/insights/frequency";
 
 const PREFILL_STORAGE_KEY = "liveli.chatPrefill";
 
@@ -202,6 +208,45 @@ export default function InsightsPage() {
     }
   };
 
+  /**
+   * Change the evaluation frequency on one insight. PATCH-driven —
+   * the server clamps the value to the workspace tier (today a
+   * passthrough). Optimistically update local state; rollback on
+   * failure so the picker doesn't appear to have saved when it
+   * didn't.
+   */
+  const changeFrequency = async (id: string, next: InsightFrequency) => {
+    let previous: ApiInsight[] = [];
+    setInsights((items) => {
+      previous = items;
+      return items.map((i) => (i.id === id ? { ...i, frequency: next } : i));
+    });
+    try {
+      const res = await fetch(`/api/insights/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ frequency: next }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const payload = await res.json();
+      // If the server clamped to a different value (tier gate), echo
+      // it back into local state so the picker reflects what was
+      // actually saved.
+      if (payload.frequency && payload.frequency !== next) {
+        setInsights((items) =>
+          items.map((i) =>
+            i.id === id ? { ...i, frequency: payload.frequency } : i
+          )
+        );
+      }
+    } catch (err) {
+      setInsights(previous);
+      alert(
+        `Couldn't change frequency: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  };
+
   const deleteInsight = async (id: string, title: string) => {
     if (!confirm(`Delete insight "${title}"? This can't be undone.`)) return;
     setDeleting((s) => new Set(s).add(id));
@@ -304,6 +349,7 @@ export default function InsightsPage() {
                 onReevaluate={() => reevaluate(insight.id)}
                 onOpenInChat={() => openInChat(insight.prefill)}
                 onDelete={() => deleteInsight(insight.id, insight.title)}
+                onChangeFrequency={(f) => changeFrequency(insight.id, f)}
               />
             ))}
           </div>
@@ -326,6 +372,7 @@ export default function InsightsPage() {
                 onReevaluate={() => reevaluate(insight.id)}
                 onOpenInChat={() => openInChat(insight.prefill)}
                 onDelete={() => deleteInsight(insight.id, insight.title)}
+                onChangeFrequency={(f) => changeFrequency(insight.id, f)}
               />
             ))}
           </div>
@@ -349,6 +396,7 @@ function InsightCard({
   onReevaluate,
   onOpenInChat,
   onDelete,
+  onChangeFrequency,
 }: {
   insight: ApiInsight;
   isFired: boolean;
@@ -357,6 +405,7 @@ function InsightCard({
   onReevaluate: () => void;
   onOpenInChat: () => void;
   onDelete: () => void;
+  onChangeFrequency: (next: InsightFrequency) => void;
 }) {
   const pct = changePct(insight.currentValue, insight.previousValue);
   const ruleTypeIsChange =
@@ -424,11 +473,16 @@ function InsightCard({
         </div>
       )}
 
-      <div className="mt-auto flex items-center justify-between gap-3 border-t border-border pt-3">
+      <div className="mt-auto flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
         <span className="flex min-w-0 items-center gap-1.5 text-[12px] text-text-tertiary">
           <InsightIcon className="opacity-60" />
           <span className="truncate">{insight.sourceConnector ?? "Custom SQL"}</span>
         </span>
+        <FrequencyPicker
+          current={insight.frequency ?? DEFAULT_FREQUENCY}
+          onChange={onChangeFrequency}
+          title={insight.title}
+        />
         <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
@@ -458,6 +512,43 @@ function InsightCard({
         </div>
       </div>
     </article>
+  );
+}
+
+/**
+ * Native <select> dropdown for evaluation frequency. Same reasoning
+ * as the FilterBar's date_range / granularity / select controls —
+ * native gives platform-correct keyboard handling and no a11y rework.
+ * Renders the seven FREQUENCY_VALUES as options; current selection is
+ * driven by the parent. Change → onChange, which the parent PATCHes
+ * to the server.
+ *
+ * When tier gating ships (LIVELI-125), this component should grey out
+ * options above the workspace's tier max and add a small "Paid plan"
+ * affordance next to them. For now all options are selectable.
+ */
+function FrequencyPicker({
+  current,
+  onChange,
+  title,
+}: {
+  current: InsightFrequency;
+  onChange: (next: InsightFrequency) => void;
+  title: string;
+}) {
+  return (
+    <select
+      aria-label={`Evaluation frequency for ${title}`}
+      value={current}
+      onChange={(e) => onChange(e.target.value as InsightFrequency)}
+      className="rounded-md border border-border bg-surface px-2 py-1 text-[12px] text-text-secondary transition-colors hover:border-accent focus:border-accent focus:outline-none"
+    >
+      {FREQUENCY_VALUES.map((f) => (
+        <option key={f} value={f}>
+          {FREQUENCY_LABELS[f]}
+        </option>
+      ))}
+    </select>
   );
 }
 

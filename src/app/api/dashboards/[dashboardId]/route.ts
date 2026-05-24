@@ -2,6 +2,7 @@ import { z } from "zod";
 import { FieldValue } from "@google-cloud/firestore";
 import { requireWorkspaceContext, UnauthorizedError } from "@/lib/clients";
 import { dbReady, dashboardsIn } from "@/lib/firestore";
+import { COL_SPAN_VALUES } from "@/lib/dashboards/types";
 
 export const runtime = "nodejs";
 
@@ -18,7 +19,7 @@ const PatchBody = z.object({
         // full extra-small / small / medium / large → width × row-span
         // mapping. extra-small is the half-height ¼-width tile used
         // for KPI cards.
-        colSpan: z.enum(["extra-small", "small", "medium", "large"]).optional(),
+        colSpan: z.enum(COL_SPAN_VALUES).optional(),
         // Filter-driven re-render fields (LIVELI-122 Phase 2). The
         // client passes these through on reorder/resize so we don't
         // silently downgrade a filter-driven chart to static. Both are
