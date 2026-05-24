@@ -12,7 +12,14 @@ import {
   TrashIcon,
 } from "@/components/icons";
 import { FullscreenModal } from "@/components/dashboards/fullscreen-modal";
+import { FilterBar } from "@/components/dashboards/filter-bar";
 import { ChartRenderer } from "@/components/chat/chart-renderer";
+import { defaultFilterValues } from "@/lib/dashboards/filter-defaults";
+import type {
+  ChartDataMapping,
+  FilterDef,
+  FilterValues,
+} from "@/lib/dashboards/types";
 import {
   DndContext,
   type DragEndEvent,
@@ -96,6 +103,18 @@ interface DashboardChart {
   title: string;
   spec: unknown;
   colSpan?: ColSpan;
+  // ─── filter-driven re-render (LIVELI-122 Phase 2/3) ────────────────
+  // Round-tripped through reads/writes so reorder/resize don't downgrade
+  // a chart to static. Both must be present for /render to refresh it.
+  sourceSql?: string;
+  dataMapping?: ChartDataMapping;
+  // Populated when the most recent /render call returned a chart-level
+  // error for this chart. The render endpoint preserves the saved spec
+  // on error, so the visual content is the previous render's output —
+  // this field lets the UI tell the user the displayed numbers are
+  // stale relative to the current filter values. Cleared on the next
+  // successful render for this chart.
+  _renderError?: string;
   _localId: string;
 }
 
@@ -104,6 +123,8 @@ interface SavedDashboard {
   title: string;
   description?: string | null;
   charts: DashboardChart[];
+  /** Optional dashboard-wide filters (Phase 2). Empty/missing → no filter bar. */
+  filters?: FilterDef[];
 }
 
 type FullscreenContent =
@@ -125,13 +146,64 @@ type FullscreenContent =
  */
 function stripLocalIds(
   charts: DashboardChart[]
-): Array<{ order: number; title: string; spec: unknown; colSpan?: ColSpan }> {
+): Array<{
+  order: number;
+  title: string;
+  spec: unknown;
+  colSpan?: ColSpan;
+  sourceSql?: string;
+  dataMapping?: ChartDataMapping;
+}> {
   return charts.map((c) => ({
     order: c.order,
     title: c.title,
     spec: c.spec,
     ...(c.colSpan ? { colSpan: c.colSpan } : {}),
+    // Pass through filter-driven fields. Without these, a reorder /
+    // resize PATCH would silently strip them server-side and break
+    // future /render calls. The PATCH endpoint round-trips both.
+    ...(c.sourceSql ? { sourceSql: c.sourceSql } : {}),
+    ...(c.dataMapping ? { dataMapping: c.dataMapping } : {}),
   }));
+}
+
+// ─── localStorage helpers ────────────────────────────────────────────
+//
+// Filter selections are persisted per-browser, per-dashboard.
+// Cross-device sync is deferred (the LIVELI-122 Phase 1 design
+// decision); when we hit that pain we'll lift this to Firestore.
+
+const FILTER_LS_PREFIX = "liveli.dashboard-filters.";
+
+function filterStorageKey(dashboardId: string): string {
+  return `${FILTER_LS_PREFIX}${dashboardId}`;
+}
+
+function loadFilterValues(dashboardId: string): FilterValues | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(filterStorageKey(dashboardId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as FilterValues;
+    }
+    return null;
+  } catch {
+    // Malformed JSON in storage shouldn't crash the page — fall back
+    // to defaults rather than throwing.
+    return null;
+  }
+}
+
+function saveFilterValues(dashboardId: string, values: FilterValues): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(filterStorageKey(dashboardId), JSON.stringify(values));
+  } catch {
+    // Storage quota / private-mode failures — silent. The current
+    // session keeps working; only persistence across reloads is lost.
+  }
 }
 
 export default function DashboardsPage() {
@@ -145,6 +217,27 @@ export default function DashboardsPage() {
   // Currently-fullscreened chart or dashboard, or null. Single piece of
   // state so only one fullscreen view can be open at a time.
   const [fullscreen, setFullscreen] = useState<FullscreenContent | null>(null);
+
+  // ─── filter state per dashboard ───────────────────────────────────
+  //
+  // Keyed by dashboard id. Populated during the dashboards-load
+  // useEffect from localStorage (or filter defaults when no saved
+  // state). Mutated when the user picks a value in the FilterBar.
+  const [filterValuesByDashboard, setFilterValuesByDashboard] = useState<
+    Record<string, FilterValues>
+  >({});
+  // Dashboards currently fetching /render — drives the "Updating…"
+  // indicator on each filter bar.
+  const [renderingByDashboard, setRenderingByDashboard] = useState<Set<string>>(
+    new Set()
+  );
+  // Per-dashboard sequence counter for stale-response handling. If the
+  // user changes filter A then quickly changes filter B before A's
+  // /render response lands, B's request bumps the seq — when A's
+  // response finally arrives, we see its seq < latest and discard.
+  // Kept in a ref because it's purely client-side coordination and
+  // doesn't need to trigger re-renders.
+  const renderSeqRef = useRef<Record<string, number>>({});
 
   // dnd-kit sensors. PointerSensor with a small activation distance
   // so clicking the grip without dragging doesn't immediately start a
@@ -194,6 +287,8 @@ export default function DashboardsPage() {
             title: string;
             spec: unknown;
             colSpan?: ColSpan;
+            sourceSql?: string;
+            dataMapping?: ChartDataMapping;
           };
           type ServerDashboard = Omit<SavedDashboard, "charts"> & { charts: ServerChart[] };
           const items: ServerDashboard[] = (await dashRes.json()).items ?? [];
@@ -203,6 +298,16 @@ export default function DashboardsPage() {
               charts: d.charts.map((c) => ({ ...c, _localId: crypto.randomUUID() })),
             }))
           );
+          // Seed filter values per dashboard: prefer the user's
+          // localStorage selections; fall back to the dashboard's
+          // authored defaults if no saved state exists.
+          const seededValues: Record<string, FilterValues> = {};
+          for (const d of items) {
+            if (!d.filters || d.filters.length === 0) continue;
+            const stored = loadFilterValues(d.id);
+            seededValues[d.id] = stored ?? defaultFilterValues(d.filters);
+          }
+          setFilterValuesByDashboard(seededValues);
         }
       } finally {
         setLoading(false);
@@ -344,6 +449,120 @@ export default function DashboardsPage() {
     }
   };
 
+  /**
+   * Re-render a dashboard's filter-driven charts under a new set of
+   * filter values. Posts to /api/dashboards/<id>/render, then merges
+   * the rebuilt specs back into local state.
+   *
+   * Stale-response handling: each call increments
+   * renderSeqRef[dashboardId] before firing. The response is only
+   * applied if its seq is still the latest — otherwise a stale
+   * response would clobber a more recent change.
+   *
+   * Per-chart errors are surfaced via `_renderError` on the chart;
+   * the displayed spec remains the previously rendered one (the
+   * server returns the original spec untouched on chart error).
+   */
+  const runRender = async (dashboardId: string, values: FilterValues) => {
+    const nextSeq = (renderSeqRef.current[dashboardId] ?? 0) + 1;
+    renderSeqRef.current[dashboardId] = nextSeq;
+    setRenderingByDashboard((s) => {
+      const next = new Set(s);
+      next.add(dashboardId);
+      return next;
+    });
+    try {
+      const res = await fetch(`/api/dashboards/${dashboardId}/render`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filterValues: values }),
+      });
+      if (renderSeqRef.current[dashboardId] !== nextSeq) {
+        // A newer render landed (or is in-flight) — discard this stale
+        // response without touching state. The newer call's response
+        // will paint the canonical result.
+        return;
+      }
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        const msg = errBody?.error ?? `HTTP ${res.status}`;
+        console.warn("[dashboard render] failed", dashboardId, msg);
+        return;
+      }
+      const payload = (await res.json()) as {
+        charts: Array<{
+          order: number;
+          title: string;
+          spec: unknown;
+          colSpan?: ColSpan;
+          sourceSql?: string;
+          dataMapping?: ChartDataMapping;
+          error?: string;
+        }>;
+      };
+      // Merge: match server charts to local charts by order index.
+      // Both sides preserve order, so a positional zip is safe. We
+      // keep `_localId` (dnd-kit key) + `sourceSql` + `dataMapping`
+      // from local state, and take the freshly rebuilt `spec` (and
+      // any per-chart error) from the server.
+      setDashboards((ds) =>
+        ds.map((d) => {
+          if (d.id !== dashboardId) return d;
+          const byOrder = new Map<number, (typeof payload.charts)[number]>();
+          for (const sc of payload.charts) byOrder.set(sc.order, sc);
+          const charts = d.charts.map((c) => {
+            const sc = byOrder.get(c.order);
+            if (!sc) return { ...c, _renderError: undefined };
+            return {
+              ...c,
+              spec: sc.spec,
+              _renderError: sc.error,
+            };
+          });
+          return { ...d, charts };
+        })
+      );
+    } finally {
+      // Only clear "updating" if our seq is still the latest. If a
+      // newer call has already bumped seq, leave the indicator on —
+      // that newer call's finally block will turn it off.
+      if (renderSeqRef.current[dashboardId] === nextSeq) {
+        setRenderingByDashboard((s) => {
+          const next = new Set(s);
+          next.delete(dashboardId);
+          return next;
+        });
+      }
+    }
+  };
+
+  /**
+   * Filter-bar change handler. Updates local state, writes
+   * localStorage immediately so a refresh preserves the selection,
+   * then kicks off /render. Async/awaitless on purpose — the UI
+   * spinner-state is driven by `renderingByDashboard`, not by the
+   * promise returned here.
+   */
+  const handleFilterChange = (dashboardId: string, next: FilterValues) => {
+    setFilterValuesByDashboard((m) => ({ ...m, [dashboardId]: next }));
+    saveFilterValues(dashboardId, next);
+    void runRender(dashboardId, next);
+  };
+
+  /**
+   * Reset a dashboard's filters back to authored defaults. Clears the
+   * localStorage entry so a future load also starts at defaults, then
+   * re-renders.
+   */
+  const resetFilters = (dashboardId: string, filters: FilterDef[]) => {
+    const next = defaultFilterValues(filters);
+    setFilterValuesByDashboard((m) => ({ ...m, [dashboardId]: next }));
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(filterStorageKey(dashboardId));
+    }
+    void runRender(dashboardId, next);
+  };
+
   const isEmpty = !loading && charts.length === 0 && dashboards.length === 0;
 
   return (
@@ -436,6 +655,21 @@ export default function DashboardsPage() {
                   </div>
                 </div>
                 {/*
+                  Dashboard-wide filter bar (LIVELI-122). Only renders
+                  when the agent declared filters on this dashboard;
+                  legacy dashboards without filters show no bar at
+                  all and behave exactly as before.
+                */}
+                {d.filters && d.filters.length > 0 && (
+                  <FilterBar
+                    filters={d.filters}
+                    values={filterValuesByDashboard[d.id] ?? defaultFilterValues(d.filters)}
+                    onChange={(v) => handleFilterChange(d.id, v)}
+                    isUpdating={renderingByDashboard.has(d.id)}
+                    onReset={() => resetFilters(d.id, d.filters!)}
+                  />
+                )}
+                {/*
                   One DndContext per dashboard so drags are scoped — a
                   user can't pick a chart out of dashboard A and drop
                   it into dashboard B (which would be a confusing UX
@@ -472,6 +706,7 @@ export default function DashboardsPage() {
                           title={c.title}
                           spec={c.spec}
                           colSpan={c.colSpan ?? DEFAULT_COL_SPAN}
+                          renderError={c._renderError}
                           onExpand={() =>
                             setFullscreen({
                               kind: "chart",
@@ -609,6 +844,7 @@ function SortableChartTile({
   colSpan,
   onExpand,
   onResize,
+  renderError,
 }: {
   id: string;
   title: string;
@@ -616,6 +852,8 @@ function SortableChartTile({
   colSpan: ColSpan;
   onExpand?: () => void;
   onResize: (size: ColSpan) => void;
+  /** Last /render error for this chart, if any. The displayed spec is the previous render's output. */
+  renderError?: string;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id });
@@ -634,6 +872,7 @@ function SortableChartTile({
       <ChartTile
         title={title}
         spec={spec}
+        renderError={renderError}
         onExpand={onExpand}
         dragHandle={
           <button
@@ -743,6 +982,7 @@ function ChartTile({
   deleting,
   dragHandle,
   sizePicker,
+  renderError,
 }: {
   title: string;
   spec: unknown;
@@ -756,6 +996,11 @@ function ChartTile({
   // don't get a resize affordance because there's no per-chart
   // sizing concept on the saved-charts grid.
   sizePicker?: React.ReactNode;
+  // When the most recent filter-driven re-render failed for this
+  // chart, the server returns the previous spec unchanged plus an
+  // error message. We surface it as a small inline banner so the
+  // user doesn't read stale numbers without knowing they're stale.
+  renderError?: string;
 }) {
   return (
     <div className="card-elevated overflow-hidden">
@@ -797,6 +1042,17 @@ function ChartTile({
         </div>
       </div>
       <div className="p-3">
+        {renderError && (
+          <div
+            className="mb-2 rounded-md border border-[color:var(--status-error)]/30 bg-[color:var(--status-error)]/10 px-2.5 py-1.5 text-[12px] text-[color:var(--status-error)]"
+            role="status"
+          >
+            Couldn&apos;t refresh under current filters — showing previous result.
+            <span className="ml-1 text-text-tertiary" title={renderError}>
+              (details)
+            </span>
+          </div>
+        )}
         <ChartRenderer spec={spec} height={260} />
       </div>
     </div>
