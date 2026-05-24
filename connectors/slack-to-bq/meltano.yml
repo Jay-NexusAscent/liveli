@@ -1,0 +1,31 @@
+version: 1
+default_environment: dev
+project_id: liveli-slack-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-slack
+      variant: meltanolabs
+      pip_url: git+https://github.com/MeltanoLabs/tap-slack.git
+      # Required env at runtime:
+      #   TAP_SLACK_API_KEY  (Bot token, starts with "xoxb-")
+      #
+      # The Slack app needs these OAuth scopes for the bot token:
+      #   channels:history, channels:read, groups:history, groups:read,
+      #   users:read, users:read.email
+      # And the bot must be a member of any channel it needs to read.
+      config:
+        start_date: "2024-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true
