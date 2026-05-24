@@ -253,3 +253,101 @@ export function SettingsIcon({ className }: IconProps) {
     </svg>
   );
 }
+
+// ── Connector category icons ───────────────────
+// Used by src/components/connections/brand-icon.tsx as the fallback
+// when a source isn't in the simple-icons brand registry (Salesforce,
+// Klaviyo, Amplitude, etc. — many enterprise brands pull their icons
+// from simple-icons over trademark concerns). The category icon is
+// always category-recognisable, so the catalogue card still
+// communicates "this is a Payments source" / "this is Analytics"
+// rather than the previous "everything's a database".
+
+export function CreditCardIcon({ className }: IconProps) {
+  return (
+    <svg className={className} width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2" y="5" width="16" height="11" rx="2" />
+      <path d="M2 9h16" />
+      <path d="M5.5 13h2" />
+    </svg>
+  );
+}
+
+export function ShoppingBagIcon({ className }: IconProps) {
+  return (
+    <svg className={className} width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 7h12l-1 10.5A1.5 1.5 0 0 1 13.5 19h-7A1.5 1.5 0 0 1 5 17.5L4 7z" />
+      <path d="M7 7V5a3 3 0 0 1 6 0v2" />
+    </svg>
+  );
+}
+
+export function ContactCardIcon({ className }: IconProps) {
+  return (
+    <svg className={className} width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2" y="4" width="16" height="12" rx="2" />
+      <circle cx="7.5" cy="9" r="1.75" />
+      <path d="M4.5 14c.4-1.4 1.6-2.5 3-2.5s2.6 1.1 3 2.5" />
+      <path d="M12.5 8.5h3M12.5 11h3" />
+    </svg>
+  );
+}
+
+export function MegaphoneIcon({ className }: IconProps) {
+  return (
+    <svg className={className} width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 8.5v3l11 4V4.5l-11 4z" />
+      <path d="M14 6.5v7" />
+      <path d="M6 12v4l3 1v-3" />
+    </svg>
+  );
+}
+
+export function ChartLineIcon({ className }: IconProps) {
+  return (
+    <svg className={className} width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 17h14" />
+      <path d="M3 3v14" />
+      <path d="M6 13l3-4 3 2 4-6" />
+    </svg>
+  );
+}
+
+export function KanbanIcon({ className }: IconProps) {
+  return (
+    <svg className={className} width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="3" width="4" height="14" rx="1" />
+      <rect x="8.5" y="3" width="4" height="9" rx="1" />
+      <rect x="14" y="3" width="4" height="11" rx="1" />
+    </svg>
+  );
+}
+
+export function HeadsetIcon({ className }: IconProps) {
+  return (
+    <svg className={className} width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 12V10a7 7 0 0 1 14 0v2" />
+      <rect x="2.5" y="12" width="3" height="5" rx="1" />
+      <rect x="14.5" y="12" width="3" height="5" rx="1" />
+      <path d="M14.5 17v-1" />
+    </svg>
+  );
+}
+
+export function CoinIcon({ className }: IconProps) {
+  return (
+    <svg className={className} width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <ellipse cx="10" cy="6" rx="6" ry="2.5" />
+      <path d="M4 6v3.5c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V6" />
+      <path d="M4 10v3.5c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V10" />
+    </svg>
+  );
+}
+
+export function ProductivityIcon({ className }: IconProps) {
+  return (
+    <svg className={className} width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M11 2L4 11h5l-1 7 7-9h-5l1-7z" />
+    </svg>
+  );
+}

@@ -83,6 +83,9 @@ importers:
       remark-gfm:
         specifier: ^4.0.1
         version: 4.0.1
+      simple-icons:
+        specifier: ^16.21.0
+        version: 16.21.0
       svix:
         specifier: ^1.93.0
         version: 1.93.0
@@ -2771,6 +2774,10 @@ packages:
   signal-exit@4.1.0:
     resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
     engines: {node: '>=14'}
+
+  simple-icons@16.21.0:
+    resolution: {integrity: sha512-kH6LEx5yvBGVNaVrHnZ7D17G16CmmHiI8DD7MwIwgnWmDFTiFu4PhFZLNdV6bMGr61qbHMMTXLoo/T6C25dMGA==}
+    engines: {node: '>=0.12.18'}
 
   size-sensor@1.0.3:
     resolution: {integrity: sha512-+k9mJ2/rQMiRmQUcjn+qznch260leIXY8r4FyYKKyRBO/s5UoeMAHGkCJyE1R/4wrIhTJONfyloY55SkE7ve3A==}
@@ -6368,6 +6375,8 @@ snapshots:
       side-channel-weakmap: 1.0.2
 
   signal-exit@4.1.0: {}
+
+  simple-icons@16.21.0: {}
 
   size-sensor@1.0.3: {}
 
