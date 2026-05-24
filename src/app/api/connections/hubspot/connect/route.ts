@@ -67,7 +67,9 @@ export async function POST(req: Request) {
       message: "HubSpot connection saved. Click Sync to start the first import.",
     });
   } catch (err) {
-    const responseBody = connectErrorEnvelope("hubspot", step.current, err);
+    const responseBody = connectErrorEnvelope("hubspot", step.current, err, [
+      body.accessToken,
+    ]);
     console.error("[hubspot/connect]", JSON.stringify(responseBody).slice(0, 2000));
     return Response.json(responseBody, { status: 500 });
   }
