@@ -12,6 +12,11 @@ import { GoogleAdsWizard } from "@/components/connections/google-ads-wizard";
 import { FacebookAdsWizard } from "@/components/connections/facebook-ads-wizard";
 import { SalesforceWizard } from "@/components/connections/salesforce-wizard";
 import { MailchimpWizard } from "@/components/connections/mailchimp-wizard";
+import { KlaviyoWizard } from "@/components/connections/klaviyo-wizard";
+import { IntercomWizard } from "@/components/connections/intercom-wizard";
+import { SlackWizard } from "@/components/connections/slack-wizard";
+import { GitHubWizard } from "@/components/connections/github-wizard";
+import { LinearWizard } from "@/components/connections/linear-wizard";
 import { EditConnectorModal } from "@/components/connections/edit-connector-modal";
 
 interface ConnectorRecord {
@@ -123,6 +128,12 @@ type ConnectAction =
   | "facebook-ads"
   | "salesforce"
   | "mailchimp"
+  // Batch A — API-key SaaS connectors (LIVELI-126):
+  | "klaviyo"
+  | "intercom"
+  | "slack"
+  | "github"
+  | "linear"
   | null;
 
 type SourceCategory =
@@ -202,7 +213,7 @@ const popularSources: PopularSource[] = [
   { name: "TikTok Ads", desc: "TikTok ad performance + creatives", category: "Marketing", action: null },
   { name: "Microsoft Ads", desc: "Bing search ads performance + spend", category: "Marketing", action: null },
   { name: "Mailchimp", desc: "Campaigns, lists, audience engagement", category: "Marketing", action: "mailchimp" },
-  { name: "Klaviyo", desc: "Email + SMS flows, lists, events", category: "Marketing", action: null },
+  { name: "Klaviyo", desc: "Email + SMS flows, lists, events", category: "Marketing", action: "klaviyo" },
   { name: "ActiveCampaign", desc: "Automations, deals, contacts", category: "Marketing", action: null },
 
   // Analytics
@@ -214,11 +225,11 @@ const popularSources: PopularSource[] = [
   // Project Management
   { name: "Jira", desc: "Issues, sprints, projects, worklogs", category: "Project Management", action: null },
   { name: "Asana", desc: "Tasks, projects, teams, time tracking", category: "Project Management", action: null },
-  { name: "Linear", desc: "Issues, cycles, projects, teams", category: "Project Management", action: null },
+  { name: "Linear", desc: "Issues, cycles, projects, teams", category: "Project Management", action: "linear" },
   { name: "Notion", desc: "Databases, pages, blocks", category: "Project Management", action: null },
 
   // Support
-  { name: "Intercom", desc: "Conversations, contacts, tags, segments", category: "Support", action: null },
+  { name: "Intercom", desc: "Conversations, contacts, tags, segments", category: "Support", action: "intercom" },
   { name: "Zendesk Support", desc: "Tickets, users, organizations, SLAs", category: "Support", action: null },
   { name: "Freshdesk", desc: "Tickets, agents, conversations", category: "Support", action: null },
 
@@ -228,8 +239,8 @@ const popularSources: PopularSource[] = [
   { name: "Sage Intacct", desc: "GL, AR/AP, vendors, customers", category: "Finance", action: null },
 
   // Productivity
-  { name: "Slack", desc: "Messages, channels, users, files", category: "Productivity", action: null },
-  { name: "GitHub", desc: "Issues, PRs, commits, releases", category: "Productivity", action: null },
+  { name: "Slack", desc: "Messages, channels, users, files", category: "Productivity", action: "slack" },
+  { name: "GitHub", desc: "Issues, PRs, commits, releases", category: "Productivity", action: "github" },
   { name: "Google Sheets", desc: "Sync any spreadsheet as a table", category: "Productivity", action: null },
 ];
 
@@ -726,6 +737,31 @@ export default function ConnectionsPage() {
       />
       <MailchimpWizard
         open={activeWizard === "mailchimp"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <KlaviyoWizard
+        open={activeWizard === "klaviyo"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <IntercomWizard
+        open={activeWizard === "intercom"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <SlackWizard
+        open={activeWizard === "slack"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <GitHubWizard
+        open={activeWizard === "github"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <LinearWizard
+        open={activeWizard === "linear"}
         onClose={closeWizard}
         onConnected={onWizardConnected}
       />

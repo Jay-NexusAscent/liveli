@@ -1,0 +1,29 @@
+version: 1
+default_environment: dev
+project_id: liveli-klaviyo-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-klaviyo
+      variant: meltanolabs
+      # MeltanoLabs hosts tap-klaviyo on GitHub but not on PyPI under
+      # the `meltanolabs-tap-klaviyo` name (verified pattern after
+      # LIVELI-121's PyPI-404 sweep). Install from git directly.
+      pip_url: git+https://github.com/MeltanoLabs/tap-klaviyo.git
+      # Required env at runtime:
+      #   TAP_KLAVIYO_AUTH_TOKEN  (Klaviyo Private API Key, "pk_*")
+      config:
+        start_date: "2022-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true
