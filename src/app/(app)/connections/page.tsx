@@ -30,6 +30,10 @@ import { IntercomWizard } from "@/components/connections/intercom-wizard";
 import { SlackWizard } from "@/components/connections/slack-wizard";
 import { GitHubWizard } from "@/components/connections/github-wizard";
 import { LinearWizard } from "@/components/connections/linear-wizard";
+import { MixpanelWizard } from "@/components/connections/mixpanel-wizard";
+import { AmplitudeWizard } from "@/components/connections/amplitude-wizard";
+import { JiraWizard } from "@/components/connections/jira-wizard";
+import { ZendeskWizard } from "@/components/connections/zendesk-wizard";
 import { EditConnectorModal } from "@/components/connections/edit-connector-modal";
 
 interface ConnectorRecord {
@@ -147,6 +151,11 @@ type ConnectAction =
   | "slack"
   | "github"
   | "linear"
+  // Batch B — API-key + identifier SaaS connectors (LIVELI-128):
+  | "mixpanel"
+  | "amplitude"
+  | "jira"
+  | "zendesk"
   | null;
 
 type SourceCategory =
@@ -248,19 +257,19 @@ const popularSources: PopularSource[] = [
 
   // Analytics
   { name: "Google Analytics 4", desc: "Sessions, events, conversions", category: "Analytics", action: null },
-  { name: "Mixpanel", desc: "Product events + funnels", category: "Analytics", action: null },
-  { name: "Amplitude", desc: "Product events + cohorts", category: "Analytics", action: null },
+  { name: "Mixpanel", desc: "Product events + funnels", category: "Analytics", action: "mixpanel" },
+  { name: "Amplitude", desc: "Product events + cohorts", category: "Analytics", action: "amplitude" },
   { name: "Segment", desc: "Customer events from any Segment source", category: "Analytics", action: null },
 
   // Project Management
-  { name: "Jira", desc: "Issues, sprints, projects, worklogs", category: "Project Management", action: null },
+  { name: "Jira", desc: "Issues, sprints, projects, worklogs", category: "Project Management", action: "jira" },
   { name: "Asana", desc: "Tasks, projects, teams, time tracking", category: "Project Management", action: null },
   { name: "Linear", desc: "Issues, cycles, projects, teams", category: "Project Management", action: "linear" },
   { name: "Notion", desc: "Databases, pages, blocks", category: "Project Management", action: null },
 
   // Support
   { name: "Intercom", desc: "Conversations, contacts, tags, segments", category: "Support", action: "intercom" },
-  { name: "Zendesk Support", desc: "Tickets, users, organizations, SLAs", category: "Support", action: null },
+  { name: "Zendesk Support", desc: "Tickets, users, organizations, SLAs", category: "Support", action: "zendesk" },
   { name: "Freshdesk", desc: "Tickets, agents, conversations", category: "Support", action: null },
 
   // Finance
@@ -810,6 +819,26 @@ export default function ConnectionsPage() {
       />
       <LinearWizard
         open={activeWizard === "linear"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <MixpanelWizard
+        open={activeWizard === "mixpanel"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <AmplitudeWizard
+        open={activeWizard === "amplitude"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <JiraWizard
+        open={activeWizard === "jira"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <ZendeskWizard
+        open={activeWizard === "zendesk"}
         onClose={closeWizard}
         onConnected={onWizardConnected}
       />

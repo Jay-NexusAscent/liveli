@@ -299,7 +299,7 @@ export default function InsightsPage() {
           <button
             type="button"
             onClick={() => openInChat(SUGGEST_PREFILL)}
-            className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-accent/90"
+            className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[12px] font-medium text-text-inverted transition-colors hover:bg-accent-hover"
           >
             <SparkleIcon />
             Suggest insights
@@ -324,7 +324,7 @@ export default function InsightsPage() {
           <button
             type="button"
             onClick={() => openInChat(SUGGEST_PREFILL)}
-            className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-accent/90"
+            className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-[13px] font-medium text-text-inverted transition-colors hover:bg-accent-hover"
           >
             <SparkleIcon />
             Ask the agent to suggest insights
@@ -495,7 +495,7 @@ function InsightCard({
           <button
             type="button"
             onClick={onOpenInChat}
-            className="inline-flex items-center gap-1.5 rounded-md bg-accent-muted px-3 py-1.5 text-[12px] font-medium text-accent transition-colors hover:bg-accent hover:text-white"
+            className="inline-flex items-center gap-1.5 rounded-md bg-accent-muted px-3 py-1.5 text-[12px] font-medium text-accent transition-colors hover:bg-accent hover:text-text-inverted"
           >
             Open in chat
             <ArrowRightIcon className="h-3 w-3" />
