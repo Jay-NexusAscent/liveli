@@ -207,6 +207,33 @@ const TAP_ENV_BUILDERS: Record<string, EnvBuilder> = {
   mailchimp: (creds) => ({
     TAP_MAILCHIMP_API_KEY: creds.api_key,
   }),
+
+  klaviyo: (creds) => ({
+    TAP_KLAVIYO_AUTH_TOKEN: creds.auth_token,
+  }),
+
+  intercom: (creds) => ({
+    TAP_INTERCOM_ACCESS_TOKEN: creds.access_token,
+  }),
+
+  slack: (creds) => ({
+    // tap-slack's config field is `api_key` (despite expecting a Slack
+    // bot token, "xoxb-...") — see connectors/slack-to-bq/meltano.yml.
+    TAP_SLACK_API_KEY: creds.api_key,
+  }),
+
+  github: (creds) => ({
+    TAP_GITHUB_AUTH_TOKEN: creds.auth_token,
+    // `repositories` is a JSON-array config field on tap-github. The
+    // connect route stored it as a serialised string; pass through
+    // verbatim — Meltano parses the env var as JSON when the schema
+    // declares the field as an array.
+    TAP_GITHUB_REPOSITORIES: creds.repositories,
+  }),
+
+  linear: (creds) => ({
+    TAP_LINEAR_AUTH_TOKEN: creds.auth_token,
+  }),
 };
 
 /**

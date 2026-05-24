@@ -1,0 +1,27 @@
+version: 1
+default_environment: dev
+project_id: liveli-intercom-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-intercom
+      variant: meltanolabs
+      pip_url: git+https://github.com/MeltanoLabs/tap-intercom.git
+      # Required env at runtime:
+      #   TAP_INTERCOM_ACCESS_TOKEN  (Intercom Access Token from
+      #                               Settings → Developer Hub → Your apps)
+      config:
+        start_date: "2022-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true

@@ -1,0 +1,32 @@
+version: 1
+default_environment: dev
+project_id: liveli-github-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-github
+      variant: meltanolabs
+      pip_url: git+https://github.com/MeltanoLabs/tap-github.git
+      # Required env at runtime:
+      #   TAP_GITHUB_AUTH_TOKEN   (Personal Access Token, classic or
+      #                            fine-grained; needs repo + read:org)
+      #   TAP_GITHUB_REPOSITORIES (JSON array of "owner/repo" strings)
+      # Optional:
+      #   TAP_GITHUB_ORGANIZATIONS (JSON array of org names — pulls all
+      #                             public+private repos in each org)
+      #   TAP_GITHUB_START_DATE
+      config:
+        start_date: "2023-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true

@@ -1,7 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ConnectIcon, DatabaseIcon } from "@/components/icons";
+import {
+  ChartLineIcon,
+  CoinIcon,
+  ConnectIcon,
+  ContactCardIcon,
+  CreditCardIcon,
+  DatabaseIcon,
+  HeadsetIcon,
+  KanbanIcon,
+  MegaphoneIcon,
+  ProductivityIcon,
+  ShoppingBagIcon,
+} from "@/components/icons";
+import { BrandIcon, hasBrandIcon } from "@/components/connections/brand-icon";
 import { cn } from "@/lib/utils";
 import { PostgresWizard } from "@/components/connections/postgres-wizard";
 import { MysqlWizard } from "@/components/connections/mysql-wizard";
@@ -12,6 +25,11 @@ import { GoogleAdsWizard } from "@/components/connections/google-ads-wizard";
 import { FacebookAdsWizard } from "@/components/connections/facebook-ads-wizard";
 import { SalesforceWizard } from "@/components/connections/salesforce-wizard";
 import { MailchimpWizard } from "@/components/connections/mailchimp-wizard";
+import { KlaviyoWizard } from "@/components/connections/klaviyo-wizard";
+import { IntercomWizard } from "@/components/connections/intercom-wizard";
+import { SlackWizard } from "@/components/connections/slack-wizard";
+import { GitHubWizard } from "@/components/connections/github-wizard";
+import { LinearWizard } from "@/components/connections/linear-wizard";
 import { EditConnectorModal } from "@/components/connections/edit-connector-modal";
 
 interface ConnectorRecord {
@@ -123,6 +141,12 @@ type ConnectAction =
   | "facebook-ads"
   | "salesforce"
   | "mailchimp"
+  // Batch A — API-key SaaS connectors (LIVELI-126):
+  | "klaviyo"
+  | "intercom"
+  | "slack"
+  | "github"
+  | "linear"
   | null;
 
 type SourceCategory =
@@ -156,6 +180,23 @@ interface PopularSource {
   category: SourceCategory;
   action: ConnectAction;
 }
+
+// Category-icon fallback used by the card render when a source isn't
+// in the brand-icon allowlist (BrandIcon returns null for those).
+// Keeping a per-category icon means stub sources are still
+// category-distinct visually rather than all using DatabaseIcon.
+const CATEGORY_ICON: Record<SourceCategory, React.ComponentType<{ className?: string }>> = {
+  Databases: DatabaseIcon,
+  Payments: CreditCardIcon,
+  "E-commerce": ShoppingBagIcon,
+  CRM: ContactCardIcon,
+  Marketing: MegaphoneIcon,
+  Analytics: ChartLineIcon,
+  "Project Management": KanbanIcon,
+  Support: HeadsetIcon,
+  Finance: CoinIcon,
+  Productivity: ProductivityIcon,
+};
 
 // Top 50 Meltano connectors — well-supported taps in the data-engineering
 // ecosystem that the typical Liveli prospect is most likely to ask for.
@@ -202,7 +243,7 @@ const popularSources: PopularSource[] = [
   { name: "TikTok Ads", desc: "TikTok ad performance + creatives", category: "Marketing", action: null },
   { name: "Microsoft Ads", desc: "Bing search ads performance + spend", category: "Marketing", action: null },
   { name: "Mailchimp", desc: "Campaigns, lists, audience engagement", category: "Marketing", action: "mailchimp" },
-  { name: "Klaviyo", desc: "Email + SMS flows, lists, events", category: "Marketing", action: null },
+  { name: "Klaviyo", desc: "Email + SMS flows, lists, events", category: "Marketing", action: "klaviyo" },
   { name: "ActiveCampaign", desc: "Automations, deals, contacts", category: "Marketing", action: null },
 
   // Analytics
@@ -214,11 +255,11 @@ const popularSources: PopularSource[] = [
   // Project Management
   { name: "Jira", desc: "Issues, sprints, projects, worklogs", category: "Project Management", action: null },
   { name: "Asana", desc: "Tasks, projects, teams, time tracking", category: "Project Management", action: null },
-  { name: "Linear", desc: "Issues, cycles, projects, teams", category: "Project Management", action: null },
+  { name: "Linear", desc: "Issues, cycles, projects, teams", category: "Project Management", action: "linear" },
   { name: "Notion", desc: "Databases, pages, blocks", category: "Project Management", action: null },
 
   // Support
-  { name: "Intercom", desc: "Conversations, contacts, tags, segments", category: "Support", action: null },
+  { name: "Intercom", desc: "Conversations, contacts, tags, segments", category: "Support", action: "intercom" },
   { name: "Zendesk Support", desc: "Tickets, users, organizations, SLAs", category: "Support", action: null },
   { name: "Freshdesk", desc: "Tickets, agents, conversations", category: "Support", action: null },
 
@@ -228,8 +269,8 @@ const popularSources: PopularSource[] = [
   { name: "Sage Intacct", desc: "GL, AR/AP, vendors, customers", category: "Finance", action: null },
 
   // Productivity
-  { name: "Slack", desc: "Messages, channels, users, files", category: "Productivity", action: null },
-  { name: "GitHub", desc: "Issues, PRs, commits, releases", category: "Productivity", action: null },
+  { name: "Slack", desc: "Messages, channels, users, files", category: "Productivity", action: "slack" },
+  { name: "GitHub", desc: "Issues, PRs, commits, releases", category: "Productivity", action: "github" },
   { name: "Google Sheets", desc: "Sync any spreadsheet as a table", category: "Productivity", action: null },
 ];
 
@@ -640,6 +681,8 @@ export default function ConnectionsPage() {
             <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {filtered.map((s) => {
                 const interactive = s.action !== null;
+                const hasBrand = hasBrandIcon(s.name);
+                const CategoryIconFallback = CATEGORY_ICON[s.category];
                 return (
                   <button
                     key={s.name}
@@ -656,8 +699,24 @@ export default function ConnectionsPage() {
                     )}
                   >
                     <div className="mb-3 flex w-full items-center justify-between">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-md bg-accent-subtle text-accent">
-                        <DatabaseIcon className="text-accent" />
+                      {/* Two-tier visual: brand icons get a clean white
+                          tile (works for any brand colour). Category
+                          fallbacks keep the existing accent-subtle tile
+                          so the lack of a brand icon is visually
+                          distinguishable but still polished. */}
+                      <div
+                        className={cn(
+                          "flex h-9 w-9 items-center justify-center rounded-md",
+                          hasBrand
+                            ? "bg-white"
+                            : "bg-accent-subtle text-accent"
+                        )}
+                      >
+                        {hasBrand ? (
+                          <BrandIcon name={s.name} size={20} />
+                        ) : (
+                          <CategoryIconFallback className="text-accent" />
+                        )}
                       </div>
                       <span className="text-[10px] font-medium uppercase tracking-wider text-text-tertiary">
                         {s.category}
@@ -726,6 +785,31 @@ export default function ConnectionsPage() {
       />
       <MailchimpWizard
         open={activeWizard === "mailchimp"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <KlaviyoWizard
+        open={activeWizard === "klaviyo"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <IntercomWizard
+        open={activeWizard === "intercom"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <SlackWizard
+        open={activeWizard === "slack"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <GitHubWizard
+        open={activeWizard === "github"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <LinearWizard
+        open={activeWizard === "linear"}
         onClose={closeWizard}
         onConnected={onWizardConnected}
       />
