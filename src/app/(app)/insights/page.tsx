@@ -11,6 +11,7 @@ import {
   TrendDownIcon,
   TrendUpIcon,
 } from "@/components/icons";
+import { EmptyState } from "@/components/ui/empty-state";
 import type {
   FirestoreTimestamp,
   Insight,
@@ -390,26 +391,26 @@ export default function InsightsPage() {
       {loading && <p className="text-[13px] text-text-tertiary">Loading…</p>}
 
       {isEmpty && (
-        <div className="card-elevated flex flex-col items-center justify-center gap-3 py-20 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-accent-muted text-accent">
-            <InsightIcon className="text-accent" />
-          </div>
-          <h2 className="text-[18px] font-semibold tracking-tight text-text-primary font-heading">
-            No insights yet
-          </h2>
-          <p className="max-w-md text-[14px] text-text-secondary">
-            Insights are live-evaluated alerts. Ask the agent to suggest some
-            from your data — it&apos;ll write the SQL and pick thresholds.
-          </p>
-          <button
-            type="button"
-            onClick={() => openInChat(SUGGEST_PREFILL)}
-            className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-[13px] font-medium text-text-inverted transition-colors hover:bg-accent-hover"
-          >
-            <SparkleIcon />
-            Ask the agent to suggest insights
-          </button>
-        </div>
+        <EmptyState
+          icon={<InsightIcon className="text-accent" />}
+          title="No insights yet"
+          description={
+            <>
+              Insights are live-evaluated alerts. Ask the agent to suggest some
+              from your data — it&apos;ll write the SQL and pick thresholds.
+            </>
+          }
+          action={
+            <button
+              type="button"
+              onClick={() => openInChat(SUGGEST_PREFILL)}
+              className="inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-[13px] font-medium text-text-inverted transition-colors hover:bg-accent-hover"
+            >
+              <SparkleIcon />
+              Ask the agent to suggest insights
+            </button>
+          }
+        />
       )}
 
       {fired.length > 0 && (

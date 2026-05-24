@@ -14,6 +14,7 @@ import {
 import { FullscreenModal } from "@/components/dashboards/fullscreen-modal";
 import { FilterBar } from "@/components/dashboards/filter-bar";
 import { ChartRenderer } from "@/components/chat/chart-renderer";
+import { EmptyState } from "@/components/ui/empty-state";
 import { defaultFilterValues } from "@/lib/dashboards/filter-defaults";
 import type {
   ChartDataMapping,
@@ -578,19 +579,17 @@ export default function DashboardsPage() {
       {loading && <p className="text-[13px] text-text-tertiary">Loading…</p>}
 
       {isEmpty && (
-        <div className="card-elevated flex flex-col items-center justify-center gap-3 py-20 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-accent-muted text-accent">
-            <DashboardIcon className="text-accent" />
-          </div>
-          <h2 className="text-[18px] font-semibold tracking-tight text-text-primary font-heading">
-            Nothing here yet
-          </h2>
-          <p className="max-w-md text-[14px] text-text-secondary">
-            Open the Chat tab, ask a question, and click &ldquo;Save to dashboard&rdquo;
-            on any chart — or ask the agent to &ldquo;build a sales overview
-            dashboard&rdquo;.
-          </p>
-        </div>
+        <EmptyState
+          icon={<DashboardIcon className="text-accent" />}
+          title="Nothing here yet"
+          description={
+            <>
+              Open the Chat tab, ask a question, and click &ldquo;Save to
+              dashboard&rdquo; on any chart — or ask the agent to &ldquo;build
+              a sales overview dashboard&rdquo;.
+            </>
+          }
+        />
       )}
 
       {dashboards.length > 0 && (

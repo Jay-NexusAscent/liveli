@@ -9,6 +9,7 @@ import {
   PlusIcon,
   TrashIcon,
 } from "@/components/icons";
+import { EmptyState } from "@/components/ui/empty-state";
 
 interface ChatListItem {
   id: string;
@@ -121,25 +122,20 @@ export default function ChatHistoryPage() {
       {loading && <p className="text-[13px] text-text-tertiary">Loading…</p>}
 
       {!loading && chats.length === 0 && (
-        <div className="card-elevated flex flex-col items-center justify-center gap-3 py-20 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-accent-muted text-accent">
-            <HistoryIcon className="text-accent" />
-          </div>
-          <h2 className="text-[18px] font-semibold tracking-tight text-text-primary font-heading">
-            No past chats yet
-          </h2>
-          <p className="max-w-md text-[14px] text-text-secondary">
-            Open the Chat tab and ask the agent a question. Your conversations will appear here so
-            you can continue them later.
-          </p>
-          <Link
-            href="/chat"
-            className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-text-inverted"
-          >
-            <PlusIcon />
-            Start a chat
-          </Link>
-        </div>
+        <EmptyState
+          icon={<HistoryIcon className="text-accent" />}
+          title="No past chats yet"
+          description="Open the Chat tab and ask the agent a question. Your conversations will appear here so you can continue them later."
+          action={
+            <Link
+              href="/chat"
+              className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-text-inverted"
+            >
+              <PlusIcon />
+              Start a chat
+            </Link>
+          }
+        />
       )}
 
       {!loading && chats.length > 0 && (
