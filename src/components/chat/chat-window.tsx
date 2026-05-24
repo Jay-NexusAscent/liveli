@@ -16,7 +16,7 @@ type DashboardChart = {
   // Per-tile width on the dashboard grid. Mirror of the enum on the
   // dashboards page; threaded through so the inline preview shown
   // after make_dashboard matches the /dashboards rendering.
-  colSpan?: "small" | "medium" | "large";
+  colSpan?: "extra-small" | "small" | "medium" | "large";
 };
 
 type MessageBlock =

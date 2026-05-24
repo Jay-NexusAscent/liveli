@@ -63,13 +63,18 @@ const DataMappingSchema = z.object({
 const ChartSpec = z.object({
   title: z.string().min(1).max(120),
   echartsOption: EChartsOption,
-  // Optional column-span hint controlling how wide the tile is on the
-  // dashboard grid. Maps to a 4-col CSS Grid:
-  //   small  → 1/4 width  (great for KPI tiles)
-  //   medium → 1/2 width  (default; matches the legacy 2-col layout)
-  //   large  → full width (for hero charts / wide time series)
+  // Optional column-span hint controlling tile size on the dashboard
+  // grid. The grid is 4 cols wide with 180px row units:
+  //   extra-small → 1/4 width × half-height row  (for single-value KPI tiles;
+  //                                              avoids wasted vertical space)
+  //   small       → 1/4 width × full row         (KPIs with extra detail)
+  //   medium      → 1/2 width × full row         (default; default chart size)
+  //   large       → full width × full row        (hero charts, wide time series)
   // Missing → "medium" so older dashboards render identically.
-  colSpan: z.enum(["small", "medium", "large"]).optional(),
+  // Use `extra-small` for KPI / single-value charts; the agent should
+  // prefer it whenever the chart spec is a single big number rather
+  // than a multi-series visualisation.
+  colSpan: z.enum(["extra-small", "small", "medium", "large"]).optional(),
   // ─── filter-driven re-render (LIVELI-122 Phase 2) ─────────────────
   // BOTH fields must be present for the render endpoint to re-run the
   // chart. If either is missing, the chart falls back to its static
