@@ -138,7 +138,7 @@ export interface DynamicChartEntry {
   title: string;
   /** Original/last-rendered chart spec — static fallback when no sourceSql. */
   spec: unknown;
-  colSpan?: "small" | "medium" | "large";
+  colSpan?: "extra-small" | "small" | "medium" | "large";
   /**
    * Parameterised SQL template. Placeholders are `{{filter:<id>.<field>}}`
    * — substituted by the render endpoint before execution.

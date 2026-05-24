@@ -43,7 +43,7 @@ export type ChatStreamEvent =
         order: number;
         title: string;
         spec: unknown;
-        colSpan?: "small" | "medium" | "large";
+        colSpan?: "extra-small" | "small" | "medium" | "large";
       }>;
     }
   | {

@@ -15,8 +15,10 @@ const PatchBody = z.object({
         title: z.string(),
         spec: z.unknown(),
         // Optional per-tile size hint. See make-dashboard.ts for the
-        // small/medium/large → 1/4 / 1/2 / full mapping.
-        colSpan: z.enum(["small", "medium", "large"]).optional(),
+        // full extra-small / small / medium / large → width × row-span
+        // mapping. extra-small is the half-height ¼-width tile used
+        // for KPI cards.
+        colSpan: z.enum(["extra-small", "small", "medium", "large"]).optional(),
         // Filter-driven re-render fields (LIVELI-122 Phase 2). The
         // client passes these through on reorder/resize so we don't
         // silently downgrade a filter-driven chart to static. Both are

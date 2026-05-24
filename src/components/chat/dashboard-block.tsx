@@ -4,7 +4,7 @@ import Link from "next/link";
 import { ArrowRightIcon, DashboardIcon } from "@/components/icons";
 import { ChartRenderer } from "./chart-renderer";
 
-type ColSpan = "small" | "medium" | "large";
+type ColSpan = "extra-small" | "small" | "medium" | "large";
 
 interface DashboardChart {
   order: number;
