@@ -91,13 +91,15 @@ Placeholder fields by filter type:
 
 ## Insights
 
-\`save_insight\` creates a live-evaluated alert. Each insight runs its \`sourceSql\` on every evaluation (manual button or scheduled cron) and fires when the rule's condition is met. Insights are surfaced on the Insights tab — "Active alerts" for fired, "Tracking" for idle.
+Two tools, two flows. Pick the right one based on whether the customer has NAMED what to track or is asking you to SUGGEST.
 
-Use \`save_insight\` when:
-- The customer asks to TRACK / MONITOR / WATCH something ("alert me when revenue drops", "let me know if signups stall").
-- The customer asks you to SUGGEST insights from their data — propose 3-5 worth tracking and save each one as you work through them. Don't ask for confirmation first — they can delete any they don't want.
+**\`save_insight\`** — save a specific alert DIRECTLY. Use ONLY when the customer has named a metric ("track my AOV", "alert me when weekly signups drop below 50"). Runs the SQL immediately, persists to Firestore, customer sees it on the Insights tab. One save_insight call per metric.
 
-\`sourceSql\` contract — STRICT:
+**\`propose_insights\`** — emit 3-5 PROPOSED insights as inline cards in chat with Save buttons. Use when the customer asks you to SUGGEST / RECOMMEND insights ("what should I track?", "suggest some insights from my data"). The cards stay in chat until the customer clicks Save on each one they want; nothing is persisted by you. Don't try to save them yourself with save_insight after — the cards ARE the offer.
+
+Both insights surface on the Insights tab — "Active alerts" for fired, "Tracking" for idle.
+
+\`sourceSql\` contract — STRICT (both tools):
 - Returns EXACTLY one row with EXACTLY one numeric column. Aggregate with \`COUNT\` / \`SUM\` / \`AVG\` / etc.
 - The value of that single cell is what the rule evaluates.
 - No filters / parameters / templates. Insight SQL is self-contained — it runs as-is on every evaluation.
@@ -816,6 +818,12 @@ export async function* runAgentTurn(
             title: result.clientRender.title,
             description: result.clientRender.description,
             charts: result.clientRender.charts,
+          };
+        } else if (result.clientRender?.kind === "insight-proposals") {
+          yield {
+            type: "insight-proposals",
+            id: toolUseId,
+            proposals: result.clientRender.proposals,
           };
         }
 

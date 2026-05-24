@@ -3,6 +3,27 @@
  * Client splits on "\n\n", JSON-parses each event, dispatches by `type`.
  */
 
+/**
+ * One proposed insight from `propose_insights`. Shape mirrors
+ * save_insight input so the UI can POST it straight through to
+ * /api/insights on accept without re-mapping fields.
+ *
+ * NOTE: proposals are NOT persisted by the agent — they live in the
+ * chat message until the user clicks Save. If the chat is reloaded
+ * before acceptance, proposals are lost; this is intentional (avoids
+ * a "proposal limbo" state in Firestore).
+ */
+export interface InsightProposal {
+  title: string;
+  description: string;
+  category: "Sales" | "Customer" | "Operational" | "Growth";
+  sourceSql: string;
+  sourceConnector?: string;
+  ruleType: "change_pct_above" | "change_pct_below" | "value_above" | "value_below";
+  threshold: number;
+  prefill: string;
+}
+
 export type ChatStreamEvent =
   | { type: "text_delta"; text: string }
   | { type: "tool_use"; id: string; name: string; input: unknown }
@@ -24,6 +45,15 @@ export type ChatStreamEvent =
         spec: unknown;
         colSpan?: "small" | "medium" | "large";
       }>;
+    }
+  | {
+      // propose_insights tool output. Renders as an inline card list in
+      // chat with a Save button per card; user picks which to persist.
+      // Nothing is in Firestore at this point — the agent emitted the
+      // proposals but stopped short of save_insight.
+      type: "insight-proposals";
+      id: string;
+      proposals: InsightProposal[];
     }
   | { type: "message_start"; chatId: string; messageId: string }
   | { type: "message_stop" }

@@ -21,14 +21,18 @@ import type {
 const PREFILL_STORAGE_KEY = "liveli.chatPrefill";
 
 /**
- * Default suggest prefill — fires the agent's "look at data and
- * propose 3-5 insights" flow via the chat prefill mechanism. The same
- * tool (save_insight) handles both user-authored and agent-suggested
- * insights, so there's no separate code path here — just a prompt
- * that nudges the agent into proposal mode.
+ * Default suggest prefill — kicks the agent into propose-insights
+ * mode. The agent inspects the schema, picks 3-5 candidate metrics,
+ * and emits them as inline proposal cards via the propose_insights
+ * tool. User clicks Save on the ones they want. No insights land in
+ * Firestore until a Save click.
+ *
+ * Kept SHORT on purpose — the long-form prompt previously here
+ * (with "write a SELECT that returns exactly one row…") leaked
+ * implementation detail to the chat surface and made the suggest
+ * button visibly verbose. The system prompt handles the contract.
  */
-const SUGGEST_PREFILL =
-  "Look at my data and create 3-5 alert insights worth tracking. For each: pick a metric, write a SELECT that returns exactly one row with one numeric column, choose an appropriate rule type and threshold that would be meaningful to act on, then save it with save_insight. Walk me through what you're saving as you go.";
+const SUGGEST_PREFILL = "Suggest 3-5 alert insights worth tracking from my data.";
 
 /**
  * Server-side Insight shape with the local id added. Spread from the

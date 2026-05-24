@@ -8,6 +8,7 @@ import { ChartBlock } from "./chart-block";
 import { ToolCallBlock } from "./tool-call-block";
 import { TableBlock } from "./table-block";
 import { DashboardBlock } from "./dashboard-block";
+import { InsightProposalsBlock } from "./insight-proposals-block";
 
 type DashboardChart = {
   order: number;
@@ -39,7 +40,33 @@ type MessageBlock =
       title: string;
       description?: string;
       charts: DashboardChart[];
+    }
+  | {
+      // propose_insights — inline cards with Save buttons per
+      // proposal. Saving is page-load-scoped state in the block
+      // component (no need to persist save status to Firestore).
+      type: "insight-proposals";
+      id: string;
+      proposals: ChatInsightProposal[];
     };
+
+/**
+ * Local mirror of InsightProposal from @/lib/streaming. Importing the
+ * full module into the chat window pulls more than we need into the
+ * client bundle; declaring the shape locally keeps it tight. Must
+ * stay in sync with InsightProposal — typed import from streaming.ts
+ * verifies that at compile time via the cast in applyEvent.
+ */
+interface ChatInsightProposal {
+  title: string;
+  description: string;
+  category: "Sales" | "Customer" | "Operational" | "Growth";
+  sourceSql: string;
+  sourceConnector?: string;
+  ruleType: "change_pct_above" | "change_pct_below" | "value_above" | "value_below";
+  threshold: number;
+  prefill: string;
+}
 
 interface Message {
   id: string;
@@ -468,6 +495,9 @@ function MessageItem({
             />
           );
         }
+        if (b.type === "insight-proposals") {
+          return <InsightProposalsBlock key={i} proposals={b.proposals} />;
+        }
         return null;
       })}
     </div>
@@ -543,6 +573,7 @@ function applyEvent(
     dashboardId?: string;
     description?: string;
     charts?: DashboardChart[];
+    proposals?: ChatInsightProposal[];
   },
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>,
   setChatId: React.Dispatch<React.SetStateAction<string | undefined>>
@@ -680,6 +711,32 @@ function applyEvent(
     );
     return;
   }
+
+  // Proposed insights from propose_insights. The cards are inline in
+  // chat; user clicks Save per proposal to persist. Nothing is in
+  // Firestore at this point.
+  if (
+    event.type === "insight-proposals" &&
+    event.id &&
+    Array.isArray(event.proposals)
+  ) {
+    const id = event.id;
+    const proposals = event.proposals as ChatInsightProposal[];
+    setMessages((msgs) =>
+      msgs.map((m) =>
+        m.id === assistantId
+          ? {
+              ...m,
+              blocks: [
+                ...m.blocks,
+                { type: "insight-proposals", id, proposals },
+              ],
+            }
+          : m
+      )
+    );
+    return;
+  }
 }
 
 
@@ -804,6 +861,22 @@ function reconstructCompanion(
           spec: c.echartsOption,
           ...(c.colSpan ? { colSpan: c.colSpan } : {}),
         })),
+      };
+    }
+  }
+  if (meta.name === 'propose_insights') {
+    // Proposal cards survive a chat reload — the tool's persisted
+    // input still has the full list. Save state is page-load-scoped
+    // in the block component, so the Save button shows as fresh
+    // again after reload. If the user already saved a proposal, the
+    // duplicate-save risk is acknowledged in the block component's
+    // header comment.
+    const i = meta.input as { proposals?: ChatInsightProposal[] } | null;
+    if (Array.isArray(i?.proposals) && i.proposals.length > 0) {
+      return {
+        type: 'insight-proposals',
+        id: toolUseId,
+        proposals: i.proposals,
       };
     }
   }

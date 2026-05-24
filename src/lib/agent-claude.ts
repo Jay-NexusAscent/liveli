@@ -187,6 +187,12 @@ function buildAiSdkTools(
               description: result.clientRender.description,
               charts: result.clientRender.charts,
             });
+          } else if (result.clientRender?.kind === "insight-proposals") {
+            renderQueue.push({
+              type: "insight-proposals",
+              id: toolCallId,
+              proposals: result.clientRender.proposals,
+            });
           }
           return result.content;
         } catch (err) {
