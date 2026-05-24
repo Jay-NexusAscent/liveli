@@ -1,0 +1,30 @@
+version: 1
+default_environment: dev
+project_id: liveli-mixpanel-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-mixpanel
+      # singer-io (Stitch Data) is the canonical maintainer. The hub's
+      # "default" hotgluexyz variant is 4 years stale; singer-io is the
+      # reference implementation and resolves cleanly from PyPI.
+      variant: singer-io
+      pip_url: tap-mixpanel
+      # Required env at runtime:
+      #   TAP_MIXPANEL_API_SECRET  (Mixpanel Project API Secret —
+      #                             Project Settings → Access Keys)
+      config:
+        start_date: "2023-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true

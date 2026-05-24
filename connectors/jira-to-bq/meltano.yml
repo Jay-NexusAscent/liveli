@@ -1,0 +1,32 @@
+version: 1
+default_environment: dev
+project_id: liveli-jira-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-jira
+      variant: meltanolabs
+      # MeltanoLabs publishes tap-jira on GitHub but not on PyPI under
+      # `meltanolabs-tap-jira` (verified pattern, same as the other
+      # MeltanoLabs taps we install — see LIVELI-121 sweep).
+      pip_url: git+https://github.com/MeltanoLabs/tap-jira.git
+      # Required env at runtime:
+      #   TAP_JIRA_EMAIL     (Atlassian account email)
+      #   TAP_JIRA_API_TOKEN (Atlassian API token from id.atlassian.com
+      #                       → Account → Security → API tokens)
+      #   TAP_JIRA_DOMAIN    (e.g. yourcompany.atlassian.net)
+      config:
+        start_date: "2023-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true
