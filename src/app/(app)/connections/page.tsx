@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ChartLineIcon,
@@ -319,7 +319,24 @@ const popularSources: PopularSource[] = [
   { name: "Google Sheets", desc: "Sync any spreadsheet as a table", category: "Productivity", action: null },
 ];
 
+/**
+ * Exported wrapper — Next.js requires `useSearchParams()` consumers to
+ * sit inside a `<Suspense>` boundary so the SSR / static-export pass
+ * can render a fallback while the client-side hook resolves. The
+ * boundary is invisible in practice (/connections is auth-walled
+ * behind Clerk, so the page never renders for an unauthenticated
+ * crawler), but `next build` fails without it. See
+ * https://nextjs.org/docs/messages/missing-suspense-with-csr-bailout
+ */
 export default function ConnectionsPage() {
+  return (
+    <Suspense fallback={null}>
+      <ConnectionsPageInner />
+    </Suspense>
+  );
+}
+
+function ConnectionsPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [connectors, setConnectors] = useState<ConnectorRecord[]>([]);
