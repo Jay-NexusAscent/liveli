@@ -1,0 +1,27 @@
+version: 1
+default_environment: dev
+project_id: liveli-linear-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-linear
+      variant: renesteeman
+      pip_url: git+https://github.com/renesteeman/tap-linear.git
+      # Required env at runtime:
+      #   TAP_LINEAR_AUTH_TOKEN  (Linear API key from
+      #                           Settings → API → Personal API keys)
+      config:
+        start_date: "2023-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true

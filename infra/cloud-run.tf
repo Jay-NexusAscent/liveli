@@ -26,6 +26,12 @@ locals {
     "facebook-ads-to-bq",
     "salesforce-to-bq",
     "mailchimp-to-bq",
+    # Batch A (LIVELI-126): API-key-only SaaS connectors.
+    "klaviyo-to-bq",
+    "intercom-to-bq",
+    "slack-to-bq",
+    "github-to-bq",
+    "linear-to-bq",
   ]
 
   # Residency footprints. Must match cloudComputeRegionForResidency()
