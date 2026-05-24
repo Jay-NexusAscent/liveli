@@ -1,23 +1,29 @@
 #!/usr/bin/env bash
-# Reads connector config from env, runs `meltano elt tap-google-ads target-bigquery`.
+# Reads connector config from env, runs `meltano elt tap-googleads target-bigquery`.
 # Per-invocation env is injected by the Cloud Run Job trigger from the app.
+#
+# Note: the Liveli internal connector TYPE remains `google-ads` (with
+# hyphen) for backward compat with existing Firestore docs. Only the
+# tap name and its env var prefix changed — `tap-googleads` (no hyphen,
+# Matatika variant) replaced the de-registered `tap-google-ads`
+# (hotgluexyz). See LIVELI-124.
 
 set -euo pipefail
 
 : "${WORKSPACE_ID:?WORKSPACE_ID required}"
 : "${CONNECTOR_ID:?CONNECTOR_ID required}"
-: "${TAP_GOOGLE_ADS_DEVELOPER_TOKEN:?Google Ads developer token required}"
-: "${TAP_GOOGLE_ADS_CLIENT_ID:?OAuth client ID required}"
-: "${TAP_GOOGLE_ADS_CLIENT_SECRET:?OAuth client secret required}"
-: "${TAP_GOOGLE_ADS_REFRESH_TOKEN:?OAuth refresh token required}"
-: "${TAP_GOOGLE_ADS_CUSTOMER_IDS:?Comma-separated customer IDs required}"
+: "${TAP_GOOGLEADS_DEVELOPER_TOKEN:?Google Ads developer token required}"
+: "${TAP_GOOGLEADS_CLIENT_ID:?OAuth client ID required}"
+: "${TAP_GOOGLEADS_CLIENT_SECRET:?OAuth client secret required}"
+: "${TAP_GOOGLEADS_REFRESH_TOKEN:?OAuth refresh token required}"
+: "${TAP_GOOGLEADS_CUSTOMER_IDS:?Comma-separated customer IDs required}"
 : "${TARGET_BIGQUERY_PROJECT:?bq project required}"
 : "${TARGET_BIGQUERY_DATASET:?bq dataset required}"
 
 export TARGET_BIGQUERY_LOCATION="${TARGET_BIGQUERY_LOCATION:-EU}"
 
 echo "→ workspace=$WORKSPACE_ID connector=$CONNECTOR_ID"
-echo "→ source: google-ads (customers: $TAP_GOOGLE_ADS_CUSTOMER_IDS) → bq:$TARGET_BIGQUERY_PROJECT.$TARGET_BIGQUERY_DATASET"
+echo "→ source: google-ads (customers: $TAP_GOOGLEADS_CUSTOMER_IDS) → bq:$TARGET_BIGQUERY_PROJECT.$TARGET_BIGQUERY_DATASET"
 
 # ── Persistent Meltano state backend on GCS ────────────────────────
 # MELTANO_STATE_BACKEND_URI tells Meltano to read/write replication
@@ -48,4 +54,4 @@ STATE_ID="${CLIENT_ID:-$WORKSPACE_ID}/${LIVELI_WORKSPACE_ID:-default}/${CONNECTO
 echo "→ state backend: $MELTANO_STATE_BACKEND_URI"
 echo "→ state id: $STATE_ID"
 
-meltano elt tap-google-ads target-bigquery --state-id "$STATE_ID"
+meltano elt tap-googleads target-bigquery --state-id "$STATE_ID"
