@@ -13,6 +13,7 @@ import {
   CloseIcon,
   HistoryIcon,
   InsightIcon,
+  PlusIcon,
   SettingsIcon,
 } from "@/components/icons";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
@@ -118,10 +119,34 @@ export function Sidebar() {
     };
   }, [mobileOpen]);
 
+  // Resolve the current nav item — same longest-prefix logic used
+  // inside SidebarContent. Drives the page title shown in the
+  // mobile top bar, which gives the user orientation that the
+  // desktop sidebar's active state provides natively.
+  const activeNavItem = navItems.find(
+    (item) =>
+      pathname.startsWith(item.href) &&
+      !navItems.some(
+        (other) =>
+          other.href !== item.href &&
+          other.href.length > item.href.length &&
+          pathname.startsWith(other.href)
+      )
+  );
+  const pageTitle = activeNavItem?.label ?? "Liveli";
+
+  // Context-aware action affordance on the mobile bar. "+ New chat"
+  // when the user is anywhere in the chat surface — equivalent of
+  // the desktop sidebar's "Chat" link being one click away, but
+  // surfaced as a deliberate action on mobile where the sidebar is
+  // a drawer the user has to open.
+  const showNewChatAction = pathname.startsWith("/chat");
+
   return (
     <>
-      {/* Mobile top bar */}
-      <div className="fixed inset-x-0 top-0 z-40 flex h-14 items-center gap-3 border-b border-border bg-background px-4 lg:hidden">
+      {/* Mobile top bar — frosted glass for elevation, page title
+          for orientation, context-aware action button on the right. */}
+      <div className="fixed inset-x-0 top-0 z-40 flex h-14 items-center gap-3 border-b border-border-subtle bg-background/80 px-4 backdrop-blur-md lg:hidden">
         <button
           type="button"
           onClick={() => setMobileOpen(true)}
@@ -130,8 +155,21 @@ export function Sidebar() {
         >
           <HamburgerIcon />
         </button>
-        <EcgLogo className="text-accent" size={22} />
-        <span className="text-[15px] font-semibold text-text-primary font-heading">Liveli</span>
+        <EcgLogo className="text-accent shrink-0" size={22} />
+        <span className="truncate text-[15px] font-semibold text-text-primary font-heading">
+          {pageTitle}
+        </span>
+
+        {showNewChatAction && (
+          <Link
+            href="/chat"
+            aria-label="New chat"
+            className="ml-auto inline-flex shrink-0 items-center gap-1.5 rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-text-inverted transition-colors hover:bg-accent-hover"
+          >
+            <PlusIcon />
+            <span className="hidden sm:inline">New chat</span>
+          </Link>
+        )}
       </div>
 
       {/* Mobile drawer */}
