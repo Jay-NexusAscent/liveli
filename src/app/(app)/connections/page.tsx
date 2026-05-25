@@ -17,6 +17,7 @@ import {
   ShoppingBagIcon,
 } from "@/components/icons";
 import { BrandIcon, hasBrandIcon } from "@/components/connections/brand-icon";
+import { ActionButton } from "@/components/ui/action-button";
 import { cn } from "@/lib/utils";
 import { PostgresWizard } from "@/components/connections/postgres-wizard";
 import { MysqlWizard } from "@/components/connections/mysql-wizard";
@@ -646,22 +647,18 @@ function ConnectionsPageInner() {
                 </div>
 
                 <div className="flex items-center justify-end gap-1.5 border-t border-border pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setEditing(c)}
-                    className="rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
-                  >
+                  <ActionButton size="xs" onClick={() => setEditing(c)}>
                     Edit
-                  </button>
-                  <button
-                    type="button"
+                  </ActionButton>
+                  <ActionButton
+                    size="xs"
                     onClick={() => togglePause(c.id, !c.paused)}
                     disabled={pausingId === c.id}
-                    className={cn(
-                      "rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text-primary",
-                      pausingId === c.id && "opacity-60"
-                    )}
-                    title={c.paused ? "Resume scheduled syncs" : "Pause scheduled syncs (manual sync still works)"}
+                    title={
+                      c.paused
+                        ? "Resume scheduled syncs"
+                        : "Pause scheduled syncs (manual sync still works)"
+                    }
                   >
                     {pausingId === c.id
                       ? c.paused
@@ -670,18 +667,16 @@ function ConnectionsPageInner() {
                       : c.paused
                         ? "Resume"
                         : "Pause"}
-                  </button>
-                  <button
-                    type="button"
+                  </ActionButton>
+                  <ActionButton
+                    size="xs"
                     onClick={() => triggerSync(c.id)}
                     disabled={syncingId === c.id || c.status === "syncing"}
-                    className={cn(
-                      "rounded-md border border-border px-2.5 py-1 text-[11px] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text-primary",
-                      (syncingId === c.id || c.status === "syncing") && "opacity-60"
-                    )}
                   >
-                    {syncingId === c.id || c.status === "syncing" ? "Syncing…" : "Sync now"}
-                  </button>
+                    {syncingId === c.id || c.status === "syncing"
+                      ? "Syncing…"
+                      : "Sync now"}
+                  </ActionButton>
                 </div>
               </div>
               );

@@ -14,6 +14,7 @@ import {
   TrendDownIcon,
   TrendUpIcon,
 } from "@/components/icons";
+import { ActionButton } from "@/components/ui/action-button";
 import { EmptyState } from "@/components/ui/empty-state";
 import type { AlertChannelPublic } from "@/lib/insights/notify";
 import type {
@@ -385,14 +386,14 @@ export default function InsightsPage() {
               {evaluatingAll ? "Re-evaluating…" : "Re-evaluate all"}
             </button>
           )}
-          <button
-            type="button"
+          <ActionButton
+            variant="primary"
+            size="sm"
             onClick={() => openInChat(SUGGEST_PREFILL)}
-            className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[12px] font-medium text-text-inverted transition-colors hover:bg-accent-hover"
           >
             <SparkleIcon />
             Suggest insights
-          </button>
+          </ActionButton>
         </div>
       </header>
 
@@ -409,14 +410,14 @@ export default function InsightsPage() {
             </>
           }
           action={
-            <button
-              type="button"
+            <ActionButton
+              variant="primary"
+              size="md"
               onClick={() => openInChat(SUGGEST_PREFILL)}
-              className="inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-[13px] font-medium text-text-inverted transition-colors hover:bg-accent-hover"
             >
               <SparkleIcon />
               Ask the agent to suggest insights
-            </button>
+            </ActionButton>
           }
         />
       )}
@@ -635,14 +636,10 @@ function InsightCard({
           >
             {isEvaluating ? "…" : "Re-evaluate"}
           </button>
-          <button
-            type="button"
-            onClick={onOpenInChat}
-            className="inline-flex items-center gap-1.5 rounded-md bg-accent-muted px-3 py-1.5 text-[12px] font-medium text-accent transition-colors hover:bg-accent hover:text-text-inverted"
-          >
+          <ActionButton variant="muted" size="sm" onClick={onOpenInChat}>
             Open in chat
             <ArrowRightIcon className="h-3 w-3" />
-          </button>
+          </ActionButton>
           <button
             type="button"
             onClick={onDelete}
