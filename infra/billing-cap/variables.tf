@@ -59,8 +59,9 @@ variable "email_recipients" {
 }
 
 variable "mobile_channel_display_name" {
-  description = "Display name of the existing Cloud Monitoring mobile push notification channel. Looked up via data source — not hardcoded — so device re-registrations don't require a code change. Find it via: gcloud alpha monitoring channels list --filter='type=google_cloud_monitoring_mobile' --project=<killswitch_project_id>"
+  description = "Display name of an existing Cloud Monitoring mobile push notification channel. OPTIONAL — leave empty (the default) to ship the kill-switch without mobile push and rely on email channels only. The GCP mobile app's channel auto-registration is known to fail silently on some accounts; when it eventually works, set this variable and re-apply to add mobile push to the alerting policies. When set, the data source looks up the channel via its display name. Find it via: gcloud alpha monitoring channels list --project=<killswitch_project_id>"
   type        = string
+  default     = ""
 }
 
 variable "region" {

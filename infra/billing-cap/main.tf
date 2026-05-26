@@ -289,7 +289,19 @@ resource "google_monitoring_notification_channel" "email" {
   depends_on = [google_project_service.killswitch]
 }
 
+# Mobile data source is OPTIONAL. The GCP mobile app's auto-registration of
+# notification channels has been observed to silently fail on fresh accounts
+# (see https://www.googlecloudcommunity.com/.../Cannot-register-or-replace-a-Mobile-Device-for-Alerting).
+# When mobile_channel_display_name is left empty, we skip the data source
+# entirely — the alerting policies fall back to email-only delivery, which
+# is fully sufficient for the kill-switch to function.
+#
+# To enable mobile later: register the device via the Google Cloud mobile
+# app (sign in → tap into a project → wait a few minutes), confirm the
+# channel exists via `gcloud alpha monitoring channels list`, then set
+# mobile_channel_display_name in terraform.tfvars and re-apply.
 data "google_monitoring_notification_channel" "mobile" {
+  count        = var.mobile_channel_display_name == "" ? 0 : 1
   provider     = google.killswitch
   project      = var.killswitch_project_id
   display_name = var.mobile_channel_display_name
@@ -371,7 +383,8 @@ resource "google_monitoring_alert_policy" "threshold_alerts" {
   }
 
   notification_channels = concat(
-    [data.google_monitoring_notification_channel.mobile.name],
+    # Splat — returns [] when mobile data source has count=0, so email-only works
+    data.google_monitoring_notification_channel.mobile[*].name,
     [for c in google_monitoring_notification_channel.email : c.name],
   )
 
@@ -451,7 +464,8 @@ resource "google_monitoring_alert_policy" "function_health" {
   }
 
   notification_channels = concat(
-    [data.google_monitoring_notification_channel.mobile.name],
+    # Splat — returns [] when mobile data source has count=0, so email-only works
+    data.google_monitoring_notification_channel.mobile[*].name,
     [for c in google_monitoring_notification_channel.email : c.name],
   )
 

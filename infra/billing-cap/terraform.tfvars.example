@@ -18,12 +18,21 @@ billing_account_id = "XXXXXX-XXXXXX-XXXXXX"
 #   gcloud projects create liveli-killswitch --billing-project=<billing-account-id>
 killswitch_project_id = "liveli-killswitch"
 
-# Display name of the mobile push notification channel. Find via:
-#   gcloud alpha monitoring channels list \
-#     --filter='type=google_cloud_monitoring_mobile' \
-#     --project=<killswitch_project_id>
-# Then copy the displayName field from the result.
-mobile_channel_display_name = "Jay's iPhone — Google Cloud app"
+# OPTIONAL — display name of an existing Cloud Monitoring mobile push channel.
+# Leave commented (empty default) to ship the kill-switch with email-only
+# alerts. The GCP mobile app's channel auto-registration is known to fail
+# silently on some accounts; the kill-switch is fully functional without
+# mobile push since you'll still get emails via the default billing-admin
+# IAM mechanism plus the explicit email channels created by this module.
+#
+# To enable mobile push later (when GCP eventually cooperates):
+#   1. Sign in to the Google Cloud mobile app as the killswitch project owner
+#   2. Tap fully into liveli-killswitch in the app (project dashboard, not
+#      just the picker). Wait ~5 minutes.
+#   3. Verify the channel exists:
+#        gcloud alpha monitoring channels list --project=liveli-killswitch
+#   4. Set the value here to the displayName, then re-apply.
+# mobile_channel_display_name = "Jay's iPhone — Google Cloud app"
 
 # Monthly cap in GBP. Default 500. Uncomment only if overriding.
 # budget_amount_gbp = 500
