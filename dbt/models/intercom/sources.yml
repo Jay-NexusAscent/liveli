@@ -1,0 +1,20 @@
+# tap-intercom (singer-io variant) output schema.
+# TODO: verify after first real sync.
+
+version: 2
+
+sources:
+  - name: intercom
+    description: Raw tables written by tap-intercom (singer-io variant) after each sync.
+    database: "{{ var('target_project') }}"
+    schema: "{{ var('target_dataset') }}"
+
+    tables:
+      - name: conversations
+        description: One row per support conversation.
+      - name: contacts
+        description: End users (customers / leads).
+      - name: admins
+        description: Intercom admins (support agents).
+      - name: companies
+        description: Company records (for B2B grouping).

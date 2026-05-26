@@ -1,0 +1,32 @@
+# tap-quickbooks (hotgluexyz variant) output schema.
+#
+# QuickBooks API uses PascalCase for both object names and field
+# names. The tap preserves these conventions in BQ — tables like
+# "Invoice", "Bill", "Customer"; columns like Id, TotalAmt, DocNumber.
+#
+# TODO: verify schema after first real sync. QuickBooks output is
+# unusually nested — Invoice contains Line[] which itself has
+# SalesItemLineDetail / DiscountLineDetail variants. v1 surfaces
+# only header-level fields; nested line-item models in a future PR.
+
+version: 2
+
+sources:
+  - name: quickbooks
+    description: Raw tables written by tap-quickbooks (hotgluexyz variant) after each sync.
+    database: "{{ var('target_project') }}"
+    schema: "{{ var('target_dataset') }}"
+
+    tables:
+      - name: Invoice
+        description: One row per invoice. Includes customer ref, total, balance, due date.
+      - name: Bill
+        description: One row per vendor bill (the AP-side equivalent of an invoice).
+      - name: Customer
+        description: One row per customer.
+      - name: Vendor
+        description: One row per vendor.
+      - name: Account
+        description: Chart of accounts — small, slowly-changing.
+      - name: Payment
+        description: Customer payments against invoices.

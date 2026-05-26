@@ -1,0 +1,27 @@
+# tap-jira (MeltanoLabs variant) output schema.
+#
+# Jira Cloud REST API. Issues are the central object — they have a
+# status (To Do / In Progress / Done / Custom), a project, an
+# assignee, story points, and a changelog of field changes.
+#
+# TODO: verify schema after first real sync. Jira customers often
+# have heavy custom-field usage; the tap typically exposes
+# common fields as columns and stashes the rest in nested JSON.
+
+version: 2
+
+sources:
+  - name: jira
+    description: Raw tables written by tap-jira (MeltanoLabs variant) after each sync.
+    database: "{{ var('target_project') }}"
+    schema: "{{ var('target_dataset') }}"
+
+    tables:
+      - name: issues
+        description: One row per Jira issue. Headline analytical grain.
+      - name: projects
+        description: One row per project (small, slowly-changing).
+      - name: users
+        description: Jira users.
+      - name: changelogs
+        description: Field-change history per issue — useful for cycle-time calculations.

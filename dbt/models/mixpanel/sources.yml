@@ -1,0 +1,24 @@
+# tap-mixpanel (hotgluexyz variant) output schema.
+#
+# Mixpanel API gives you an Export endpoint for raw events + an Engage
+# endpoint for user profiles. The tap emits these as `events` and
+# `engage` tables. Events table grows large (one row per tracked
+# event); engage is one row per user.
+#
+# TODO: verify schema after first real sync. tap-mixpanel often
+# flattens common event properties (distinct_id, time, event name)
+# but leaves custom properties as a JSON column.
+
+version: 2
+
+sources:
+  - name: mixpanel
+    description: Raw tables written by tap-mixpanel (hotgluexyz variant) after each sync.
+    database: "{{ var('target_project') }}"
+    schema: "{{ var('target_dataset') }}"
+
+    tables:
+      - name: events
+        description: Event stream — one row per tracked event. High volume; cluster on event_time.
+      - name: engage
+        description: User profiles — one row per known user (distinct_id).
