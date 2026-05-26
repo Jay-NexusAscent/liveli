@@ -1,0 +1,26 @@
+# tap-facebook (singer-io variant) output schema.
+#
+# Meta Marketing API uses a "Insights" endpoint for performance data
+# and separate endpoints for ad/adset/campaign entities. The tap
+# emits one BQ table per resource.
+#
+# TODO: verify schema after first sync. Meta's API frequently
+# adds/removes fields between API versions; column set may vary.
+
+version: 2
+
+sources:
+  - name: facebook
+    description: Raw tables written by tap-facebook (singer-io variant) after each sync.
+    database: "{{ var('target_project') }}"
+    schema: "{{ var('target_dataset') }}"
+
+    tables:
+      - name: ads_insights
+        description: Daily ad-level performance — clicks, impressions, spend, reach, CTR.
+      - name: ads
+        description: Ad entities.
+      - name: adsets
+        description: Ad set (audience targeting) entities.
+      - name: campaigns
+        description: Campaign entities.

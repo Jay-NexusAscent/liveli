@@ -34,10 +34,20 @@ locals {
     "linear-to-bq",
     # Batch B (LIVELI-128): API-key + identifier SaaS connectors.
     "mixpanel-to-bq",
-    # amplitude-to-bq — REMOVED in LIVELI-132 PR-merge cleanup. No
-    # usable tap variant available (singer-io de-registered, airbyte
-    # wrapper needs Docker-in-Docker). Re-add when a viable tap exists.
-    # Terraform apply will destroy the 2 placeholder Cloud Run Jobs.
+    # amplitude-to-bq — REMOVED. The singer-io variant of tap-amplitude
+    # was de-registered from the Meltano Hub, and the remaining
+    # `airbyte` variant requires Docker-in-Docker (Cloud Run Jobs can't
+    # provide that runtime). No suitable replacement tap exists today.
+    # Tracked in LIVELI-135 for re-enable when either a viable singer
+    # tap surfaces or we build a custom one against Amplitude's Export
+    # API. Connector dir + wizard + connect route already removed in
+    # PR #89; this PR completes the cleanup by removing the Cloud Run
+    # Job templates from Terraform's for_each map, which destroys the
+    # two orphan placeholder Jobs. The two-step apply pattern (PR #96
+    # set deletion_protection=false first; this PR does the destroy)
+    # was required because Terraform's destroy plan doesn't include
+    # attribute updates — see PR #96's description for the full
+    # rationale if needed.
     "jira-to-bq",
     "zendesk-to-bq",
     # Batch C (LIVELI-132): OAuth refresh-token SaaS connectors.
@@ -83,6 +93,23 @@ resource "google_cloud_run_v2_job" "connector" {
   name     = "connector-${each.key}"
   location = each.value.region
   project  = var.project_id
+
+  # Cloud Run v2 Jobs default to deletion_protection=true. That blocked
+  # PR #89's amplitude-revert apply with "cannot destroy job without
+  # setting deletion_protection=false" — and would block ANY future
+  # connector removal the same way.
+  #
+  # Setting `false` here means: when a connector is removed from
+  # local.connector_types, Terraform updates the attribute on each
+  # existing Job FIRST (turning off protection), THEN runs the destroy
+  # — all in one apply. Standard Terraform ordering: attribute updates
+  # before destroys.
+  #
+  # Risk: a typo in connector_types could silently destroy a live Job.
+  # Mitigation: connector_types changes always go via PR + reviewed
+  # `terraform plan` output, which shows the destroy intent explicitly.
+  # The plan-on-PR comment workflow (Terraform CI) surfaces it.
+  deletion_protection = false
 
   template {
     template {

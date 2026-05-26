@@ -1,0 +1,29 @@
+# tap-googleads (Matatika variant) output schema.
+#
+# Google Ads API exposes data through pre-computed "reports" — each
+# tap stream is a report at a specific granularity. The Matatika tap
+# emits one BQ table per report.
+#
+# TODO: verify table names + column names after first real sync.
+# Google Ads API column names use snake_case with specific prefixes
+# (e.g. metrics_, segments_, campaign_).
+
+version: 2
+
+sources:
+  - name: googleads
+    description: Raw tables written by tap-googleads (Matatika variant) after each sync.
+    database: "{{ var('target_project') }}"
+    schema: "{{ var('target_dataset') }}"
+
+    tables:
+      - name: campaign_performance_report
+        description: Daily performance metrics per campaign — clicks, impressions, cost, conversions.
+      - name: ad_group_performance_report
+        description: Daily performance metrics per ad group.
+      - name: ad_performance_report
+        description: Daily performance metrics per ad.
+      - name: campaign
+        description: Campaign entity records (slowly-changing).
+      - name: ad_group
+        description: Ad group entity records.

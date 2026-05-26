@@ -13,7 +13,26 @@ import { cloudComputeRegionForResidency, gcp } from "@/lib/gcp";
  * here. Keep this in sync — the dbt project's tag-based selection
  * AND this gate must agree, or you'll dispatch jobs that do nothing.
  */
-const DBT_ENABLED_CONNECTORS = new Set<string>(["ga4"]);
+const DBT_ENABLED_CONNECTORS = new Set<string>([
+  // Tier 1 — highest analytical density
+  "stripe",
+  "shopify",
+  "hubspot",
+  "salesforce",
+  // Tier 2 — high value, specialised
+  "google-ads",
+  "facebook-ads",
+  "quickbooks",
+  "mixpanel",
+  "jira",
+  // Tier 3 — niche but valuable
+  "mailchimp",
+  "klaviyo",
+  "intercom",
+  "zendesk",
+  // Originally shipped in dbt v1
+  "ga4",
+]);
 
 type DbtMode = "off" | "live";
 
