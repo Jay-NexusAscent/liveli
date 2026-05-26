@@ -34,7 +34,6 @@ import { SlackWizard } from "@/components/connections/slack-wizard";
 import { GitHubWizard } from "@/components/connections/github-wizard";
 import { LinearWizard } from "@/components/connections/linear-wizard";
 import { MixpanelWizard } from "@/components/connections/mixpanel-wizard";
-import { AmplitudeWizard } from "@/components/connections/amplitude-wizard";
 import { JiraWizard } from "@/components/connections/jira-wizard";
 import { ZendeskWizard } from "@/components/connections/zendesk-wizard";
 import { Ga4Wizard } from "@/components/connections/ga4-wizard";
@@ -187,7 +186,6 @@ type ConnectAction =
   | "linear"
   // Batch B — API-key + identifier SaaS connectors (LIVELI-128):
   | "mixpanel"
-  | "amplitude"
   | "jira"
   | "zendesk"
   // Batch C — OAuth refresh-token SaaS connectors (LIVELI-132):
@@ -295,7 +293,7 @@ const popularSources: PopularSource[] = [
   // Analytics
   { name: "Google Analytics 4", desc: "Sessions, events, conversions", category: "Analytics", action: "ga4" },
   { name: "Mixpanel", desc: "Product events + funnels", category: "Analytics", action: "mixpanel" },
-  { name: "Amplitude", desc: "Product events + cohorts", category: "Analytics", action: "amplitude" },
+  { name: "Amplitude", desc: "Product events + cohorts", category: "Analytics", action: null },
   { name: "Segment", desc: "Customer events from any Segment source", category: "Analytics", action: null },
 
   // Project Management
@@ -916,11 +914,6 @@ function ConnectionsPageInner() {
       />
       <MixpanelWizard
         open={activeWizard === "mixpanel"}
-        onClose={closeWizard}
-        onConnected={onWizardConnected}
-      />
-      <AmplitudeWizard
-        open={activeWizard === "amplitude"}
         onClose={closeWizard}
         onConnected={onWizardConnected}
       />

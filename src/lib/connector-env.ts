@@ -243,13 +243,12 @@ const TAP_ENV_BUILDERS: Record<string, EnvBuilder> = {
     TAP_MIXPANEL_API_SECRET: creds.api_secret,
   }),
 
-  amplitude: (creds) => ({
-    // tap-amplitude (singer-io) — both halves of the Basic-auth pair.
-    // Deliberately NOT the default Airbyte wrapper variant: that one
-    // needs Docker-in-Docker, which Cloud Run Jobs can't provide.
-    TAP_AMPLITUDE_API_KEY: creds.api_key,
-    TAP_AMPLITUDE_API_SECRET: creds.api_secret,
-  }),
+  // amplitude — REMOVED in LIVELI-132 PR-merge cleanup. The singer-io
+  // variant was de-registered from Meltano Hub, and the remaining
+  // `airbyte` wrapper variant needs Docker-in-Docker which Cloud Run
+  // Jobs can't provide. No suitable replacement tap exists today.
+  // Tracked for follow-up under a fresh Linear ticket; re-add when we
+  // either build a custom tap or a usable singer variant resurfaces.
 
   jira: (creds) => ({
     // tap-jira (MeltanoLabs variant) supports both OAuth and basic

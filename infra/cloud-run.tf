@@ -34,7 +34,10 @@ locals {
     "linear-to-bq",
     # Batch B (LIVELI-128): API-key + identifier SaaS connectors.
     "mixpanel-to-bq",
-    "amplitude-to-bq",
+    # amplitude-to-bq — REMOVED in LIVELI-132 PR-merge cleanup. No
+    # usable tap variant available (singer-io de-registered, airbyte
+    # wrapper needs Docker-in-Docker). Re-add when a viable tap exists.
+    # Terraform apply will destroy the 2 placeholder Cloud Run Jobs.
     "jira-to-bq",
     "zendesk-to-bq",
     # Batch C (LIVELI-132): OAuth refresh-token SaaS connectors.
