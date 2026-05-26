@@ -1,4 +1,8 @@
-FROM meltano/meltano:v3.7.1-python3.11
+# Python 3.10 (not 3.11): singer-io/tap-mixpanel has setup.py
+# constraints capped at Python <3.11 via its own ancient dependencies.
+# Same class of issue as tap-quickbooks. See LIVELI-128 PR-merge deploy
+# failure.
+FROM meltano/meltano:v3.7.1-python3.10
 WORKDIR /project
 COPY meltano.yml ./
 RUN meltano lock --update --all && meltano install

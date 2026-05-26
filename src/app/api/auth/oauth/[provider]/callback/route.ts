@@ -59,7 +59,13 @@ export async function GET(
   context: { params: Promise<{ provider: string }> }
 ) {
   const { provider: providerId } = await context.params;
-  const origin = new URL(req.url).origin;
+  // Derive origin from forwarded headers, NOT from req.url — see the
+  // matching comment in start/route.ts for the rationale. The
+  // redirectUri we compute here MUST be byte-identical to the one
+  // start/route.ts used; both providers verify this on token exchange.
+  const fwdHost = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+  const proto = req.headers.get("x-forwarded-proto") ?? "https";
+  const origin = fwdHost ? `${proto}://${fwdHost}` : new URL(req.url).origin;
   const connectionsUrl = `${origin}/connections`;
 
   // Helper: redirect to /connections with an error querystring.
