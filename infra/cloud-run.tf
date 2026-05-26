@@ -34,25 +34,20 @@ locals {
     "linear-to-bq",
     # Batch B (LIVELI-128): API-key + identifier SaaS connectors.
     "mixpanel-to-bq",
-    # amplitude-to-bq TEMPORARILY re-added — see the comment block
-    # below + the follow-up "remove amplitude-to-bq" PR. This is here
-    # ONLY to give Terraform a chance to update deletion_protection=false
-    # on these two existing Cloud Run Jobs before they're destroyed.
-    # Once this apply lands and the flag has propagated, the follow-up
-    # PR removes this line and the destroy succeeds cleanly.
-    #
-    # Two-step apply is required because Terraform's plan for a
-    # resource being destroyed doesn't include attribute updates —
-    # it goes straight to destroy, which trips the deletion_protection
-    # guard. By keeping amplitude in the for_each map, this apply
-    # plans an UPDATE on those two jobs (deletion_protection: true → false)
-    # rather than a destroy. The follow-up PR's apply then plans a
-    # destroy against the now-updated jobs, which Terraform permits.
-    #
-    # If you're reading this in main + the follow-up PR has merged, the
-    # comment block above ("amplitude REMOVED in LIVELI-132") was the
-    # right description — this is a transient state.
-    "amplitude-to-bq",
+    # amplitude-to-bq — REMOVED. The singer-io variant of tap-amplitude
+    # was de-registered from the Meltano Hub, and the remaining
+    # `airbyte` variant requires Docker-in-Docker (Cloud Run Jobs can't
+    # provide that runtime). No suitable replacement tap exists today.
+    # Tracked in LIVELI-135 for re-enable when either a viable singer
+    # tap surfaces or we build a custom one against Amplitude's Export
+    # API. Connector dir + wizard + connect route already removed in
+    # PR #89; this PR completes the cleanup by removing the Cloud Run
+    # Job templates from Terraform's for_each map, which destroys the
+    # two orphan placeholder Jobs. The two-step apply pattern (PR #96
+    # set deletion_protection=false first; this PR does the destroy)
+    # was required because Terraform's destroy plan doesn't include
+    # attribute updates — see PR #96's description for the full
+    # rationale if needed.
     "jira-to-bq",
     "zendesk-to-bq",
     # Batch C (LIVELI-132): OAuth refresh-token SaaS connectors.
