@@ -62,9 +62,9 @@ variable "email_recipients" {
 }
 
 variable "mobile_channel_display_name" {
-  description = "Display name of an existing Cloud Monitoring mobile push notification channel. OPTIONAL — leave empty (the default) to ship the kill-switch without mobile push and rely on email channels only. The GCP mobile app's channel auto-registration is known to fail silently on some accounts; when it eventually works, set this variable and re-apply to add mobile push to the alerting policies. When set, the data source looks up the channel via its display name. Find it via: gcloud alpha monitoring channels list --project=<killswitch_project_id>"
+  description = "Display name of an existing Cloud Monitoring mobile push notification channel. Default is jay@liveli.ai — the User-scoped channel registered when Jay signs into the GCP mobile app. Set to empty string to disable mobile push entirely (kill-switch will still work via email channels). Important: gcloud's `channels list --project=X` does NOT return User-scoped channels (they're not project-owned). Verify existence in the Console UI: https://console.cloud.google.com/monitoring/alerting/notifications?project=<killswitch_project_id> under \"Mobile Devices\"."
   type        = string
-  default     = ""
+  default     = "jay@liveli.ai"
 }
 
 variable "region" {
@@ -86,9 +86,9 @@ variable "enable_apis" {
 }
 
 variable "dry_run" {
-  description = "If true, the Cloud Function logs what it WOULD do but does not actually call updateBillingInfo. Used for end-to-end testing without actually disabling billing. MUST be false for the kill-switch to fire for real."
+  description = "If true, the Cloud Function logs what it WOULD do but does not actually call updateBillingInfo. Currently defaults to TRUE so the first deployment is testable end-to-end without risk of disabling billing for real. After verifying mobile push + email notifications arrive on a synthetic test message AND the function logs `DRY_RUN mode — would have disabled but skipping`, flip this default to false in a follow-up PR to arm the kill-switch for production. MUST be false for the kill-switch to actually disable billing."
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "labels" {
