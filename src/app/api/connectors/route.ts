@@ -3,6 +3,7 @@ import { requireWorkspaceContext, UnauthorizedError } from "@/lib/clients";
 import { connectorsIn, dbReady } from "@/lib/firestore";
 import { getExecutionStatus } from "@/lib/cloud-run";
 import { dispatchMetadataEnrichment } from "@/lib/metadata/dispatcher";
+import { dispatchDbtRun } from "@/lib/dbt/dispatcher";
 
 export const runtime = "nodejs";
 // 300s budget covers the post-response metadata-agent run scheduled
@@ -221,6 +222,21 @@ async function reconcileStatus(
   // because the gate is metadata-only and adds <1s; switch to
   // waitUntil() when live-mode Cloud Run dispatch lands.
   await dispatchMetadataEnrichment({
+    clientId: ctx.clientId,
+    workspaceId: ctx.workspaceId,
+    connectorId,
+    connectorType: data.type ?? "",
+    bqDataset: data.bqDataset,
+    bqLocation: data.bqLocation,
+  });
+
+  // LIVELI-54: also hand off to the dbt-runner dispatcher. Fires the
+  // shared dbt-runner Cloud Run Job for connector types with models
+  // in the dbt project (currently just ga4). Uses `after()` internally
+  // so the response isn't blocked by the Cloud Run dispatch latency.
+  // Failures are logged + swallowed — a dbt-pipeline glitch never
+  // breaks the connectors list (raw tap data is already landed).
+  await dispatchDbtRun({
     clientId: ctx.clientId,
     workspaceId: ctx.workspaceId,
     connectorId,

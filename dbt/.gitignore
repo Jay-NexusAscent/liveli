@@ -1,0 +1,5 @@
+# dbt internals — locally regenerated, never committed.
+target/
+dbt_packages/
+logs/
+.user.yml

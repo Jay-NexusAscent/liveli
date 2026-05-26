@@ -173,13 +173,27 @@ jobs:
 
       - name: Build image
         id: build
-        working-directory: connectors/${{ matrix.connector }}
         run: |
           IMAGE_URI="$AR_REGION-docker.pkg.dev/$PROJECT_ID/$REPO/${{ matrix.connector }}:${GITHUB_SHA::12}"
-          docker build \
-            -t "$IMAGE_URI" \
-            -t "$AR_REGION-docker.pkg.dev/$PROJECT_ID/$REPO/${{ matrix.connector }}:latest" \
-            .
+          # dbt-runner is special: its Dockerfile needs to COPY the
+          # repo-root `dbt/` project into the image. So we build with
+          # the repo root as context and point at the Dockerfile
+          # explicitly. Every other connector builds with its own
+          # dir as context (self-contained). Keeping the dbt project
+          # at repo root (not inside connectors/dbt-runner/) matters
+          # for dev UX — IDE dbt extensions expect that location.
+          if [ "${{ matrix.connector }}" = "dbt-runner" ]; then
+            docker build \
+              -t "$IMAGE_URI" \
+              -t "$AR_REGION-docker.pkg.dev/$PROJECT_ID/$REPO/${{ matrix.connector }}:latest" \
+              -f connectors/dbt-runner/Dockerfile \
+              .
+          else
+            docker build \
+              -t "$IMAGE_URI" \
+              -t "$AR_REGION-docker.pkg.dev/$PROJECT_ID/$REPO/${{ matrix.connector }}:latest" \
+              connectors/${{ matrix.connector }}
+          fi
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
 
       - name: Push image

@@ -1,0 +1,71 @@
+# tap-ga4 (MeltanoLabs variant) output schema.
+#
+# The tap writes ONE BigQuery table per report definition (see
+# https://github.com/MeltanoLabs/tap-google-analytics/blob/main/tap_google_analytics/defaults/default_report_definition.json).
+# Column names match the GA4 Data API's camelCase metric/dimension
+# names verbatim (date, source, medium, activeUsers, etc.).
+#
+# All sources live in the customer's per-connector dataset, which dbt
+# resolves via the runtime vars target_project + target_dataset (see
+# dbt_project.yml). NEVER hardcode dataset names here.
+#
+# Adding new GA4 reports later means: (a) update the tap config to
+# include the new report, (b) add it as a `tables:` entry here, (c)
+# write models against it.
+
+version: 2
+
+sources:
+  - name: ga4
+    description: >
+      Raw tables written by tap-ga4 (MeltanoLabs variant) after each
+      sync. One row per (date, dimensions) combination, with metric
+      values for that combo. Pre-curated tables (fct_/dim_) live in
+      the same dataset and should be preferred for most queries.
+    database: "{{ var('target_project') }}"
+    schema: "{{ var('target_dataset') }}"
+    # `freshness` could warn when raw data is stale relative to sync
+    # cadence; deferring to v2 — needs per-connector frequency lookup.
+
+    tables:
+      - name: website_overview
+        description: Daily site totals — active users, sessions, page views, engagement.
+        columns:
+          - name: date
+            description: Date the metrics cover. ISO YYYY-MM-DD as a STRING (tap emits raw).
+
+      - name: traffic_sources
+        description: Daily traffic broken down by acquisition source/medium/platform.
+        columns:
+          - name: date
+            description: Date the metrics cover.
+          - name: source
+            description: Traffic source identifier (e.g. "google", "(direct)", referrer host).
+          - name: medium
+            description: Traffic medium (e.g. "organic", "cpc", "referral", "(none)").
+          - name: sourcePlatform
+            description: Higher-level platform classification (e.g. "Google Ads", "Manual").
+
+      - name: locations
+        description: Daily metrics by geographic dimensions (country / region / city).
+
+      - name: devices
+        description: Daily metrics by device dimensions (category / OS / browser).
+
+      - name: pages
+        description: Daily per-page metrics — pageviews, engagement, bounce.
+        columns:
+          - name: pagePath
+            description: URL path (e.g. "/pricing"). Excludes domain + query string.
+
+      - name: transactions
+        description: Daily revenue + transaction counts (populated only when GA4 ecommerce tracking is configured).
+
+      - name: daily_active_users
+        description: One-day active users by date.
+
+      - name: weekly_active_users
+        description: Seven-day rolling active users by date.
+
+      - name: four_weekly_active_users
+        description: Twenty-eight-day rolling active users by date.

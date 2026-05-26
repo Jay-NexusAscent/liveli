@@ -1,0 +1,11 @@
+# Single dependency: dbt-utils. Apache 2.0, schema-agnostic, ubiquitous
+# in the dbt ecosystem. Used here for the date_spine() macro in
+# dim_dates.sql; future models will lean on its surrogate_key,
+# group_by, pivot, etc. helpers.
+#
+# Pinned to a major version to avoid surprise breakage on `dbt deps`
+# in CI; bump intentionally when we want new features.
+
+packages:
+  - package: dbt-labs/dbt_utils
+    version: [">=1.3.0", "<2.0.0"]
