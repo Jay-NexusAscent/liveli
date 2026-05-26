@@ -1,10 +1,12 @@
 variable "billing_account_id" {
-  description = "GCP billing account ID (format: XXXXXX-XXXXXX-XXXXXX). The budget is attached to this account."
+  description = "GCP billing account ID (format: XXXXXX-XXXXXX-XXXXXX). The budget is attached to this account. Default is Liveli's primary billing account — not sensitive (these IDs are non-secret identifiers like project IDs)."
   type        = string
+  default     = "01E8DE-46C3B1-7FEAA9"
 
   validation {
-    condition     = can(regex("^[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}$", var.billing_account_id))
-    error_message = "billing_account_id must be in the format XXXXXX-XXXXXX-XXXXXX (uppercase hex)."
+    # Allow 0-9 A-Z to match Google's full alphanumeric format (not just hex).
+    condition     = can(regex("^[0-9A-Z]{6}-[0-9A-Z]{6}-[0-9A-Z]{6}$", var.billing_account_id))
+    error_message = "billing_account_id must be in the format XXXXXX-XXXXXX-XXXXXX (uppercase alphanumeric)."
   }
 }
 
@@ -17,6 +19,7 @@ variable "target_project_id" {
 variable "killswitch_project_id" {
   description = "Host project for the Cloud Function. MUST differ from target_project_id — if equal, disabling billing would kill the function mid-execution. Enforced by a precondition guard at plan time."
   type        = string
+  default     = "liveli-killswitch"
 }
 
 variable "budget_amount_gbp" {
