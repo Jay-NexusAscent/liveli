@@ -1,0 +1,6 @@
+# Cloud Functions gen 2 runtime — wraps the CloudEvent handler.
+functions-framework>=3.5.0,<4.0.0
+
+# Cloud Billing API client. Provides CloudBillingClient for read/write
+# operations on project billing associations.
+google-cloud-billing>=1.13.0,<2.0.0
