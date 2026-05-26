@@ -13,19 +13,31 @@ permissions:
   id-token: write   # WIF
   pull-requests: write  # comment plan on PRs
 
-concurrency:
-  group: terraform
-  cancel-in-progress: false  # never cancel an in-flight apply
-
-defaults:
-  run:
-    working-directory: infra
-
 jobs:
   plan:
-    name: plan
+    name: plan (${{ matrix.module }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
+    # Per-module concurrency group — never cancel an in-flight apply for a
+    # given module, but allow different modules to plan/apply in parallel
+    # since they have separate state backends.
+    concurrency:
+      group: terraform-${{ matrix.module }}
+      cancel-in-progress: false
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Each entry is a self-contained Terraform module with its own state.
+        # The root `infra` is the main Liveli infra (APIs, BQ, Firestore,
+        # Cloud Run, WIF, etc.). `infra/billing-cap` is the standalone
+        # kill-switch module with its own state backend prefix.
+        module: [infra, infra/billing-cap]
+
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
 
     steps:
       - uses: actions/checkout@v4
@@ -52,10 +64,16 @@ jobs:
       - name: Comment plan on PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
+        env:
+          MODULE: ${{ matrix.module }}
         with:
           script: |
-            const out = require('child_process').execSync('terraform show -no-color tfplan', { cwd: 'infra', encoding: 'utf8' });
-            const body = '### Terraform plan\n\n```\n' + out.slice(0, 60000) + '\n```';
+            const module = process.env.MODULE;
+            const out = require('child_process').execSync(
+              'terraform show -no-color tfplan',
+              { cwd: module, encoding: 'utf8' }
+            );
+            const body = `### Terraform plan — \`${module}\`\n\n\`\`\`\n${out.slice(0, 60000)}\n\`\`\``;
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
@@ -68,12 +86,25 @@ jobs:
         run: exit 1
 
   apply:
-    name: apply
+    name: apply (${{ matrix.module }})
     needs: plan
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: production  # require manual approval via repo Environment settings
+
+    concurrency:
+      group: terraform-${{ matrix.module }}
+      cancel-in-progress: false
+
+    strategy:
+      fail-fast: false
+      matrix:
+        module: [infra, infra/billing-cap]
+
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
 
     steps:
       - uses: actions/checkout@v4
