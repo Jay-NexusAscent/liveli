@@ -1,0 +1,38 @@
+# ============================================================================
+# Liveli — GCP billing cap with kill-switch — example tfvars
+# Copy to terraform.tfvars and fill in. Never commit terraform.tfvars.
+# ============================================================================
+
+# Billing account this budget attaches to. Find via:
+#   gcloud billing accounts list
+# Format is three groups of six uppercase hex chars separated by hyphens.
+billing_account_id = "XXXXXX-XXXXXX-XXXXXX"
+
+# Project the budget WATCHES and gets its billing DISABLED when the cap fires.
+# Default in variables.tf is "liveli-496609" — uncomment only if overriding.
+# target_project_id = "liveli-496609"
+
+# Project that HOSTS the Cloud Function. MUST differ from target_project_id —
+# the precondition guard in main.tf fails plan if they're equal. Create this
+# project separately before applying:
+#   gcloud projects create liveli-killswitch --billing-project=<billing-account-id>
+killswitch_project_id = "liveli-killswitch"
+
+# Display name of the mobile push notification channel. Find via:
+#   gcloud alpha monitoring channels list \
+#     --filter='type=google_cloud_monitoring_mobile' \
+#     --project=<killswitch_project_id>
+# Then copy the displayName field from the result.
+mobile_channel_display_name = "Jay's iPhone — Google Cloud app"
+
+# Monthly cap in GBP. Default 500. Uncomment only if overriding.
+# budget_amount_gbp = 500
+
+# Email recipients. Default ["support@liveli.ai", "jay@liveli.ai"] — uncomment
+# only if overriding.
+# email_recipients = ["support@liveli.ai", "jay@liveli.ai"]
+
+# DRY_RUN mode. Set to true for end-to-end testing — the function will log
+# what it WOULD do but won't actually disable billing. MUST be false for the
+# kill-switch to fire for real.
+# dry_run = false
