@@ -104,14 +104,24 @@ export async function POST(
   }
 
   // Redirect URI MUST match what's registered in the provider's app
-  // console (Google Cloud Console / Intuit Developer Portal). We
-  // derive from req.url so dev (localhost:3000) and prod (app.liveli.co.uk)
-  // both work without env-var fiddling — but see the threat-model
-  // comment on assertAllowedOrigin().
-  const origin = new URL(req.url).origin;
+  // console (Google Cloud Console / Intuit Developer Portal). We derive
+  // origin from forwarded headers, NOT from `req.url`: on Vercel's
+  // serverless runtime `req.url` often resolves to the internal serving
+  // address (e.g. http://127.0.0.1:<port>/...), not the public origin
+  // the browser actually hit. `x-forwarded-host` + `x-forwarded-proto`
+  // are the canonical Vercel-set headers that reflect the public URL.
+  const origin = deriveRequestOrigin(req);
+  if (!origin) {
+    return NextResponse.json(
+      { error: "Could not determine request origin (missing Host header)" },
+      { status: 400 }
+    );
+  }
   if (!assertAllowedOrigin(origin)) {
     return NextResponse.json(
-      { error: "Request origin not in OAuth allowlist" },
+      {
+        error: `Request origin not in OAuth allowlist: ${origin}. Add it to OAUTH_ALLOWED_ORIGINS env var or the defaults in start/route.ts.`,
+      },
       { status: 400 }
     );
   }
@@ -192,8 +202,30 @@ function assertAllowedOrigin(origin: string): boolean {
     .filter(Boolean);
   const defaults = [
     "https://app.liveli.co.uk",
+    "https://app.liveli.ai", // forward-looking — domain migration in flight
     "http://localhost:3000",
     "http://localhost:3001",
   ];
   return [...envAllow, ...defaults].includes(origin);
+}
+
+/**
+ * Derive the public-facing origin a browser used to hit this route.
+ *
+ * Prefers `x-forwarded-host` + `x-forwarded-proto` (Vercel + most
+ * reverse proxies set these), falls back to the `host` header. Does
+ * NOT use `new URL(req.url).origin` — Next.js on Vercel sometimes
+ * surfaces the internal serving address (127.0.0.1:port) through
+ * `req.url`, which breaks any same-origin allowlist check.
+ *
+ * Exported nowhere; route-local helper. Returns null when no host
+ * info is available (caller should 400 the request — a request with
+ * no Host header isn't HTTP-compliant).
+ */
+function deriveRequestOrigin(req: Request): string | null {
+  const fwdHost = req.headers.get("x-forwarded-host");
+  const host = fwdHost ?? req.headers.get("host");
+  if (!host) return null;
+  const proto = req.headers.get("x-forwarded-proto") ?? "https";
+  return `${proto}://${host}`;
 }
