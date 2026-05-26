@@ -6,7 +6,6 @@ import { makeChartTool } from "./make-chart";
 import { makeDashboardTool } from "./make-dashboard";
 import { updateChartTool } from "./update-chart";
 import { updateDashboardTool } from "./update-dashboard";
-import { reviewDashboardTool } from "./review-dashboard";
 import { saveInsightTool } from "./save-insight";
 import { proposeInsightsTool } from "./propose-insights";
 import type { AgentContext, ToolDefinition, ToolResult } from "./types";
@@ -22,7 +21,6 @@ export const tools: ToolDefinition[] = [
   makeDashboardTool,
   updateChartTool,
   updateDashboardTool,
-  reviewDashboardTool,
   saveInsightTool,
   proposeInsightsTool,
 ];
