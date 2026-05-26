@@ -64,7 +64,7 @@ export function Ga4Wizard({ open, onClose }: Ga4WizardProps) {
     if (!/^\d{6,12}$/.test(propertyId)) {
       setError(
         `Property ID must be the numeric GA4 ID (e.g. 123456789). Got "${propertyId}". ` +
-          `Find it in GA4 → Admin → Property Settings → Property ID.`
+          `Find it in GA4 → Admin → Property settings → Property → Property details.`
       );
       return;
     }
@@ -115,7 +115,7 @@ export function Ga4Wizard({ open, onClose }: Ga4WizardProps) {
 
         <Field
           label="GA4 Property ID"
-          hint="From GA4 → Admin → Property Settings → Property ID. Numeric, 9 digits."
+          hint="From GA4 → Admin → Property settings → Property → Property details. Numeric, 9 digits."
         >
           <input
             type="text"
