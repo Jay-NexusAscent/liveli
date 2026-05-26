@@ -84,6 +84,23 @@ resource "google_cloud_run_v2_job" "connector" {
   location = each.value.region
   project  = var.project_id
 
+  # Cloud Run v2 Jobs default to deletion_protection=true. That blocked
+  # PR #89's amplitude-revert apply with "cannot destroy job without
+  # setting deletion_protection=false" — and would block ANY future
+  # connector removal the same way.
+  #
+  # Setting `false` here means: when a connector is removed from
+  # local.connector_types, Terraform updates the attribute on each
+  # existing Job FIRST (turning off protection), THEN runs the destroy
+  # — all in one apply. Standard Terraform ordering: attribute updates
+  # before destroys.
+  #
+  # Risk: a typo in connector_types could silently destroy a live Job.
+  # Mitigation: connector_types changes always go via PR + reviewed
+  # `terraform plan` output, which shows the destroy intent explicitly.
+  # The plan-on-PR comment workflow (Terraform CI) surfaces it.
+  deletion_protection = false
+
   template {
     template {
       service_account = google_service_account.connector.email
