@@ -1,0 +1,58 @@
+# tap-stripe (singer-io variant) output schema.
+#
+# The tap mirrors Stripe API resource names — tables are lowercase
+# pluralised (charges, customers, subscriptions, etc.). Columns use
+# Stripe's snake_case convention. The `id` column is always the
+# Stripe object ID (e.g. ch_*, cus_*, sub_*).
+#
+# TODO: verify schema after first real sync. Some columns below
+# are educated guesses from Stripe API docs + Singer conventions —
+# tap-stripe may emit slight variations (e.g. timestamps as INT64
+# epoch vs TIMESTAMP).
+
+version: 2
+
+sources:
+  - name: stripe
+    description: Raw tables written by tap-stripe (singer-io variant) after each sync.
+    database: "{{ var('target_project') }}"
+    schema: "{{ var('target_dataset') }}"
+
+    tables:
+      - name: charges
+        description: One row per Stripe charge attempt. Includes amount, status, customer, currency.
+        columns:
+          - name: id
+            description: Stripe charge ID (ch_*).
+          - name: amount
+            description: Charge amount in the currency's smallest unit (cents/pence).
+          - name: status
+            description: succeeded / failed / pending.
+
+      - name: customers
+        description: One row per Stripe customer object.
+        columns:
+          - name: id
+            description: Stripe customer ID (cus_*).
+          - name: email
+            description: Customer's email (PII — handle accordingly).
+
+      - name: subscriptions
+        description: One row per subscription. Current state — cancelled subscriptions are present with status=canceled.
+        columns:
+          - name: id
+            description: Stripe subscription ID (sub_*).
+          - name: status
+            description: trialing / active / past_due / canceled / unpaid / incomplete.
+
+      - name: invoices
+        description: One row per invoice (recurring + one-off).
+
+      - name: products
+        description: Stripe Product catalogue.
+
+      - name: prices
+        description: Stripe Price objects (the recurring/one-off price tied to a product).
+
+      - name: refunds
+        description: Issued refunds, one row each.

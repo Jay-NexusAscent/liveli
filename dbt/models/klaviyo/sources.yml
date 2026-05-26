@@ -1,0 +1,22 @@
+# tap-klaviyo (singer-io variant) output schema.
+# TODO: verify after first real sync — Klaviyo v3 API restructured recently.
+
+version: 2
+
+sources:
+  - name: klaviyo
+    description: Raw tables written by tap-klaviyo (singer-io variant) after each sync.
+    database: "{{ var('target_project') }}"
+    schema: "{{ var('target_dataset') }}"
+
+    tables:
+      - name: campaigns
+        description: One-off email campaigns.
+      - name: flows
+        description: Automated email flows (triggered by user events).
+      - name: profiles
+        description: Customer profiles.
+      - name: events
+        description: Engagement events stream (opens, clicks, placed_order, etc.).
+      - name: lists
+        description: Subscriber lists.

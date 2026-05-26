@@ -1,0 +1,31 @@
+# tap-salesforce output schema.
+#
+# tap-salesforce uses Salesforce Bulk API and emits one BQ table per
+# Salesforce object. Salesforce uses PascalCase object names; tap may
+# normalise to snake_case or preserve — verify after first sync.
+# Columns are Salesforce API names (Name, Email, Amount, StageName,
+# CloseDate, OwnerId, AccountId, IsClosed, IsWon, etc.).
+#
+# TODO: verify object names + column casing after first real sync.
+
+version: 2
+
+sources:
+  - name: salesforce
+    description: Raw tables written by tap-salesforce after each sync.
+    database: "{{ var('target_project') }}"
+    schema: "{{ var('target_dataset') }}"
+
+    tables:
+      - name: opportunity
+        description: One row per opportunity. Pipeline state via StageName + IsClosed + IsWon.
+      - name: account
+        description: One row per account (company-level customer).
+      - name: contact
+        description: One row per contact (person-level).
+      - name: lead
+        description: Pre-conversion prospects.
+      - name: user
+        description: Salesforce users (sales reps, etc.).
+      - name: task
+        description: Activity records — calls, emails, tasks.

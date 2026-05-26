@@ -1,0 +1,38 @@
+# tap-shopify (singer-io variant) output schema.
+#
+# Tables mirror Shopify Admin API resource names. Columns use Shopify's
+# snake_case + the API's typical money-as-string format
+# (`total_price: "29.99"` not numeric). Staging models cast + clean.
+#
+# TODO: verify schema after first real sync. Shopify customers often
+# have only a subset of fields populated (e.g. abandoned_checkouts is
+# only relevant for shops with checkout abandonment recovery enabled).
+
+version: 2
+
+sources:
+  - name: shopify
+    description: Raw tables written by tap-shopify (singer-io variant) after each sync.
+    database: "{{ var('target_project') }}"
+    schema: "{{ var('target_dataset') }}"
+
+    tables:
+      - name: orders
+        description: One row per order. Includes total, status, customer reference, line-item count.
+        columns:
+          - name: id
+            description: Shopify order ID (numeric).
+          - name: total_price
+            description: Total order amount as a STRING (Shopify API quirk).
+
+      - name: line_items
+        description: One row per order line — order_id + product_id + quantity + price.
+
+      - name: products
+        description: Shop product catalogue.
+
+      - name: customers
+        description: Shop customers with lifetime stats Shopify pre-computes (orders_count, total_spent).
+
+      - name: transactions
+        description: Payment transactions per order (auths, captures, refunds).

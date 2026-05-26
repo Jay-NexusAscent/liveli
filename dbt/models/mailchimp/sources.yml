@@ -1,0 +1,20 @@
+# tap-mailchimp (singer-io variant) output schema.
+# TODO: verify schema after first real sync — Mailchimp accounts vary.
+
+version: 2
+
+sources:
+  - name: mailchimp
+    description: Raw tables written by tap-mailchimp (singer-io variant) after each sync.
+    database: "{{ var('target_project') }}"
+    schema: "{{ var('target_dataset') }}"
+
+    tables:
+      - name: campaigns
+        description: One row per email campaign sent.
+      - name: lists
+        description: Subscriber lists.
+      - name: list_members
+        description: One row per subscriber-on-list.
+      - name: campaign_reports
+        description: Per-campaign performance metrics — opens, clicks, bounces.
