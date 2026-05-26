@@ -127,7 +127,20 @@ resource "google_project_iam_member" "runtime" {
 locals {
   connector_roles = [
     "roles/bigquery.dataEditor",
-    "roles/bigquery.jobUser",
+    # `roles/bigquery.user` (superset of bigquery.jobUser). The
+    # additional permission we need beyond jobUser is
+    # `bigquery.jobs.update`, used by dbt-bigquery 1.9 to poll/cancel
+    # in-flight query jobs. Without it, dbt-runner fails partway through
+    # materialising tables with "Access Denied: ... Permission
+    # bigquery.jobs.update denied on job ..." (LIVELI-54 dbt-runner
+    # first-execution failure).
+    #
+    # `bigquery.user` also grants `bigquery.datasets.create` on the
+    # project, but in practice that's redundant — dataset creation is
+    # already governed by app-level code (provisionConnector) and
+    # always scoped to the customer's clientId+workspaceId. No
+    # additional cross-customer surface vs jobUser+dataEditor.
+    "roles/bigquery.user",
     "roles/secretmanager.secretAccessor",
     "roles/storage.objectUser",
     "roles/logging.logWriter",
