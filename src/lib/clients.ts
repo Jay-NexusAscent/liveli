@@ -12,6 +12,8 @@ import {
   workspacesIn,
 } from "@/lib/firestore";
 import { bqReady } from "@/lib/bigquery";
+import { deleteSyncJob } from "@/lib/cloud-scheduler";
+import { cloudComputeRegionForResidency } from "@/lib/gcp";
 import { deleteConnectorSecret } from "@/lib/secret-manager";
 import {
   deleteClientState,
@@ -249,7 +251,36 @@ export async function deleteClient(
     const connSnap = await connectorsIn(clientId, workspaceId).get();
     for (const connDocSnap of connSnap.docs) {
       const connectorId = connDocSnap.id;
-      const connData = connDocSnap.data() as { bqDataset?: string };
+      const connData = connDocSnap.data() as {
+        bqDataset?: string;
+        bqLocation?: "EU" | "US";
+      };
+
+      // Stop the recurring sync FIRST so Cloud Scheduler can't fire
+      // mid-teardown (its target /api/connections/[id]/scheduled-sync
+      // would still try to load the now-deleted connector doc, 404,
+      // log noise + the failed-invocation Scheduler attempt is
+      // tracked for 30 days in GCP audit logs — operational noise we
+      // can avoid by tearing the scheduler entry down first).
+      //
+      // Per-connector DELETE already does this; previously deleteClient
+      // (the whole-account-delete path) skipped it, leaving orphan
+      // Scheduler entries behind. Closed in the LIVELI-54-followup PR.
+      try {
+        const { region: schedulerRegion } = cloudComputeRegionForResidency(
+          connData.bqLocation
+        );
+        await deleteSyncJob(clientId, connectorId, schedulerRegion);
+      } catch (err) {
+        // deleteSyncJob is already 404-tolerant. Anything else logged
+        // + swallowed — a stuck Scheduler entry is annoying but never
+        // a reason to abandon the rest of the account teardown.
+        console.warn("[deleteClient] deleteSyncJob failed (swallowed)", {
+          clientId,
+          connectorId,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
 
       if (connData.bqDataset) {
         try {
