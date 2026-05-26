@@ -1,0 +1,55 @@
+# Liveli dbt project — transformation layer over connector raw outputs.
+#
+# One shared project; per-connector-type models are tagged so the
+# dbt-runner Cloud Run Job can select just the relevant subset via
+# `dbt run --select tag:<connector_type>` at execution time.
+#
+# Project + dataset come from CLI vars (--vars) injected by the
+# dbt-runner entrypoint per execution — same tenant-scoped values the
+# connector sync Job used. NEVER hardcode tenant info anywhere in this
+# project; tenancy is purely a runtime concern.
+
+name: liveli
+version: 1.0.0
+config-version: 2
+
+profile: liveli
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+seed-paths: []                 # no seed data shipped yet
+snapshot-paths: []             # no SCD-2 snapshots yet
+test-paths: ["tests"]
+
+clean-targets:
+  - target
+  - dbt_packages
+
+# Required vars — dbt fails fast if these aren't passed via --vars.
+# The dbt-runner entrypoint constructs the --vars JSON from env vars
+# the sync route injected. Listing them here is a self-documenting
+# precondition AND a runtime guard.
+vars:
+  target_project: ""           # GCP project ID (e.g. liveli-496609)
+  target_dataset: ""           # Per-customer BQ dataset (c_<C>__w_<W>__d_<conn>)
+
+# Per-connector model configs. Tags are how the dbt-runner selects
+# which subset to run for any given customer-sync invocation.
+#
+# Materialisation defaults to `table` — full rebuild on each run.
+# Cheap for small datasets, simple to reason about, no incremental-key
+# bugs. Switch specific models to `incremental` later if first-sync
+# times start to bite.
+#
+# Writes go into the same dataset as raw source tables (via the
+# generate_schema_name override in macros/get_custom_schema.sql), with
+# fct_/dim_/stg_ prefix convention so the agent's list_tables can
+# distinguish them from tap-X raw outputs.
+models:
+  liveli:
+    +materialized: table
+    +persist_docs:
+      relation: true           # surface model description in BQ table description
+      columns: true            # surface column descriptions in BQ column descriptions
+    ga4:
+      +tags: ["ga4"]

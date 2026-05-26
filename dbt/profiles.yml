@@ -1,0 +1,23 @@
+# Liveli dbt profile — single BigQuery target.
+#
+# Auth: oauth (Application Default Credentials). On Vercel the Cloud
+# Run Job container has GOOGLE_APPLICATION_CREDENTIALS pointing at a
+# WIF-exchanged token; dbt-bigquery's `oauth` method picks that up
+# transparently — no service-account key files needed.
+#
+# Project + dataset come from the runtime --vars passed by entrypoint.sh
+# (which constructs them from env vars set by the sync route).
+
+liveli:
+  target: prod
+  outputs:
+    prod:
+      type: bigquery
+      method: oauth                              # uses ADC — Cloud Run SA on Job, gcloud user on dev
+      project: "{{ var('target_project') }}"
+      dataset: "{{ var('target_dataset') }}"
+      location: "{{ env_var('TARGET_BIGQUERY_LOCATION', 'EU') }}"
+      threads: 4                                 # 4 concurrent SQL stmts per dbt run
+      timeout_seconds: 1200                      # 20 min hard cap per query
+      priority: interactive                      # BQ query priority (not affecting ad-hoc agent queries)
+      retries: 1                                 # transient errors only; never retry SQL logic errors

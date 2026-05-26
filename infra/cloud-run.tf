@@ -46,6 +46,13 @@ locals {
     # via buildLiveliOauthEnv() — no Job-spec changes needed for that.
     "ga4-to-bq",
     "quickbooks-to-bq",
+    # LIVELI-54: dbt transformation layer. ONE shared Job (per
+    # residency region) handles dbt for ALL connector types — models
+    # are tagged inside the dbt project, dbt-runner selects which
+    # subset to run per execution via `--select tag:<connector_type>`.
+    # Adding a 27th connector with dbt support = ZERO new Cloud Run
+    # Jobs, just .sql files added to the shared dbt project.
+    "dbt-runner",
   ]
 
   # Residency footprints. Must match cloudComputeRegionForResidency()
