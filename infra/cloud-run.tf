@@ -34,10 +34,25 @@ locals {
     "linear-to-bq",
     # Batch B (LIVELI-128): API-key + identifier SaaS connectors.
     "mixpanel-to-bq",
-    # amplitude-to-bq — REMOVED in LIVELI-132 PR-merge cleanup. No
-    # usable tap variant available (singer-io de-registered, airbyte
-    # wrapper needs Docker-in-Docker). Re-add when a viable tap exists.
-    # Terraform apply will destroy the 2 placeholder Cloud Run Jobs.
+    # amplitude-to-bq TEMPORARILY re-added — see the comment block
+    # below + the follow-up "remove amplitude-to-bq" PR. This is here
+    # ONLY to give Terraform a chance to update deletion_protection=false
+    # on these two existing Cloud Run Jobs before they're destroyed.
+    # Once this apply lands and the flag has propagated, the follow-up
+    # PR removes this line and the destroy succeeds cleanly.
+    #
+    # Two-step apply is required because Terraform's plan for a
+    # resource being destroyed doesn't include attribute updates —
+    # it goes straight to destroy, which trips the deletion_protection
+    # guard. By keeping amplitude in the for_each map, this apply
+    # plans an UPDATE on those two jobs (deletion_protection: true → false)
+    # rather than a destroy. The follow-up PR's apply then plans a
+    # destroy against the now-updated jobs, which Terraform permits.
+    #
+    # If you're reading this in main + the follow-up PR has merged, the
+    # comment block above ("amplitude REMOVED in LIVELI-132") was the
+    # right description — this is a transient state.
+    "amplitude-to-bq",
     "jira-to-bq",
     "zendesk-to-bq",
     # Batch C (LIVELI-132): OAuth refresh-token SaaS connectors.
