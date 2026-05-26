@@ -1,0 +1,20 @@
+# tap-zendesk (singer-io variant) output schema.
+# TODO: verify after first real sync.
+
+version: 2
+
+sources:
+  - name: zendesk
+    description: Raw tables written by tap-zendesk (singer-io variant) after each sync.
+    database: "{{ var('target_project') }}"
+    schema: "{{ var('target_dataset') }}"
+
+    tables:
+      - name: tickets
+        description: One row per support ticket.
+      - name: users
+        description: All users — agents + end users (customers).
+      - name: organizations
+        description: Customer organisations (B2B grouping).
+      - name: groups
+        description: Agent groups (teams).

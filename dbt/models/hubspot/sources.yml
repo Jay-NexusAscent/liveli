@@ -1,0 +1,32 @@
+# tap-hubspot (meltano-tap-hubspot) output schema.
+#
+# HubSpot has a v3 CRM API with nested `properties` objects. The tap
+# typically flattens common properties to top-level columns. Custom
+# properties land under `properties` as JSON.
+#
+# TODO: verify schema after first real sync. HubSpot accounts vary
+# wildly in which optional properties are present.
+
+version: 2
+
+sources:
+  - name: hubspot
+    description: Raw tables written by tap-hubspot after each sync.
+    database: "{{ var('target_project') }}"
+    schema: "{{ var('target_dataset') }}"
+
+    tables:
+      - name: deals
+        description: One row per deal. Pipeline + stage + amount.
+
+      - name: contacts
+        description: One row per contact.
+
+      - name: companies
+        description: One row per company.
+
+      - name: engagements
+        description: Calls / emails / meetings / notes — activity per deal or contact.
+
+      - name: pipelines
+        description: Deal pipeline definitions (small, slowly-changing).

@@ -53,3 +53,29 @@ models:
       columns: true            # surface column descriptions in BQ column descriptions
     ga4:
       +tags: ["ga4"]
+    stripe:
+      +tags: ["stripe"]
+    shopify:
+      +tags: ["shopify"]
+    hubspot:
+      +tags: ["hubspot"]
+    salesforce:
+      +tags: ["salesforce"]
+    google-ads:
+      +tags: ["google-ads"]
+    facebook-ads:
+      +tags: ["facebook-ads"]
+    quickbooks:
+      +tags: ["quickbooks"]
+    mixpanel:
+      +tags: ["mixpanel"]
+    jira:
+      +tags: ["jira"]
+    mailchimp:
+      +tags: ["mailchimp"]
+    klaviyo:
+      +tags: ["klaviyo"]
+    intercom:
+      +tags: ["intercom"]
+    zendesk:
+      +tags: ["zendesk"]
