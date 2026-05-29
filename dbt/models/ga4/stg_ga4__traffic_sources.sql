@@ -14,10 +14,12 @@ with raw as (
 )
 
 select
-    -- Cast `date` from STRING (tap emits ISO yyyy-mm-dd as text) to DATE
-    -- so downstream models can do proper date arithmetic without
-    -- repeated parse_date() calls.
-    safe.parse_date('%Y-%m-%d', date)                                 as event_date,
+    -- Cast `date` from STRING to DATE. tap-ga4 emits the GA4 Data API
+    -- `date` dimension VERBATIM, which is YYYYMMDD (e.g. "20260526") —
+    -- NOT ISO yyyy-mm-dd. Verified against real synced data. Using the
+    -- wrong format mask here returns NULL for every row and the
+    -- IS NOT NULL filter below then drops the entire table.
+    safe.parse_date('%Y%m%d', date)                                   as event_date,
 
     -- Lowercase + null-coerce string dimensions. GA4 returns
     -- "(direct)" / "(none)" for unattributed traffic — preserve those
@@ -26,8 +28,10 @@ select
     lower(coalesce(medium, '(unknown)'))                              as medium,
     lower(coalesce(sourcePlatform, '(unknown)'))                      as source_platform,
 
-    -- Numeric metrics — passthrough. GA4 returns these as STRINGs
-    -- through the Data API; cast to numeric for arithmetic.
+    -- Metrics are already typed by the tap (activeUsers INT64,
+    -- engagementRate FLOAT64, etc. — verified against the real BQ
+    -- schema). safe_cast is a defensive no-op against future schema
+    -- drift; harmless on already-correct types.
     safe_cast(activeUsers as int64)                                   as active_users,
     safe_cast(sessions as int64)                                      as sessions,
     safe_cast(sessionsPerUser as float64)                             as sessions_per_user,
@@ -38,4 +42,4 @@ from raw
 
 -- Drop rows with unparseable dates — they'd corrupt all downstream
 -- time-series math. SAFE.PARSE_DATE returns NULL on failure.
-where safe.parse_date('%Y-%m-%d', date) is not null
+where safe.parse_date('%Y%m%d', date) is not null
