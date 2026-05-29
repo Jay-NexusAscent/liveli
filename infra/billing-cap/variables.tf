@@ -61,10 +61,15 @@ variable "email_recipients" {
   }
 }
 
-variable "mobile_channel_display_name" {
-  description = "Display name of an existing Cloud Monitoring mobile push notification channel. Default is jay@liveli.ai — the User-scoped channel registered when Jay signs into the GCP mobile app. Set to empty string to disable mobile push entirely (kill-switch will still work via email channels). Important: gcloud's `channels list --project=X` does NOT return User-scoped channels (they're not project-owned). Verify existence in the Console UI: https://console.cloud.google.com/monitoring/alerting/notifications?project=<killswitch_project_id> under \"Mobile Devices\"."
+variable "mobile_channel_name" {
+  description = "FULL resource name of an existing Cloud Monitoring mobile push channel, e.g. projects/liveli-496609/notificationChannels/1234567890123456789. NOT the display name — user-scoped mobile channels (the kind the GCP mobile app registers) are not returned by project-scoped data-source lookups, so we reference by resource name directly. Set to empty string to disable mobile push (kill-switch still works via email). Find the resource name in the Console under Monitoring → Alerting → Edit notification channels → Mobile Devices → click the channel."
   type        = string
-  default     = "jay@liveli.ai"
+  default     = ""
+
+  validation {
+    condition     = var.mobile_channel_name == "" || can(regex("^projects/[^/]+/notificationChannels/[0-9]+$", var.mobile_channel_name))
+    error_message = "mobile_channel_name must be empty or a full resource path: projects/<project>/notificationChannels/<numeric-id>."
+  }
 }
 
 variable "region" {

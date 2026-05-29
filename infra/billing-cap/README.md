@@ -99,7 +99,7 @@ The mobile push alert routes through an *existing* Cloud Monitoring notification
      --project=<KILLSWITCH_PROJECT_ID>
    ```
 
-   The `displayName` field is what you set as `mobile_channel_display_name` in `terraform.tfvars`. It's usually something like `"Jay's iPhone — Google Cloud app"`.
+   The `displayName` field is what you set as `mobile_channel_name` in `terraform.tfvars`. It's usually something like `"Jay's iPhone — Google Cloud app"`.
 
 ### 3. Required tools
 
@@ -115,7 +115,7 @@ The mobile push alert routes through an *existing* Cloud Monitoring notification
 # From this directory
 cp terraform.tfvars.example terraform.tfvars
 # Edit terraform.tfvars to fill in billing_account_id, killswitch_project_id,
-# and mobile_channel_display_name.
+# and mobile_channel_name.
 
 terraform init
 terraform plan          # verify the resource count and the precondition guard

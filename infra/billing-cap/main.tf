@@ -48,6 +48,12 @@ locals {
     "cloudbilling.googleapis.com",
     "billingbudgets.googleapis.com",
   ]
+
+  # Mobile push channel as a single-or-empty list. When mobile_channel_name
+  # is set (a full projects/.../notificationChannels/... resource path), it's
+  # appended to the alert policies. When empty, alerts go email-only. Using a
+  # list lets us concat() it cleanly into notification_channels.
+  mobile_channels = var.mobile_channel_name == "" ? [] : [var.mobile_channel_name]
 }
 
 # ============================================================================
@@ -174,6 +180,37 @@ resource "google_project_iam_member" "runtime_run_invoker" {
 }
 
 # ============================================================================
+# Cloud Build service account permission for the gen-2 function build
+# ----------------------------------------------------------------------------
+# As of a 2024 GCP change, NEW projects no longer auto-grant
+# roles/cloudbuild.builds.builder to the default Compute Engine service
+# account. Gen-2 Cloud Functions build their container via Cloud Build using
+# that compute SA — so on a fresh project (like liveli-killswitch) the build
+# fails with "missing permission on the build service account" until this
+# role is granted explicitly.
+#
+# Ref: https://cloud.google.com/functions/docs/troubleshooting (search
+# "build service account") and the Cloud Build default-SA change notice.
+#
+# We look up the project number dynamically rather than hardcoding so this
+# is portable to any killswitch project.
+data "google_project" "killswitch" {
+  provider   = google.killswitch
+  project_id = var.killswitch_project_id
+
+  depends_on = [google_project_service.killswitch]
+}
+
+resource "google_project_iam_member" "compute_sa_cloudbuild_builder" {
+  provider = google.killswitch
+  project  = var.killswitch_project_id
+  role     = "roles/cloudbuild.builds.builder"
+  member   = "serviceAccount:${data.google_project.killswitch.number}-compute@developer.gserviceaccount.com"
+
+  depends_on = [google_project_service.killswitch]
+}
+
+# ============================================================================
 # Function source — zip locally via archive_file, upload to GCS
 # ============================================================================
 resource "google_storage_bucket" "function_source" {
@@ -258,6 +295,9 @@ resource "google_cloudfunctions2_function" "disable_billing" {
     google_project_iam_member.runtime_run_invoker,
     google_project_iam_member.runtime_billing_project_manager,
     google_billing_account_iam_member.runtime_billing_user,
+    # Build SA must have the builder role BEFORE the function build starts,
+    # otherwise the container build fails on fresh projects.
+    google_project_iam_member.compute_sa_cloudbuild_builder,
   ]
 }
 
@@ -289,26 +329,20 @@ resource "google_monitoring_notification_channel" "email" {
   depends_on = [google_project_service.killswitch]
 }
 
-# Mobile data source is OPTIONAL. The GCP mobile app's auto-registration of
-# notification channels has been observed to silently fail on fresh accounts
-# (see https://www.googlecloudcommunity.com/.../Cannot-register-or-replace-a-Mobile-Device-for-Alerting).
-# When mobile_channel_display_name is left empty, we skip the data source
-# entirely — the alerting policies fall back to email-only delivery, which
-# is fully sufficient for the kill-switch to function.
+# Mobile channel is referenced by its FULL RESOURCE NAME, not looked up via
+# a data source. This is deliberate: the GCP mobile app registers a
+# USER-SCOPED channel (Scope=User, Project ID=N/A in the console). User-scoped
+# channels are NOT returned by the project-scoped notificationChannels.list
+# API, so `data "google_monitoring_notification_channel"` (which filters by
+# project + display_name) can never find them — it errors with "No
+# NotificationChannel found". Confirmed empirically: the REST list endpoint
+# returns nothing for either project despite the channel existing.
 #
-# To enable mobile later: register the device via the Google Cloud mobile
-# app (sign in → tap into a project → wait a few minutes), confirm the
-# channel exists via `gcloud alpha monitoring channels list`, then set
-# mobile_channel_display_name in terraform.tfvars and re-apply.
-data "google_monitoring_notification_channel" "mobile" {
-  count        = var.mobile_channel_display_name == "" ? 0 : 1
-  provider     = google.killswitch
-  project      = var.killswitch_project_id
-  display_name = var.mobile_channel_display_name
-  type         = "google_cloud_monitoring_mobile"
-
-  depends_on = [google_project_service.killswitch]
-}
+# The documented robust approach is to reference the channel by its resource
+# name (projects/<PROJECT>/notificationChannels/<ID>) directly. We accept it
+# as a variable. Empty string disables mobile push (email-only fallback).
+#
+# See locals.mobile_channels below for how empty is handled.
 
 # ============================================================================
 # Log-based metric — counts "threshold_crossed" entries from the function
@@ -383,8 +417,8 @@ resource "google_monitoring_alert_policy" "threshold_alerts" {
   }
 
   notification_channels = concat(
-    # Splat — returns [] when mobile data source has count=0, so email-only works
-    data.google_monitoring_notification_channel.mobile[*].name,
+    # local.mobile_channels is [] when mobile_channel_name is empty (email-only)
+    local.mobile_channels,
     [for c in google_monitoring_notification_channel.email : c.name],
   )
 
@@ -464,8 +498,8 @@ resource "google_monitoring_alert_policy" "function_health" {
   }
 
   notification_channels = concat(
-    # Splat — returns [] when mobile data source has count=0, so email-only works
-    data.google_monitoring_notification_channel.mobile[*].name,
+    # local.mobile_channels is [] when mobile_channel_name is empty (email-only)
+    local.mobile_channels,
     [for c in google_monitoring_notification_channel.email : c.name],
   )
 
