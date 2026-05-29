@@ -3,7 +3,11 @@ name: Deploy connectors
 on:
   push:
     branches: [main]
-    paths: ["connectors/**", ".github/workflows/deploy-connectors.yml"]
+    # `dbt/**` is watched because the dbt project is baked into the
+    # dbt-runner image at build time (COPY dbt /app/dbt). A change to
+    # any model therefore requires rebuilding that image — see the
+    # dbt-runner mapping in the detect-changes step below.
+    paths: ["connectors/**", "dbt/**", ".github/workflows/deploy-connectors.yml"]
   workflow_dispatch:
     inputs:
       connector:
@@ -128,7 +132,21 @@ jobs:
             | awk -F/ '{print $2}' \
             | sort -u)
 
-          echo "→ changed connector dirs in $BEFORE..$SHA:"
+          # dbt project changes → rebuild the dbt-runner image. The dbt
+          # project lives at repo ROOT (dbt/), not under connectors/, so
+          # the grep above misses it — but the project is COPY'd into the
+          # dbt-runner image at build time, so a model change means that
+          # image is stale until rebuilt. Append `dbt-runner` to the
+          # matrix when any dbt/** file changed. sort -u dedupes in case
+          # connectors/dbt-runner/ ALSO changed in the same push; the
+          # grep -v '^$' drops the empty line when CHANGED started empty
+          # (dbt-only push).
+          if git diff --name-only "$BEFORE" "$SHA" | grep -q "^dbt/"; then
+            echo "→ dbt/ changed — adding dbt-runner to the matrix"
+            CHANGED=$(printf '%s\n%s\n' "$CHANGED" "dbt-runner" | grep -v '^$' | sort -u)
+          fi
+
+          echo "→ connectors to build in $BEFORE..$SHA:"
           echo "$CHANGED" | sed 's/^/    /'
           emit_matrix "$CHANGED"
 
