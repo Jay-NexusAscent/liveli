@@ -107,18 +107,17 @@ resource "google_project_service" "target" {
 # ============================================================================
 # Pub/Sub topic — receives budget notifications
 # ----------------------------------------------------------------------------
-# The Cloud Billing budgets system service account must be explicitly granted
-# roles/pubsub.publisher on this topic — it is NOT auto-granted. Without it,
-# creating the budget with an all_updates_rule.pubsub_topic fails with
-# "Error 400: Precondition check failed" because GCP validates that the
-# budget service account can publish to the topic at budget-creation time.
+# The Cloud Billing budgets system service account (billing-budgets@system.
+# gserviceaccount.com) needs roles/pubsub.publisher on this topic. We do NOT
+# grant it from Terraform: the google provider validates IAM members and
+# cannot resolve @system service accounts, so a google_pubsub_topic_iam_member
+# for it fails with "Service account ... does not exist" even when it does.
 #
-# The service account billing-budgets@system.gserviceaccount.com is a
-# Google-managed system account, identical across all projects (not
-# project-specific). See terraform-provider-google issue #13745.
-#
-# The budget resource depends_on this grant so the permission is in place
-# before the precondition check runs.
+# Instead, this grant is provisioned out-of-band by connecting a budget to the
+# topic ONCE via the Cloud Console (Billing → Budgets → connect Pub/Sub topic).
+# That Console action both provisions the system SA and grants it publisher on
+# the topic — the grant persists. This is a one-time bootstrap per billing
+# account; see README. After it, this Terraform manages the budget cleanly.
 # ============================================================================
 resource "google_pubsub_topic" "budget_alerts" {
   provider = google.killswitch
@@ -128,14 +127,6 @@ resource "google_pubsub_topic" "budget_alerts" {
   labels = local.common_labels
 
   depends_on = [google_project_service.killswitch]
-}
-
-resource "google_pubsub_topic_iam_member" "budget_publisher" {
-  provider = google.killswitch
-  project  = var.killswitch_project_id
-  topic    = google_pubsub_topic.budget_alerts.name
-  role     = "roles/pubsub.publisher"
-  member   = "serviceAccount:billing-budgets@system.gserviceaccount.com"
 }
 
 # ============================================================================
@@ -580,8 +571,8 @@ resource "google_billing_budget" "monthly_cap" {
     google_project_service.target,
     google_project_service.killswitch,
     google_billing_account_iam_member.runtime_billing_user,
-    # Budget creation validates the service account can publish to the topic.
-    # This grant MUST exist first or you get "Precondition check failed".
-    google_pubsub_topic_iam_member.budget_publisher,
+    # NOTE: the budget SA's pubsub.publisher grant is provisioned out-of-band
+    # via a one-time Console budget→topic connection (see topic comment above),
+    # not by Terraform — the provider can't grant IAM to @system accounts.
   ]
 }
