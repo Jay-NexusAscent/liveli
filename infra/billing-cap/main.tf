@@ -107,16 +107,18 @@ resource "google_project_service" "target" {
 # ============================================================================
 # Pub/Sub topic — receives budget notifications
 # ----------------------------------------------------------------------------
-# The Cloud Billing service agent on the billing account is auto-granted
-# roles/pubsub.publisher on this topic when the budget's all_updates_rule
-# references it. Verified via:
+# The Cloud Billing budgets system service account must be explicitly granted
+# roles/pubsub.publisher on this topic — it is NOT auto-granted. Without it,
+# creating the budget with an all_updates_rule.pubsub_topic fails with
+# "Error 400: Precondition check failed" because GCP validates that the
+# budget service account can publish to the topic at budget-creation time.
 #
-#   gcloud pubsub topics get-iam-policy gcp-billing-alert \
-#     --project=<killswitch_project_id>
+# The service account billing-budgets@system.gserviceaccount.com is a
+# Google-managed system account, identical across all projects (not
+# project-specific). See terraform-provider-google issue #13745.
 #
-# You should see a member like
-#   serviceAccount:billing-budgets@system.gserviceaccount.com
-# with role roles/pubsub.publisher. No explicit grant needed in this module.
+# The budget resource depends_on this grant so the permission is in place
+# before the precondition check runs.
 # ============================================================================
 resource "google_pubsub_topic" "budget_alerts" {
   provider = google.killswitch
@@ -126,6 +128,14 @@ resource "google_pubsub_topic" "budget_alerts" {
   labels = local.common_labels
 
   depends_on = [google_project_service.killswitch]
+}
+
+resource "google_pubsub_topic_iam_member" "budget_publisher" {
+  provider = google.killswitch
+  project  = var.killswitch_project_id
+  topic    = google_pubsub_topic.budget_alerts.name
+  role     = "roles/pubsub.publisher"
+  member   = "serviceAccount:billing-budgets@system.gserviceaccount.com"
 }
 
 # ============================================================================
@@ -570,5 +580,8 @@ resource "google_billing_budget" "monthly_cap" {
     google_project_service.target,
     google_project_service.killswitch,
     google_billing_account_iam_member.runtime_billing_user,
+    # Budget creation validates the service account can publish to the topic.
+    # This grant MUST exist first or you get "Precondition check failed".
+    google_pubsub_topic_iam_member.budget_publisher,
   ]
 }
