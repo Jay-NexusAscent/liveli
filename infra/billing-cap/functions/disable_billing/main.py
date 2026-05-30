@@ -36,8 +36,17 @@ import os
 from typing import Any
 
 import functions_framework
+import google.cloud.logging
 from google.cloud import billing_v1
 from google.cloud.billing_v1.types import ProjectBillingInfo
+
+# Structured logging via google-cloud-logging. Installs a handler that
+# turns Python logging records (including extra={"json_fields": {...}})
+# into Cloud Logging entries with proper jsonPayload fields. Without
+# this, basicConfig writes plain text to stdout and the json_fields are
+# silently dropped — the log-based metric filter on jsonPayload.*
+# never matches and no alert ever fires.
+google.cloud.logging.Client().setup_logging(log_level=logging.INFO)
 
 # Environment variables are populated by Terraform's service_config.
 # Validate at module load so a misdeployment fails fast on first invocation
@@ -49,11 +58,6 @@ DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
 # across concurrent invocations, so client initialization happens once
 # per warm instance rather than once per request.
 _billing_client = billing_v1.CloudBillingClient()
-
-# Configure structured logging. Cloud Functions gen 2 captures stdout and
-# routes it to Cloud Logging. Using extra={"json_fields": {...}} produces
-# entries that the log-based metric in Terraform can filter on.
-logging.basicConfig(level=logging.INFO)
 
 
 @functions_framework.cloud_event
