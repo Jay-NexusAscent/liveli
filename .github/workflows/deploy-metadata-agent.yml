@@ -1,0 +1,100 @@
+name: Deploy metadata agent
+
+# Builds the Node image for the metadata-enrichment Cloud Run Job and
+# updates both residency-suffixed jobs (metadata-agent-eu / -us).
+#
+# Prerequisite: the jobs must already exist (created by Terraform with a
+# placeholder image). `gcloud run jobs update --image` patches an
+# existing job — it does not create one. Run `terraform apply` first.
+
+on:
+  push:
+    branches: [main]
+    # The image bundles the agent entrypoint + its transitive lib deps,
+    # so rebuild whenever any of that source changes.
+    paths:
+      - "src/lib/metadata/**"
+      - "src/lib/bigquery.ts"
+      - "src/lib/firestore.ts"
+      - "src/lib/vertex.ts"
+      - "src/lib/gcp.ts"
+      - "src/lib/gcp-auth.ts"
+      - "src/lib/usage.ts"
+      - "src/lib/pricing.ts"
+      - "scripts/metadata-agent-job.ts"
+      - "scripts/build-metadata-agent.mjs"
+      - "connectors/metadata-agent/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/deploy-metadata-agent.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-metadata-agent-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build-and-deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    env:
+      # Artifact Registry stays in europe-west4 — image binaries aren't
+      # customer data, and Cloud Run pulls cross-region fine. Reuses the
+      # existing liveli-connectors repo; the image name distinguishes it.
+      AR_REGION: europe-west4
+      PROJECT_ID: liveli-496609
+      REPO: liveli-connectors
+      IMAGE: metadata-agent
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_CI_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker $AR_REGION-docker.pkg.dev --quiet
+
+      - name: Build image
+        id: build
+        run: |
+          IMAGE_URI="$AR_REGION-docker.pkg.dev/$PROJECT_ID/$REPO/$IMAGE:${GITHUB_SHA::12}"
+          # Build context is the repo root — the bundle needs src/,
+          # scripts/, tsconfig.json + the lockfile.
+          docker build \
+            -f connectors/metadata-agent/Dockerfile \
+            -t "$IMAGE_URI" \
+            -t "$AR_REGION-docker.pkg.dev/$PROJECT_ID/$REPO/$IMAGE:latest" \
+            .
+          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+
+      - name: Push image
+        run: |
+          docker push "$IMAGE_URI"
+          docker push "$AR_REGION-docker.pkg.dev/$PROJECT_ID/$REPO/$IMAGE:latest"
+
+      # Update BOTH residency-suffixed jobs from the same image, mirroring
+      # the connector deploy. Names match infra/cloud-run.tf.
+      - name: Update Cloud Run Job image (EU residency)
+        run: |
+          gcloud run jobs update "metadata-agent-eu" \
+            --image "$IMAGE_URI" \
+            --region "europe-west1" \
+            --project "$PROJECT_ID"
+
+      - name: Update Cloud Run Job image (US residency)
+        run: |
+          gcloud run jobs update "metadata-agent-us" \
+            --image "$IMAGE_URI" \
+            --region "us-central1" \
+            --project "$PROJECT_ID"
