@@ -23,7 +23,7 @@ on:
       - "src/lib/pricing.ts"
       - "scripts/metadata-agent-job.ts"
       - "scripts/build-metadata-agent.mjs"
-      - "connectors/metadata-agent/**"
+      - "agents/metadata-agent/**"
       - "package.json"
       - "pnpm-lock.yaml"
       - ".github/workflows/deploy-metadata-agent.yml"
@@ -72,7 +72,7 @@ jobs:
           # Build context is the repo root — the bundle needs src/,
           # scripts/, tsconfig.json + the lockfile.
           docker build \
-            -f connectors/metadata-agent/Dockerfile \
+            -f agents/metadata-agent/Dockerfile \
             -t "$IMAGE_URI" \
             -t "$AR_REGION-docker.pkg.dev/$PROJECT_ID/$REPO/$IMAGE:latest" \
             .
