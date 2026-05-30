@@ -152,6 +152,18 @@ resource "google_project_iam_member" "runtime_billing_project_manager" {
   member   = "serviceAccount:${google_service_account.killswitch_runtime.email}"
 }
 
+# Function SA → roles/browser on the TARGET project.
+# billing.projectManager grants the WRITE permission (updateBillingInfo) but
+# not the READ permission (resourcemanager.projects.get) that getBillingInfo
+# requires for the idempotency check. roles/browser is the narrowest
+# predefined role granting projects.get.
+resource "google_project_iam_member" "runtime_browser" {
+  provider = google.target
+  project  = var.target_project_id
+  role     = "roles/browser"
+  member   = "serviceAccount:${google_service_account.killswitch_runtime.email}"
+}
+
 # Function SA → roles/billing.user on the BILLING ACCOUNT.
 # Needed to read budget metadata when responding to notifications.
 resource "google_billing_account_iam_member" "runtime_billing_user" {
