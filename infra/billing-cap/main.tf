@@ -456,15 +456,21 @@ resource "google_monitoring_alert_policy" "threshold_alerts" {
   }
 
   documentation {
+    subject   = "Liveli £${var.budget_amount_gbp} budget threshold crossed on ${var.target_project_id}"
     content   = <<-EOT
       A monthly-budget threshold was crossed on `${var.target_project_id}`.
 
-      Check the function logs for cost/budget detail:
+      **What this means**
+      - The Cloud Billing budget for `${var.target_project_id}` has reported
+        a spend update that crossed one of its configured thresholds
+        (25/50/75/80/90/100% of £${var.budget_amount_gbp}).
+      - At 100% the kill-switch fires and disables billing on `${var.target_project_id}`.
+
+      **Check function logs for cost / budget / threshold detail:**
       https://console.cloud.google.com/functions/details/${var.region}/${google_cloudfunctions2_function.disable_billing.name}?project=${var.killswitch_project_id}
 
-      If the threshold is 1.0 (100%), the kill-switch has already fired and
-      billing has been disabled on `${var.target_project_id}`. To restore service,
-      manually re-link the billing account in the GCP console.
+      **If 100% was crossed**: billing on `${var.target_project_id}` is now disabled.
+      Re-link via the GCP Console once the spend driver is identified.
     EOT
     mime_type = "text/markdown"
   }
@@ -537,19 +543,19 @@ resource "google_monitoring_alert_policy" "function_health" {
   }
 
   documentation {
+    subject   = "Liveli kill-switch FUNCTION ERROR — budget enforcement at risk"
     content   = <<-EOT
-      The billing-cap kill-switch function on `${var.killswitch_project_id}`
-      logged at ERROR severity. This means a budget notification arrived
-      but the function failed to act on it — billing on
-      `${var.target_project_id}` may NOT have been disabled despite
-      the budget being exceeded.
+      The Liveli billing kill-switch function logged at ERROR severity. A budget
+      notification arrived but the function failed to act on it — billing on
+      `${var.target_project_id}` may NOT have been disabled even if budget exceeded.
 
-      Investigate immediately:
+      **Investigate now:**
       https://console.cloud.google.com/functions/details/${var.region}/${google_cloudfunctions2_function.disable_billing.name}?project=${var.killswitch_project_id}
 
-      Common causes:
-      - IAM: function SA missing roles/billing.projectManager on target
-      - IAM: function SA missing roles/billing.user on billing account
+      **Common causes**
+      - IAM: function SA missing `roles/billing.projectManager` on target
+      - IAM: function SA missing `roles/billing.user` on billing account
+      - IAM: function SA missing `roles/browser` on target (read perm)
       - Malformed budget message (rare — file a GCP support ticket)
     EOT
     mime_type = "text/markdown"
