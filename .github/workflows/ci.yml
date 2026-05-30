@@ -46,3 +46,45 @@ jobs:
           GCP_REGION: europe-west4
           VERTEX_AI_REGION: us-central1
           VERTEX_AI_MODEL: claude-opus-4-7
+
+  dbt:
+    name: dbt — parse / validate project graph
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Runs in parallel with the `app` job. dbt parse is purely static —
+    # no warehouse needed — so it's cheap and catches:
+    #   - duplicate model names (PR #93's miss: `dim_customers` defined
+    #     across stripe / shopify / quickbooks; blocked the whole project
+    #     from compiling, including GA4)
+    #   - ref() targets that don't exist
+    #   - source() tables not declared in any sources.yml
+    #   - Jinja / YAML syntax errors
+    # i.e. exactly the bugs that previously only surfaced at runtime in
+    # the dbt-runner Cloud Run Job — by which point they'd blocked
+    # every customer's curated tables.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dbt
+        run: |
+          pip install \
+            'dbt-core>=1.9.0,<1.10.0' \
+            'dbt-bigquery>=1.9.0,<1.10.0'
+
+      - name: dbt deps
+        working-directory: dbt
+        run: dbt deps --profiles-dir .
+
+      - name: dbt parse
+        working-directory: dbt
+        # `parse` walks the project graph: resolves all ref()/source()
+        # calls, checks for duplicate model names, validates YAML. No
+        # BQ access needed (the empty-string defaults for target_project /
+        # target_dataset suffice — parse doesn't execute SQL).
+        run: dbt parse --profiles-dir . --target prod --no-version-check

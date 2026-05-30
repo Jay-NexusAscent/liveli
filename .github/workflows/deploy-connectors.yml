@@ -127,8 +127,17 @@ jobs:
           fi
 
           # Case 5 (typical): only the connectors with changes in the push.
+          #
+          # `{ grep ... || true; }` is critical. With `set -euo pipefail`
+          # in effect, an unmatched grep returns exit 1, pipefail
+          # propagates it, set -e kills the script — and we never reach
+          # emit_matrix or the dbt-runner mapping below. This bit on the
+          # first dbt-only push to main (PR #107), where the diff had
+          # zero `connectors/**` paths. Latent bug present since the
+          # workflow was written; PR #106's `dbt/**` trigger surfaced it
+          # by enabling pushes with no connector-dir changes.
           CHANGED=$(git diff --name-only "$BEFORE" "$SHA" \
-            | grep "^connectors/" \
+            | { grep "^connectors/" || true; } \
             | awk -F/ '{print $2}' \
             | sort -u)
 
