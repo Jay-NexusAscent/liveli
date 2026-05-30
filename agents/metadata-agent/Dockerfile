@@ -1,12 +1,14 @@
 # Metadata enrichment agent — Cloud Run Job image.
 #
-# Unlike the sibling Meltano connector images (Python), this is a Node
-# image running the bundled TypeScript agent entrypoint.
+# Lives under agents/ (not connectors/) so the deploy-connectors
+# workflow's directory-enumerated matrix doesn't try to build it as
+# if it were a Meltano connector. This is a Node image running the
+# bundled TypeScript agent entrypoint, not a Singer/Meltano pipeline.
 #
 # IMPORTANT: build context is the REPO ROOT, not this directory — the
 # bundle needs src/, scripts/, tsconfig.json, and the lockfile. The
 # deploy-metadata-agent workflow builds with:
-#   docker build -f connectors/metadata-agent/Dockerfile .
+#   docker build -f agents/metadata-agent/Dockerfile .
 #
 # Stages:
 #   builder — install all deps, esbuild-bundle the entrypoint

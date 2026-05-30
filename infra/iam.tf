@@ -42,6 +42,12 @@ locals {
     "roles/datastore.owner", # Firestore
     "roles/iam.serviceAccountAdmin",
     "roles/iam.serviceAccountUser",
+    # Manage custom IAM roles (create/get/update/delete). Needed for
+    # google_project_iam_custom_role.metadata_agent_bq — without this,
+    # terraform apply 403s on the iam.roles.get the provider does
+    # before create-or-undelete. Project-scoped via this same project's
+    # IAM binding; doesn't grant org-level role mgmt.
+    "roles/iam.roleAdmin",
     "roles/iam.workloadIdentityPoolAdmin",
     "roles/serviceusage.serviceUsageAdmin",
     # Needed for `google_project_iam_member` resources — they call
