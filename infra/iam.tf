@@ -194,16 +194,22 @@ resource "google_project_iam_custom_role" "metadata_agent_bq" {
   ]
 }
 
+# Map with literal keys (not toset of a list) so terraform plan can
+# compute the for_each keys WITHOUT knowing the custom-role ID — that
+# `id` is only known after apply, and `toset([..., custom_role.id])`
+# trips "Invalid for_each argument" because the set membership itself
+# becomes apply-time-unknown. Literal-keyed maps sidestep this: keys
+# are static, values can be apply-time-unknown.
 locals {
-  metadata_agent_roles = [
-    google_project_iam_custom_role.metadata_agent_bq.id,
-    "roles/aiplatform.user", # Vertex inference
-    "roles/datastore.user",  # Firestore registry mirror (coarse — IAM can't scope per-collection)
-  ]
+  metadata_agent_roles = {
+    bq        = google_project_iam_custom_role.metadata_agent_bq.id
+    vertex    = "roles/aiplatform.user" # Vertex inference
+    datastore = "roles/datastore.user"  # Firestore registry mirror (coarse — IAM can't scope per-collection)
+  }
 }
 
 resource "google_project_iam_member" "metadata_agent" {
-  for_each = toset(local.metadata_agent_roles)
+  for_each = local.metadata_agent_roles
   project  = var.project_id
   role     = each.value
   member   = "serviceAccount:${google_service_account.metadata_agent.email}"
