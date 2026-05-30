@@ -30,6 +30,22 @@ const SeriesSchema = z.object({
   unit: z.string().max(8).optional(),
   delta: z.number().optional(),
   deltaLabel: z.string().max(40).optional(),
+  /**
+   * Per-series currency override (ISO 4217 — "USD", "EUR", "JPY",
+   * etc.). Optional. The chart renderer falls back to the workspace
+   * currency setting when this is omitted.
+   *
+   * Only set this when the source data is in a currency OTHER than
+   * the workspace default — e.g. a Stripe connector that reports USD
+   * charges in a workspace whose primary currency is GBP. Leave it
+   * unset for everything else; the agent never needs to repeat the
+   * workspace currency, and a wrong override is harder to spot than
+   * a missing one.
+   */
+  currency: z
+    .string()
+    .regex(/^[A-Z]{3}$/, "currency must be a 3-letter ISO 4217 code")
+    .optional(),
 });
 
 const AxisSchema = z.object({
@@ -118,7 +134,8 @@ function normalizeChartInput(raw: unknown): unknown {
 export const makeChartTool: ToolDefinition = {
   name: "make_chart",
   description:
-    "Render a chart inline in the chat. The result is shown to the user immediately. Use this whenever the answer to a question is better understood visually — comparisons, time series, distributions, rankings.",
+    "Render a chart inline in the chat. The result is shown to the user immediately. Use this whenever the answer to a question is better understood visually — comparisons, time series, distributions, rankings. " +
+    "Per-series `currency` (ISO 4217) is optional: only set it when the source data is in a different currency than the workspace default — e.g. a Stripe connector reporting USD when the workspace currency is GBP. Leave it unset otherwise; the renderer uses the workspace currency by default.",
   inputSchema: Input,
   handler: async (raw) => {
     const { title, echartsOption } = Input.parse(normalizeChartInput(raw));
