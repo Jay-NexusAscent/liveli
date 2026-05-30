@@ -87,4 +87,6 @@ jobs:
         # calls, checks for duplicate model names, validates YAML. No
         # BQ access needed (the empty-string defaults for target_project /
         # target_dataset suffice — parse doesn't execute SQL).
-        run: dbt parse --profiles-dir . --target prod --no-version-check
+        run: |
+          dbt parse --profiles-dir . --target prod --no-version-check \
+            --vars '{target_project: ci-dummy, target_dataset: ci-dummy}'
