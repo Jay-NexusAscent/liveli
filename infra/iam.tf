@@ -1,7 +1,10 @@
-# Three service accounts, one per role:
-#  - liveli-ci       : used by GitHub Actions (broad — manages infra)
-#  - liveli-runtime  : used by Vercel runtime (narrow — data plane only)
-#  - liveli-connector: used by Cloud Run connector jobs (narrow — single workspace)
+# Four service accounts, one per role:
+#  - liveli-ci            : used by GitHub Actions (broad — manages infra)
+#  - liveli-runtime       : used by Vercel runtime (narrow — data plane only)
+#  - liveli-connector     : used by Cloud Run connector jobs (narrow — single workspace)
+#  - liveli-agent-metadata: used by the metadata-enrichment Cloud Run Job
+#                           (narrowest — read + schema-description-write only,
+#                           NO row mutation on customer data)
 
 resource "google_service_account" "ci" {
   account_id   = "liveli-ci"
@@ -19,6 +22,12 @@ resource "google_service_account" "connector" {
   account_id   = "liveli-connector"
   display_name = "Liveli — Connector jobs (Cloud Run)"
   description  = "Runs Meltano ELT pipelines. Reads connector secrets, writes to workspace BQ datasets, writes to GCS."
+}
+
+resource "google_service_account" "metadata_agent" {
+  account_id   = "liveli-agent-metadata"
+  display_name = "Liveli — Metadata enrichment agent (Cloud Run)"
+  description  = "Runs the post-sync metadata-enrichment agent. Reads BQ schema + sample rows, writes table/column descriptions + the Firestore registry mirror, calls Vertex AI. NO row mutation on customer data."
 }
 
 # ── Roles for the CI account ──────────────────────────────────────
@@ -152,4 +161,60 @@ resource "google_project_iam_member" "connector" {
   project  = var.project_id
   role     = each.value
   member   = "serviceAccount:${google_service_account.connector.email}"
+}
+
+# ── Roles for the metadata-agent account ──────────────────────────
+# Tightest footprint of any SA. The agent must:
+#   - run queries (pre-flight INFORMATION_SCHEMA gate, sample_rows,
+#     column_profile)                              → bigquery.jobs.create
+#   - read schema + sample rows                    → tables.get/getData/list
+#   - write table + column DESCRIPTIONS            → tables.update
+#   - call Vertex for inference                    → aiplatform.user
+#   - write the Firestore registry mirror          → datastore.user
+#   - append its own usage_events row              → dataEditor on liveli_internal ONLY
+#
+# Deliberately EXCLUDED: tables.updateData / tables.delete on customer
+# datasets. The agent describes data; it must never mutate or drop
+# customer rows. tables.update covers schema/description patches but
+# NOT row writes — that's the least-privilege line we're drawing.
+#
+# Custom role rather than dataEditor because dataEditor bundles
+# tables.updateData (row INSERT/DELETE), which is exactly what we want
+# to deny on customer data.
+resource "google_project_iam_custom_role" "metadata_agent_bq" {
+  role_id     = "liveliMetadataAgentBq"
+  title       = "Liveli Metadata Agent — BigQuery"
+  description = "Read + schema/description-write for the metadata agent. No row mutation on customer data."
+  permissions = [
+    "bigquery.jobs.create",
+    "bigquery.tables.get",
+    "bigquery.tables.getData",
+    "bigquery.tables.list",
+    "bigquery.tables.update",
+  ]
+}
+
+locals {
+  metadata_agent_roles = [
+    google_project_iam_custom_role.metadata_agent_bq.id,
+    "roles/aiplatform.user", # Vertex inference
+    "roles/datastore.user",  # Firestore registry mirror (coarse — IAM can't scope per-collection)
+  ]
+}
+
+resource "google_project_iam_member" "metadata_agent" {
+  for_each = toset(local.metadata_agent_roles)
+  project  = var.project_id
+  role     = each.value
+  member   = "serviceAccount:${google_service_account.metadata_agent.email}"
+}
+
+# Row-insert on the INTERNAL usage dataset only — so logMetadataAgentRun
+# can append agent.metadata events. Dataset-scoped dataEditor keeps
+# row-write confined to liveli_internal; the project-level custom role
+# above grants no row mutation anywhere else.
+resource "google_bigquery_dataset_iam_member" "metadata_agent_internal_writer" {
+  dataset_id = google_bigquery_dataset.internal.dataset_id
+  role       = "roles/bigquery.dataEditor"
+  member     = "serviceAccount:${google_service_account.metadata_agent.email}"
 }
