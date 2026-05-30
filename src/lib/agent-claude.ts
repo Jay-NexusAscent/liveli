@@ -1,10 +1,27 @@
 /**
  * Claude-on-Vertex agent loop, built on the Vercel AI SDK.
  *
- * Parallel to src/lib/agent.ts (the Gemini path). Dispatched from
- * /api/chat/route.ts based on the configured model prefix:
+ * ════════════════════════════════════════════════════════════════════
+ * DORMANT SINCE 2026-05-22.
+ *
+ * Production rolled back to `gemini-2.5-pro` via Vercel env override
+ * after this path failed 3/3 production calls in the LIVELI-107 →
+ * LIVELI-110 deploy window (mid-flow stops, 0 tokens completed). The
+ * LIVE agent path is `src/lib/agent.ts`. This file is retained as the
+ * documented rollback per LIVELI-107's dual-path design.
+ *
+ * Re-activate by setting `VERTEX_AI_MODEL=claude-sonnet-4-6` (or any
+ * `claude-*` prefix) ONCE upstream issues are tracked and addressed.
+ * Before re-activating, restore the matching Claude SKU(s) to
+ * `VERTEX_MODEL_PRICING` in src/lib/pricing.ts — those were stripped
+ * in LIVELI-152 to prevent cost-tracking confusion while dormant.
+ * ════════════════════════════════════════════════════════════════════
+ *
+ * Parallel to src/lib/agent.ts (the Gemini path — the active
+ * production path). Dispatched from /api/chat/route.ts based on the
+ * configured model prefix:
  *   - `claude-*` → this file
- *   - `gemini-*` → src/lib/agent.ts (untouched, instant rollback path)
+ *   - `gemini-*` → src/lib/agent.ts (active production path)
  *
  * Why a separate file: the move from @google-cloud/vertexai to the AI
  * SDK is a substantial rewrite. Doing it in-place would conflate
@@ -59,7 +76,15 @@ import {
 import { dbReady, chatsIn, messagesIn, workspaceDoc } from "@/lib/firestore";
 import { logAgentMessage } from "@/lib/usage";
 import type { ChatStreamEvent } from "@/lib/streaming";
-import { SYSTEM_PROMPT, buildEditContextPreamble, type AgentEditContext, type AgentTurnInput } from "@/lib/agent";
+import {
+  SYSTEM_PROMPT,
+  buildEditContextPreamble,
+  buildWorkspaceSettingsPreamble,
+  SAFETY_RULES,
+  type AgentEditContext,
+  type AgentTurnInput,
+} from "@/lib/agent";
+import { mergeSettings, type WorkspaceSettings } from "@/lib/workspace-settings";
 
 // Re-export so external callers can use either path without importing
 // from two modules.
@@ -414,8 +439,13 @@ export async function* runAgentTurn(
   // ── Resolve workspace residency → Vertex region ─────────────────
   await dbReady();
   const wsSnap = await workspaceDoc(input.clientId, input.workspaceId).get();
-  const wsData = wsSnap.data() as { bqLocation?: "EU" | "US" } | undefined;
+  const wsData = wsSnap.data() as
+    | { bqLocation?: "EU" | "US"; settings?: Partial<WorkspaceSettings> }
+    | undefined;
   const vertexRegion = claudeRegionForResidency(wsData?.bqLocation);
+  // Same per-turn settings load as the Gemini path — keeps both agent
+  // backends consistent in voice/currency/timezone.
+  const workspaceSettings = mergeSettings(wsData?.settings);
 
   // ── Open or create the chat ────────────────────────────────────
   const chatsCol = chatsIn(input.clientId, input.workspaceId);
@@ -535,11 +565,18 @@ export async function* runAgentTurn(
     });
   };
 
-  // Build system prompt with optional edit-mode preamble. Same logic
-  // as the Gemini path — preamble is per-turn, NOT persisted.
-  const systemPromptText = input.editContext
-    ? `${SYSTEM_PROMPT}\n\n${buildEditContextPreamble(input.editContext)}`
-    : SYSTEM_PROMPT;
+  // Build system prompt — base + workspace prefs + optional edit-mode
+  // preamble + SAFETY_RULES last (non-overridable). Mirrors the Gemini
+  // path in src/lib/agent.ts. None of these layers are persisted; the
+  // model receives them fresh on every turn.
+  const systemPromptText = [
+    SYSTEM_PROMPT,
+    buildWorkspaceSettingsPreamble(workspaceSettings),
+    input.editContext ? buildEditContextPreamble(input.editContext) : null,
+    SAFETY_RULES,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
   const renderQueue = new ClientRenderQueue();
   const toolCallRegistry = new Map<string, ServerToolCall>();

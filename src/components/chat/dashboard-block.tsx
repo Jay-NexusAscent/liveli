@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { ArrowRightIcon, DashboardIcon } from "@/components/icons";
+import type { WorkspaceSettings } from "@/lib/workspace-settings";
 import { ChartRenderer } from "./chart-renderer";
 
 import type { ColSpan } from "@/lib/dashboards/types";
@@ -18,6 +19,8 @@ interface DashboardBlockProps {
   description?: string;
   dashboardId: string;
   charts: DashboardChart[];
+  /** Workspace regional preferences threaded down to ChartRenderer. */
+  settings?: WorkspaceSettings;
 }
 
 /**
@@ -55,7 +58,7 @@ function isKpiChart(chart: DashboardChart): boolean {
   return spec?.series?.[0]?.type === "kpi";
 }
 
-export function DashboardBlock({ title, description, dashboardId, charts }: DashboardBlockProps) {
+export function DashboardBlock({ title, description, dashboardId, charts, settings }: DashboardBlockProps) {
   const sortedCharts = [...charts].sort((a, b) => a.order - b.order);
   const kpiCharts = sortedCharts.filter(isKpiChart);
   const otherCharts = sortedCharts.filter((c) => !isKpiChart(c));
@@ -88,7 +91,7 @@ export function DashboardBlock({ title, description, dashboardId, charts }: Dash
               <div className="mb-2 text-[11px] font-medium uppercase tracking-wider text-text-tertiary">
                 {chart.title}
               </div>
-              <ChartRenderer spec={chart.spec} height={90} />
+              <ChartRenderer spec={chart.spec} height={90} settings={settings} />
             </div>
           ))}
         </div>

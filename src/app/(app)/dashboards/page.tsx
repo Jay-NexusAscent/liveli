@@ -16,6 +16,10 @@ import { FilterBar } from "@/components/dashboards/filter-bar";
 import { ChartRenderer } from "@/components/chat/chart-renderer";
 import { EmptyState } from "@/components/ui/empty-state";
 import { defaultFilterValues } from "@/lib/dashboards/filter-defaults";
+import {
+  DEFAULT_WORKSPACE_SETTINGS,
+  type WorkspaceSettings,
+} from "@/lib/workspace-settings";
 import type {
   ChartDataMapping,
   ColSpan,
@@ -215,6 +219,13 @@ export default function DashboardsPage() {
   // Currently-fullscreened chart or dashboard, or null. Single piece of
   // state so only one fullscreen view can be open at a time.
   const [fullscreen, setFullscreen] = useState<FullscreenContent | null>(null);
+  // Workspace regional preferences — drives currency / locale /
+  // timezone in every chart on this page (inline tiles + fullscreen
+  // overlay). Defaults render the first paint; the GET below replaces
+  // them with the customer's saved values once the workspace doc loads.
+  const [settings, setSettings] = useState<WorkspaceSettings>(
+    DEFAULT_WORKSPACE_SETTINGS
+  );
 
   // ─── filter state per dashboard ───────────────────────────────────
   //
@@ -271,10 +282,21 @@ export default function DashboardsPage() {
   useEffect(() => {
     (async () => {
       try {
-        const [chartsRes, dashRes] = await Promise.all([
+        const [chartsRes, dashRes, settingsRes] = await Promise.all([
           fetch("/api/charts"),
           fetch("/api/dashboards"),
+          fetch("/api/workspaces/settings"),
         ]);
+        if (settingsRes.ok) {
+          try {
+            const json = (await settingsRes.json()) as {
+              settings?: WorkspaceSettings;
+            };
+            if (json.settings) setSettings(json.settings);
+          } catch {
+            // ignore — chart renderers fall back to defaults
+          }
+        }
         if (chartsRes.ok) setCharts((await chartsRes.json()).items ?? []);
         if (dashRes.ok) {
           // Hydrate the server-side dashboards with stable client-side
@@ -708,6 +730,7 @@ export default function DashboardsPage() {
                           spec={c.spec}
                           colSpan={c.colSpan ?? DEFAULT_COL_SPAN}
                           renderError={c._renderError}
+                          settings={settings}
                           onExpand={() =>
                             setFullscreen({
                               kind: "chart",
@@ -744,6 +767,7 @@ export default function DashboardsPage() {
                 key={c.id}
                 title={c.title}
                 spec={c.spec}
+                settings={settings}
                 onExpand={() =>
                   setFullscreen({
                     kind: "chart",
@@ -772,6 +796,7 @@ export default function DashboardsPage() {
         content={fullscreen}
         onClose={() => setFullscreen(null)}
         onEdit={getFullscreenEditHandler(fullscreen, charts, openEditInChat)}
+        settings={settings}
       />
     </div>
   );
@@ -846,6 +871,7 @@ function SortableChartTile({
   onExpand,
   onResize,
   renderError,
+  settings,
 }: {
   id: string;
   title: string;
@@ -855,6 +881,7 @@ function SortableChartTile({
   onResize: (size: ColSpan) => void;
   /** Last /render error for this chart, if any. The displayed spec is the previous render's output. */
   renderError?: string;
+  settings?: WorkspaceSettings;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id });
@@ -876,6 +903,7 @@ function SortableChartTile({
         renderError={renderError}
         onExpand={onExpand}
         compact={colSpan === "extra-small"}
+        settings={settings}
         dragHandle={
           <button
             type="button"
@@ -986,6 +1014,7 @@ function ChartTile({
   sizePicker,
   renderError,
   compact = false,
+  settings,
 }: {
   title: string;
   spec: unknown;
@@ -1012,6 +1041,8 @@ function ChartTile({
    * or larger.
    */
   compact?: boolean;
+  /** Workspace regional preferences (currency/locale/timezone). */
+  settings?: WorkspaceSettings;
 }) {
   return (
     <div className="card-elevated flex h-full flex-col overflow-hidden">
@@ -1064,7 +1095,7 @@ function ChartTile({
             </span>
           </div>
         )}
-        <ChartRenderer spec={spec} height={compact ? 110 : 260} />
+        <ChartRenderer spec={spec} height={compact ? 110 : 260} settings={settings} />
       </div>
     </div>
   );

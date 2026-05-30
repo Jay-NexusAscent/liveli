@@ -10,6 +10,10 @@ import { TableBlock } from "./table-block";
 import { DashboardBlock } from "./dashboard-block";
 import { InsightProposalsBlock } from "./insight-proposals-block";
 import type { ColSpan } from "@/lib/dashboards/types";
+import {
+  DEFAULT_WORKSPACE_SETTINGS,
+  type WorkspaceSettings,
+} from "@/lib/workspace-settings";
 
 type DashboardChart = {
   order: number;
@@ -99,7 +103,10 @@ interface EditContext {
   charts?: Array<{ order?: number; title: string; spec: unknown }>;
 }
 
-export function ChatWindow({ initialChatId }: { initialChatId?: string } = {}) {
+export function ChatWindow({
+  initialChatId,
+  settings = DEFAULT_WORKSPACE_SETTINGS,
+}: { initialChatId?: string; settings?: WorkspaceSettings } = {}) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [chatId, setChatId] = useState<string | undefined>(initialChatId);
   // Prefill from sessionStorage — used by the /insights "Query further"
@@ -344,6 +351,7 @@ export function ChatWindow({ initialChatId }: { initialChatId?: string } = {}) {
                   message={m}
                   chatId={chatId}
                   datasetNames={datasetNames}
+                  settings={settings}
                 />
               ))}
               {streaming && (
@@ -434,10 +442,12 @@ function MessageItem({
   message,
   chatId,
   datasetNames,
+  settings,
 }: {
   message: Message;
   chatId?: string;
   datasetNames?: Record<string, string>;
+  settings?: WorkspaceSettings;
 }) {
   if (message.role === "user") {
     const text = message.blocks
@@ -480,6 +490,7 @@ function MessageItem({
               title={b.title}
               spec={b.spec}
               chatId={chatId}
+              settings={settings}
             />
           );
         }
@@ -494,6 +505,7 @@ function MessageItem({
               title={b.title}
               description={b.description}
               charts={b.charts}
+              settings={settings}
             />
           );
         }
