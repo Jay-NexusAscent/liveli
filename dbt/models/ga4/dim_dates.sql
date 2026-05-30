@@ -14,19 +14,30 @@
 -- Adds 365 days forward to allow joining to forecasts / projections
 -- without breaking the join.
 
+-- Bounds come from website_overview, not traffic_sources: the latter
+-- carries source/medium dimensions and is subject to GA4 low-traffic
+-- thresholding, so it can be empty (it is, for this customer). An empty
+-- bounds source collapses min/max to NULL → coalesce to today → a spine
+-- that starts today and misses all historical data. website_overview has
+-- no source dimensions, isn't thresholded, and is the reliably-populated
+-- one-row-per-day table — the correct basis for the spine's date range.
 with bounds as (
     select
         coalesce(min(event_date), current_date())                     as start_date,
         date_add(coalesce(max(event_date), current_date()), interval 365 day) as end_date
-    from {{ ref('stg_ga4__traffic_sources') }}
+    from {{ ref('stg_ga4__website_overview') }}
 ),
 
+-- Generate the spine inline with GENERATE_DATE_ARRAY rather than the
+-- dbt_utils.date_spine macro: that macro wraps its output in its own
+-- WITH clause, and when inlined as this CTE BigQuery loses visibility of
+-- the outer `bounds` CTE, falling back to treating it as a physical table
+-- ("Table 'bounds' must be qualified with a dataset"). Cross-joining the
+-- single-row bounds CTE to the unnested array keeps `bounds` in scope.
 date_spine as (
-    {{ dbt_utils.date_spine(
-        datepart="day",
-        start_date="(select start_date from bounds)",
-        end_date="(select end_date from bounds)"
-    ) }}
+    select date_day
+    from bounds,
+         unnest(generate_date_array(start_date, end_date, interval 1 day)) as date_day
 )
 
 select
