@@ -495,7 +495,7 @@ function MessageItem({
           );
         }
         if (b.type === "table") {
-          return <TableBlock key={i} rows={b.rows} />;
+          return <TableBlock key={i} rows={b.rows} settings={settings} />;
         }
         if (b.type === "dashboard") {
           return (

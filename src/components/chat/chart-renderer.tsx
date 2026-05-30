@@ -5,6 +5,10 @@ import {
   DEFAULT_WORKSPACE_SETTINGS,
   type WorkspaceSettings,
 } from "@/lib/workspace-settings";
+import {
+  formatDateWithToken,
+  formatNumberWithToken,
+} from "@/lib/workspace-format";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
@@ -129,7 +133,7 @@ function KpiTile({
     hasDelta && series.format === "percent"
       ? `${(series.delta as number) > 0 ? "+" : ""}${(series.delta as number).toFixed(1)}%`
       : hasDelta
-      ? `${(series.delta as number) > 0 ? "+" : ""}${abbreviateNumber(series.delta as number)}`
+      ? `${(series.delta as number) > 0 ? "+" : ""}${abbreviateNumber(series.delta as number, settings)}`
       : null;
 
   return (
@@ -143,9 +147,11 @@ function KpiTile({
       <div
         className="w-full max-w-full truncate text-[36px] font-semibold tracking-tight text-text-primary font-heading tabular-nums leading-none"
         // title attribute exposes the full unformatted number for
-        // accessibility / user hover-to-verify use cases. Locale-aware
-        // so users in en-US / en-IN etc. see their expected separators.
-        title={value.toLocaleString(settings.agentLocale)}
+        // accessibility / user hover-to-verify use cases. Honors the
+        // workspace numberFormat token explicitly (the title is for
+        // sighted hover + screen readers — both benefit from the user's
+        // chosen separator convention, not the locale default).
+        title={formatNumberWithToken(value, settings.numberFormat)}
       >
         {formatted}
       </div>
@@ -190,14 +196,28 @@ function KpiTile({
  * Decimal count varies by magnitude — bigger values get 1 decimal
  * (124.6K reads cleaner than 124K), smaller chunky values get 2
  * (6.96M is more precise than 7M).
+ *
+ * Honors the workspace's numberFormat token so a user on "1.234,56"
+ * sees "6,96M" instead of "6.96M" — `Intl` defaults to locale
+ * convention, which would silently override the explicit token. See
+ * `lib/workspace-format.ts` for the trade-off rationale.
  */
-function abbreviateNumber(n: number): string {
+function abbreviateNumber(n: number, settings: WorkspaceSettings): string {
   const abs = Math.abs(n);
-  if (abs >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`;
-  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (abs >= 100_000) return `${Math.round(n / 1_000).toLocaleString()}K`;
-  if (abs >= 10_000) return `${(n / 1_000).toFixed(1)}K`;
-  return n.toLocaleString();
+  const t = settings.numberFormat;
+  if (abs >= 1_000_000_000) {
+    return `${formatNumberWithToken(n / 1_000_000_000, t, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}B`;
+  }
+  if (abs >= 1_000_000) {
+    return `${formatNumberWithToken(n / 1_000_000, t, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}M`;
+  }
+  if (abs >= 100_000) {
+    return `${formatNumberWithToken(Math.round(n / 1_000), t)}K`;
+  }
+  if (abs >= 10_000) {
+    return `${formatNumberWithToken(n / 1_000, t, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}K`;
+  }
+  return formatNumberWithToken(n, t);
 }
 
 function formatKpiValue(
@@ -221,18 +241,19 @@ function formatKpiValue(
     return `${display.toFixed(1)}%`;
   }
   if (format === "currency") {
-    // Resolve currency: per-series override (e.g. connector-reported)
-    // takes precedence, then workspace setting. Use the locale's
-    // currency symbol via Intl, so a USD KPI on an en-GB workspace
-    // shows "US$1.2M" rather than the bare prefix.
+    // Resolve currency: per-series override (e.g. connector-reported
+    // via make_chart) takes precedence, then workspace setting. Use
+    // the locale's currency symbol via Intl, so a USD KPI on an en-GB
+    // workspace shows "US$1.2M" rather than the bare prefix.
     const currency = currencyOverride ?? settings.currency;
-    const abbreviated = abbreviateNumber(value);
+    const abbreviated = abbreviateNumber(value, settings);
     let symbol = currency; // safe fallback
     try {
       // Render a tiny value purely to extract the currency symbol the
       // locale would use, then prefix our already-abbreviated number.
       // Doing it this way keeps the K / M / B abbreviation logic shared
-      // with the non-currency code path.
+      // with the non-currency code path AND honors the user's
+      // numberFormat token via `abbreviateNumber`.
       const formatter = new Intl.NumberFormat(settings.agentLocale, {
         style: "currency",
         currency,
@@ -248,7 +269,7 @@ function formatKpiValue(
     }
     return `${symbol}${abbreviated}`;
   }
-  const abbreviated = abbreviateNumber(value);
+  const abbreviated = abbreviateNumber(value, settings);
   return unit ? `${abbreviated}${unit}` : abbreviated;
 }
 
@@ -333,12 +354,17 @@ function polishChartSpec(
 }
 
 /**
- * Compact axis-label format for ISO-timestamp categories. Drops the
- * year (most time-series live inside a single year and the tooltip
- * still carries full context); drops seconds and milliseconds (noise
- * at chart-axis granularity). Locale-aware so users get their natural
- * month-name conventions ("Apr" en-US vs "Apr" en-GB happen to match,
- * but other locales differ).
+ * Format an ISO-timestamp axis label per the workspace's dateFormat
+ * token, in the workspace timezone. Honors the explicit token rather
+ * than a locale convention so a user on `en-GB` who picks
+ * "yyyy-mm-dd" sees ISO axes instead of "01/04". For full timestamps
+ * (anything with a `T` component) we append HH:MM in 24-hour form so
+ * the time component still survives the trim.
+ *
+ * Date-only strings don't get a timezone applied: they're DAY-level
+ * values and any timezone shift would push the calendar day east/
+ * west of UTC, which surprises users. Timestamp strings DO get the
+ * customer's timezone so 00:00 UTC reads in their local zone.
  *
  * Bails out on non-strings or non-ISO values — anything that doesn't
  * match the strict regex passes through unchanged so non-time
@@ -348,26 +374,18 @@ function formatIsoAxisLabel(value: unknown, settings: WorkspaceSettings): string
   if (typeof value !== "string" || !ISO_DATE_RE.test(value)) {
     return String(value);
   }
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-  // Date-only string → just show "Apr 1"; full timestamp → "Apr 1, 00:00".
   const isDateOnly = !value.includes("T");
-  return new Intl.DateTimeFormat(
-    settings.agentLocale,
-    isDateOnly
-      ? { month: "short", day: "numeric" }
-      : {
-          month: "short",
-          day: "numeric",
-          hour: "2-digit",
-          minute: "2-digit",
-          // Date-only labels don't need a timezone — they're DAY-level
-          // and timezone conversion would shift them by a calendar day
-          // for users east/west of UTC. Timestamp labels get the
-          // customer's timezone applied so 00:00 UTC reads correctly.
-          timeZone: settings.timezone,
-        }
-  ).format(d);
+  return formatDateWithToken(
+    value,
+    settings.dateFormat,
+    // For date-only values, use UTC so the calendar day is preserved
+    // regardless of the workspace timezone — otherwise an Asia/Tokyo
+    // workspace would shift "2026-04-01" to "2026-04-02" at parse
+    // time. The dateFormat helper passes this through to Intl as the
+    // timezone arg.
+    isDateOnly ? "UTC" : settings.timezone,
+    { includeTime: !isDateOnly, locale: settings.agentLocale }
+  );
 }
 
 /**
