@@ -194,6 +194,16 @@ resource "google_cloud_run_v2_job" "metadata_agent" {
           name  = "GCP_PROJECT_ID"
           value = var.project_id
         }
+        # Pin the metadata agent to Gemini Flash. LIVELI-107 switched
+        # gcp.vertexModel's global default to claude-sonnet-4-6 for the
+        # chat agent's quality, but the metadata agent's job is simpler
+        # (one-sentence column descriptions from samples) and runs in
+        # europe-west1 where Sonnet isn't enabled in this project's
+        # Model Garden. Flash is fit-for-purpose and ~10× cheaper here.
+        env {
+          name  = "VERTEX_AI_MODEL"
+          value = "gemini-2.5-flash"
+        }
 
         resources {
           limits = {
