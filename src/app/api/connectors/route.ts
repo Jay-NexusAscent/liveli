@@ -6,11 +6,13 @@ import { dispatchMetadataEnrichment } from "@/lib/metadata/dispatcher";
 import { dispatchDbtRun } from "@/lib/dbt/dispatcher";
 
 export const runtime = "nodejs";
-// 300s budget covers the post-response metadata-agent run scheduled
-// via `after()` from the dispatcher. The HTTP response itself still
-// returns in <5s; the extended budget is spent in the background
-// while the agent enriches a freshly-synced connector.
-export const maxDuration = 300;
+// Both the metadata-enrichment and dbt dispatchers now only LAUNCH
+// Cloud Run Jobs (a fast API call) — the actual long-running work
+// happens in those jobs, not in this request. So the previous 300s
+// budget (which existed for the old in-process metadata agent) is no
+// longer needed; reconcile + pre-flight gate + job launches finish in
+// a few seconds.
+export const maxDuration = 30;
 
 interface ConnectorDoc {
   status?: string;

@@ -1,6 +1,6 @@
-import { after } from "next/server";
+import { runConnectorJob } from "@/lib/cloud-run";
+import { cloudComputeRegionForResidency } from "@/lib/gcp";
 import { findUncoveredMetadata } from "./pre-flight";
-import { runMetadataAgent } from "./agent";
 
 /**
  * Connector types whose schemas are well-known and can be enriched
@@ -42,9 +42,11 @@ export interface DispatchInput {
  *   - METADATA_ENRICHMENT_MODE=dry-run: runs the pre-flight gate and
  *     logs what would happen. No writes.
  *   - METADATA_ENRICHMENT_MODE=live: runs the pre-flight gate and,
- *     if anything is uncovered, dispatches the metadata agent via
- *     `next/server` `after()` so it runs in the background after the
- *     HTTP response has been sent. Caller is unblocked immediately.
+ *     if anything is uncovered, launches the metadata-agent Cloud Run
+ *     Job (region-matched to the workspace residency). runJob returns
+ *     as soon as the execution is created — the agent runs in its own
+ *     process under the least-privileged liveli-agent-metadata SA, so
+ *     the /api/connectors response isn't blocked on the agent.
  *
  * Tenancy: every downstream component (pre-flight, writers, tools)
  * verifies dataset isolation. The dispatcher just routes to them.
@@ -121,9 +123,6 @@ export async function dispatchMetadataEnrichment(
 
     if (mode === "dry-run") return;
 
-    // Live mode. Hand the actual enrichment to `after()` so it runs
-    // post-response — the user's connectors list returns immediately
-    // and the function keeps running until the agent finishes.
     if (isKnownSchema) {
       // Known-schema path lands in a follow-up. Don't accidentally
       // run the LLM agent on a connector type that should have used
@@ -135,28 +134,35 @@ export async function dispatchMetadataEnrichment(
       return;
     }
 
-    after(async () => {
-      const start = Date.now();
-      console.log("[metadata] agent run starting", {
-        connectorId: input.connectorId,
-        bqDataset: input.bqDataset,
-      });
-      try {
-        await runMetadataAgent({
-          clientId: input.clientId,
-          workspaceId: input.workspaceId,
-          connectorId: input.connectorId,
-          connectorType: input.connectorType,
-          bqDataset: input.bqDataset!,
-          bqLocation: input.bqLocation!,
-        });
-      } catch (err) {
-        console.error("[metadata] agent run threw", {
-          connectorId: input.connectorId,
-          error: err instanceof Error ? err.message : String(err),
-          durationMs: Date.now() - start,
-        });
-      }
+    // Live mode. Launch the metadata-agent Cloud Run Job, region-matched
+    // to the workspace residency (same EU/US suffix scheme as connector
+    // jobs). The agent runs in its own process under the least-privileged
+    // liveli-agent-metadata SA, with a 900s job timeout (vs the 300s
+    // Vercel function ceiling the old after() path was capped at).
+    // runJob returns as soon as the execution is created, so we don't
+    // block the connectors-list response on the (minutes-long) run.
+    const residency =
+      input.bqLocation === "US" || input.bqLocation === "EU"
+        ? input.bqLocation
+        : undefined;
+    const { region, suffix } = cloudComputeRegionForResidency(residency);
+    const jobName = `metadata-agent-${suffix}`;
+    const { executionName } = await runConnectorJob(jobName, region, {
+      CLIENT_ID: input.clientId,
+      WORKSPACE_ID: input.workspaceId,
+      CONNECTOR_ID: input.connectorId,
+      CONNECTOR_TYPE: input.connectorType,
+      BQ_DATASET: input.bqDataset,
+      BQ_LOCATION: input.bqLocation,
+    });
+    console.log("[metadata] launched enrichment job", {
+      connectorId: input.connectorId,
+      jobName,
+      region,
+      executionName,
+      targetTables: uncovered.tables.length,
+      targetColumns: uncovered.columns.length,
+      needsDatasetDescription: uncovered.datasetDescriptionMissing,
     });
   } catch (err) {
     console.error("[metadata] dispatcher failed", {

@@ -37,8 +37,8 @@ import { cn } from "@/lib/utils";
 const HEADLINES = [
   { lead: "Talk To Your", accent: "Data." },
   { lead: "Fully Managed Agentic", accent: "Data Platform." },
-  { lead: "Your Warehouse,", accent: "Already Built." },
   { lead: "No Code.", accent: "Just Answers." },
+  { lead: "The Future Is Agentic.", accent: "The Future Is Liveli." },
 ];
 
 const INTERVAL_MS = 4500;
