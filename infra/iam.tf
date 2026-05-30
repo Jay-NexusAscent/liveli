@@ -193,6 +193,8 @@ resource "google_project_iam_custom_role" "metadata_agent_bq" {
   description = "Read + schema/description-write for the metadata agent. No row mutation on customer data."
   permissions = [
     "bigquery.jobs.create",
+    "bigquery.datasets.get",    # dataset.getTables(), dataset.getMetadata() — pre-flight gate
+    "bigquery.datasets.update", # write dataset-level description (finalizer step)
     "bigquery.tables.get",
     "bigquery.tables.getData",
     "bigquery.tables.list",
