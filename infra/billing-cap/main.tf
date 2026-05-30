@@ -282,10 +282,15 @@ resource "google_cloudfunctions2_function" "disable_billing" {
   }
 
   event_trigger {
-    trigger_region = var.region
-    event_type     = "google.cloud.pubsub.topic.v1.messagePublished"
-    pubsub_topic   = google_pubsub_topic.budget_alerts.id
-    retry_policy   = "RETRY_POLICY_RETRY" # at-least-once, idempotent function
+    trigger_region        = var.region
+    event_type            = "google.cloud.pubsub.topic.v1.messagePublished"
+    pubsub_topic          = google_pubsub_topic.budget_alerts.id
+    retry_policy          = "RETRY_POLICY_RETRY" # at-least-once, idempotent function
+    service_account_email = google_service_account.killswitch_runtime.email
+    # ^ without this, Eventarc uses a default identity that lacks run.invoker
+    # on the function's Cloud Run service, so every invocation is rejected
+    # with 401 "principal lacks run.routes.invoke permission" and the
+    # function never runs.
   }
 
   labels = local.common_labels
