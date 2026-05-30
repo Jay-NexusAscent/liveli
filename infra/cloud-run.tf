@@ -144,3 +144,79 @@ resource "google_cloud_run_v2_job" "connector" {
     ignore_changes = [template[0].template[0].containers[0].image]
   }
 }
+
+# ── Metadata enrichment agent jobs ────────────────────────────────
+# One per residency region (europe-west1 / us-central1), same EU/US
+# suffix scheme as the connector jobs so the dispatcher can build the
+# name from cloudComputeRegionForResidency(workspace.bqLocation).
+#
+# Unlike the Meltano connectors (Python images), this is a Node image
+# that runs the TypeScript metadata agent (scripts/metadata-agent-job).
+# Per-invocation context (CLIENT_ID, WORKSPACE_ID, CONNECTOR_ID,
+# CONNECTOR_TYPE, BQ_DATASET, BQ_LOCATION) is injected as env overrides
+# at run time by the dispatcher in src/lib/metadata/dispatcher.ts.
+#
+# Runs as liveli-agent-metadata — the least-privileged SA. The SA
+# attaches natively here (metadata server provides creds via ADC), so
+# the agent needs no impersonation code; ensureGcpAuth() no-ops off
+# Vercel and the SDKs discover the attached SA automatically.
+#
+# 900s timeout: with MAX_TURNS=150 in agent.ts a full-schema run can
+# take several minutes — comfortably beyond the 300s Vercel function
+# ceiling the old after() path was capped at. This is the core reason
+# for the migration.
+resource "google_cloud_run_v2_job" "metadata_agent" {
+  for_each = local.residency_regions
+
+  name     = "metadata-agent-${each.key}"
+  location = each.value
+  project  = var.project_id
+
+  # Same rationale as the connector jobs — allows Terraform to remove
+  # the job later without a two-step protection-disable apply.
+  deletion_protection = false
+
+  template {
+    template {
+      service_account = google_service_account.metadata_agent.email
+      max_retries     = 1
+      timeout         = "900s"
+
+      containers {
+        # Placeholder — replaced by the deploy-metadata-agent workflow.
+        image = "us-docker.pkg.dev/cloudrun/container/hello"
+
+        # Static, project-wide env. Per-invocation context (CLIENT_ID,
+        # WORKSPACE_ID, etc.) is injected as overrides by the dispatcher.
+        # No VERCEL var — ensureGcpAuth() keys off its absence to skip
+        # the OIDC path and use the natively attached SA via ADC.
+        env {
+          name  = "GCP_PROJECT_ID"
+          value = var.project_id
+        }
+
+        resources {
+          limits = {
+            # I/O-bound (waits on Vertex + BQ); modest compute is fine.
+            cpu    = "1"
+            memory = "2Gi"
+          }
+        }
+      }
+    }
+  }
+
+  labels = merge(local.common_labels, {
+    residency = each.key
+  })
+
+  depends_on = [
+    google_project_service.enabled,
+    google_artifact_registry_repository.connectors,
+    google_service_account.metadata_agent,
+  ]
+
+  lifecycle {
+    ignore_changes = [template[0].template[0].containers[0].image]
+  }
+}
