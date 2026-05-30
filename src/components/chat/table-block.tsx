@@ -1,9 +1,27 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import {
+  DEFAULT_WORKSPACE_SETTINGS,
+  type WorkspaceSettings,
+} from "@/lib/workspace-settings";
+import {
+  formatCurrencyWithToken,
+  formatDateWithToken,
+  formatNumberWithToken,
+  isCurrencyColumn,
+} from "@/lib/workspace-format";
 
 interface TableBlockProps {
   rows: Record<string, unknown>[];
+  /**
+   * Workspace regional preferences — drives the locale, timezone,
+   * dateFormat token, numberFormat token, and currency used when
+   * rendering individual cells. Optional so legacy callers (e.g.
+   * stored chat replays without a settings context) still render with
+   * defaults rather than crashing.
+   */
+  settings?: WorkspaceSettings;
 }
 
 /**
@@ -14,8 +32,19 @@ interface TableBlockProps {
  * Sort + truncation defaults are tuned for the typical agent reply
  * (10–100 rows, 4–10 cols). Larger results are still rendered but the
  * fixed max-height contains the scroll.
+ *
+ * Cell formatting follows the workspace settings:
+ *   - ISO date / timestamp cells → `dateFormat` token, `timezone`
+ *   - Numeric cells in a "currency-named" column → workspace `currency`
+ *     + `numberFormat` token (see `isCurrencyColumn` heuristic)
+ *   - All other numeric cells → `numberFormat` token
+ *
+ * The column-type signal is derived from the column NAME, since
+ * run_sql results don't carry BigQuery type metadata down to the
+ * client. A separate enhancement would propagate types through the
+ * wire format; in the meantime, name-shape covers the common cases.
  */
-export function TableBlock({ rows }: TableBlockProps) {
+export function TableBlock({ rows, settings = DEFAULT_WORKSPACE_SETTINGS }: TableBlockProps) {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
@@ -25,6 +54,14 @@ export function TableBlock({ rows }: TableBlockProps) {
     for (const row of rows) for (const k of Object.keys(row)) cols.add(k);
     return Array.from(cols);
   }, [rows]);
+
+  // Precompute which columns are currency-typed so we don't re-run the
+  // regex per cell. Stable across rows because columns are stable.
+  const currencyColumns = useMemo(() => {
+    const out = new Set<string>();
+    for (const col of columns) if (isCurrencyColumn(col)) out.add(col);
+    return out;
+  }, [columns]);
 
   const sortedRows = useMemo(() => {
     if (!sortKey) return rows;
@@ -91,7 +128,7 @@ export function TableBlock({ rows }: TableBlockProps) {
                     key={col}
                     className="whitespace-nowrap px-3 py-2 font-mono tabular-nums text-text-primary"
                   >
-                    {formatCell(row[col])}
+                    {formatCell(row[col], col, settings, currencyColumns)}
                   </td>
                 ))}
               </tr>
@@ -142,58 +179,49 @@ const ISO_DATE_RE =
 
 /**
  * Cell renderer. Turns raw run_sql values into a customer-friendly
- * string:
- *   - ISO timestamps get formatted via Intl.DateTimeFormat in the
- *     user's locale (avoids showing raw "2026-05-18T11:55:00.000Z"
- *     to non-technical users)
- *   - Date-only ISO ("2026-05-18") drops the time portion
- *   - null/undefined become an em-dash
- *   - Objects/arrays JSON-stringify (rare; sanitizeBqValue usually
- *     primitivises ahead of us)
+ * string per the workspace settings:
+ *   - ISO timestamps  → `formatDateWithToken` (respects dateFormat
+ *     token and timezone). Date-only strings (no `T` component) get
+ *     the date portion only; full timestamps add HH:MM.
+ *   - Numeric values in a currency-named column → `formatCurrency-
+ *     WithToken` (workspace currency + numberFormat token; locale
+ *     drives symbol placement).
+ *   - Other numeric values → `formatNumberWithToken` (explicit
+ *     separator pick).
+ *   - null/undefined → em-dash.
+ *   - Objects/arrays → JSON (rare; sanitizeBqValue usually
+ *     primitivises ahead of us).
  *
- * The Intl format is intentionally locale-aware (`undefined` for the
- * first arg) — UK users see "18 May 2026, 11:55", US users see
- * "May 18, 2026, 11:55". Seconds and milliseconds are dropped on
- * purpose: in 99% of agent-generated tables the second-level
- * precision is noise, and dropping it keeps cells narrow.
+ * Trade-off note on currency: `Intl` couples currency-symbol
+ * placement to the locale, so locale ultimately drives the symbol's
+ * position even when the user picks a numberFormat token that
+ * disagrees. The digit separators inside the formatted currency
+ * string DO match the user's pick — see `formatCurrencyWithToken`.
  */
-function formatCell(value: unknown): string {
+function formatCell(
+  value: unknown,
+  column: string,
+  settings: WorkspaceSettings,
+  currencyColumns: Set<string>
+): string {
   if (value === null || value === undefined) return "—";
   if (typeof value === "string" && ISO_DATE_RE.test(value)) {
-    const d = new Date(value);
-    if (!Number.isNaN(d.getTime())) {
-      const isDateOnly = !value.includes("T");
-      return new Intl.DateTimeFormat(
-        undefined,
-        isDateOnly
-          ? { year: "numeric", month: "short", day: "numeric" }
-          : {
-              year: "numeric",
-              month: "short",
-              day: "numeric",
-              hour: "2-digit",
-              minute: "2-digit",
-            }
-      ).format(d);
-    }
-  }
-  // Numeric formatting: round IEEE-754 noise to 2 decimals max, then
-  // apply locale thousands separator. Examples:
-  //   18197.840000000004 → "18,197.84"
-  //   15825.520000000002 → "15,825.52"
-  //   16596.27           → "16,596.27"
-  //   1000000            → "1,000,000"
-  //   42                 → "42"
-  // Integer-valued floats render without decimals; fractional values
-  // keep up to 2 decimal places (matches typical financial display
-  // conventions). We do NOT abbreviate (M/K/B) here because table
-  // cells should be precise — abbreviation is for KPI tiles only.
-  if (typeof value === "number" && Number.isFinite(value)) {
-    const isInteger = Number.isInteger(value);
-    return value.toLocaleString(undefined, {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: isInteger ? 0 : 2,
+    const isDateOnly = !value.includes("T");
+    return formatDateWithToken(value, settings.dateFormat, settings.timezone, {
+      includeTime: !isDateOnly,
+      locale: settings.agentLocale,
     });
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (currencyColumns.has(column)) {
+      return formatCurrencyWithToken(
+        value,
+        settings.currency,
+        settings.numberFormat,
+        settings.agentLocale
+      );
+    }
+    return formatNumberWithToken(value, settings.numberFormat);
   }
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
