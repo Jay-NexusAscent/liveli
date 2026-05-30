@@ -127,8 +127,17 @@ jobs:
           fi
 
           # Case 5 (typical): only the connectors with changes in the push.
+          #
+          # `{ grep ... || true; }` is critical. With `set -euo pipefail`
+          # in effect, an unmatched grep returns exit 1, pipefail
+          # propagates it, set -e kills the script — and we never reach
+          # emit_matrix or the dbt-runner mapping below. This bit on the
+          # first dbt-only push to main (PR #107), where the diff had
+          # zero `connectors/**` paths. Latent bug present since the
+          # workflow was written; PR #106's `dbt/**` trigger surfaced it
+          # by enabling pushes with no connector-dir changes.
           CHANGED=$(git diff --name-only "$BEFORE" "$SHA" \
-            | grep "^connectors/" \
+            | { grep "^connectors/" || true; } \
             | awk -F/ '{print $2}' \
             | sort -u)
 
@@ -200,11 +209,13 @@ jobs:
           # dir as context (self-contained). Keeping the dbt project
           # at repo root (not inside connectors/dbt-runner/) matters
           # for dev UX — IDE dbt extensions expect that location.
-          if [ "${{ matrix.connector }}" = "dbt-runner" ]; then
+          # dbt-runner + metadata-agent both need repo-root build context
+          # (the former for dbt/, the latter for src/scripts/tsconfig/lockfile).
+          if [ "${{ matrix.connector }}" = "dbt-runner" ] || [ "${{ matrix.connector }}" = "metadata-agent" ]; then
             docker build \
               -t "$IMAGE_URI" \
               -t "$AR_REGION-docker.pkg.dev/$PROJECT_ID/$REPO/${{ matrix.connector }}:latest" \
-              -f connectors/dbt-runner/Dockerfile \
+              -f connectors/${{ matrix.connector }}/Dockerfile \
               .
           else
             docker build \
