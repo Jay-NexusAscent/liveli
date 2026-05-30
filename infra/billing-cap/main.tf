@@ -401,9 +401,10 @@ resource "google_logging_metric" "threshold_crossed" {
   EOT
 
   metric_descriptor {
-    metric_kind = "DELTA"
-    value_type  = "INT64"
-    unit        = "1"
+    metric_kind  = "DELTA"
+    value_type   = "INT64"
+    unit         = "1"
+    display_name = "Liveli budget threshold crossed"
 
     labels {
       key         = "threshold"
@@ -503,9 +504,10 @@ resource "google_logging_metric" "function_errors" {
   EOT
 
   metric_descriptor {
-    metric_kind = "DELTA"
-    value_type  = "INT64"
-    unit        = "1"
+    metric_kind  = "DELTA"
+    value_type   = "INT64"
+    unit         = "1"
+    display_name = "Liveli kill-switch function error"
   }
 }
 
