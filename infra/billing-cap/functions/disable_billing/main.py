@@ -5,20 +5,18 @@ This Cloud Function (gen 2, Python 3.12) is triggered by Pub/Sub messages
 from a Cloud Billing budget's all_updates_rule. Adapted from Google's
 reference at https://cloud.google.com/billing/docs/how-to/notify.
 
-Behaviour:
-    * Logs every invocation at INFO with cost/budget/ratio detail.
-    * Emits a structured "threshold_crossed" log entry at WARNING whenever
-      the budget message reports an alertThresholdExceeded value — picked
-      up by a log-based metric and routed to a mobile + email alert.
-    * If costAmount >= budgetAmount, calls
-      projects.updateBillingInfo() with billing_account_name="" to
-      disassociate the target project from its billing account. This
-      stops essentially all charges within minutes.
-    * Idempotent: short-circuits if cost < budget (Pub/Sub fires for every
-      spend update, not just threshold crossings) and again if billing is
-      already disabled (at-least-once delivery means messages get redelivered).
-    * Supports DRY_RUN mode via env var — logs what it would have done
-      without actually calling updateBillingInfo. Use for end-to-end testing.
+Logging is deliberately minimal — Cloud Logging is billed per GB ingested,
+and Pub/Sub fires this function many times a day for sub-threshold spend
+updates. Only emits WARNING and above:
+
+    * WARNING "threshold_crossed" whenever the budget message reports an
+      alertThresholdExceeded value. Drives the alert metric.
+    * WARNING DRY_RUN skip — confirms the safety branch fired during tests.
+    * CRITICAL kill_switch_fired — the actual disable. Rare, important.
+    * ERROR for malformed messages / parse failures — feeds the
+      function-health alert.
+
+Sub-threshold invocations and already-disabled redeliveries return silently.
 
 Required env vars:
     TARGET_PROJECT_ID  — project ID whose billing gets disabled
@@ -46,7 +44,7 @@ from google.cloud.billing_v1.types import ProjectBillingInfo
 # this, basicConfig writes plain text to stdout and the json_fields are
 # silently dropped — the log-based metric filter on jsonPayload.*
 # never matches and no alert ever fires.
-google.cloud.logging.Client().setup_logging(log_level=logging.INFO)
+google.cloud.logging.Client().setup_logging(log_level=logging.WARNING)
 
 # Environment variables are populated by Terraform's service_config.
 # Validate at module load so a misdeployment fails fast on first invocation
@@ -90,24 +88,6 @@ def stop_billing(cloud_event: Any) -> None:
     # Guard against malformed/zero-budget messages causing div-by-zero.
     ratio = cost_amount / budget_amount if budget_amount > 0 else 0.0
 
-    # Log every invocation at INFO. This is the observability backbone —
-    # if you want to know whether the function is being called and what
-    # it's seeing, this log entry is the source of truth.
-    logging.info(
-        "Budget notification received",
-        extra={
-            "json_fields": {
-                "cost_amount": cost_amount,
-                "budget_amount": budget_amount,
-                "ratio": round(ratio, 4),
-                "threshold_exceeded": threshold_exceeded,
-                "currency_code": currency_code,
-                "target_project": TARGET_PROJECT_ID,
-                "dry_run": DRY_RUN,
-            }
-        },
-    )
-
     # Emit a structured "threshold_crossed" entry for any message that
     # represents a threshold crossing. The log-based metric named
     # billing_cap_threshold_crossed in main.tf filters on this and feeds
@@ -141,10 +121,8 @@ def stop_billing(cloud_event: Any) -> None:
     project_billing_info = _billing_client.get_project_billing_info(name=project_name)
 
     if not project_billing_info.billing_account_name:
-        logging.info(
-            "Billing already disabled — idempotent no-op.",
-            extra={"json_fields": {"target_project": TARGET_PROJECT_ID}},
-        )
+        # Already disabled — silent return. Pub/Sub at-least-once means we
+        # see redeliveries after a real fire; logging each one is just noise.
         return
 
     previous_billing_account = project_billing_info.billing_account_name
