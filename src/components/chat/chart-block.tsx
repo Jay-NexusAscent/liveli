@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import type { WorkspaceSettings } from "@/lib/workspace-settings";
 import { ChartRenderer } from "./chart-renderer";
 
 interface ChartBlockProps {
@@ -9,6 +10,8 @@ interface ChartBlockProps {
   spec: unknown;
   toolId: string;
   chatId?: string;
+  /** Workspace regional preferences threaded down to ChartRenderer. */
+  settings?: WorkspaceSettings;
 }
 
 /**
@@ -16,7 +19,7 @@ interface ChartBlockProps {
  * spec is whatever the agent emitted via make_chart — validated against
  * the Zod schema server-side so it's safe to pass through.
  */
-export function ChartBlock({ title, spec, toolId, chatId }: ChartBlockProps) {
+export function ChartBlock({ title, spec, toolId, chatId, settings }: ChartBlockProps) {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
   const save = async () => {
@@ -57,7 +60,7 @@ export function ChartBlock({ title, spec, toolId, chatId }: ChartBlockProps) {
         </button>
       </div>
       <div className="p-3">
-        <ChartRenderer spec={spec} height={320} />
+        <ChartRenderer spec={spec} height={320} settings={settings} />
       </div>
     </div>
   );

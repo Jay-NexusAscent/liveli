@@ -1,6 +1,10 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import {
+  DEFAULT_WORKSPACE_SETTINGS,
+  type WorkspaceSettings,
+} from "@/lib/workspace-settings";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 
@@ -12,6 +16,13 @@ interface SeriesLike {
   unit?: string;
   delta?: number;
   deltaLabel?: string;
+  /**
+   * Optional per-series currency override. Used when a connector
+   * reports its own currency (e.g. Stripe charges, Shopify orders) so
+   * the chart shows "$123" even if the workspace default is GBP. When
+   * absent, the workspace setting wins. ISO 4217 string.
+   */
+  currency?: string;
 }
 
 interface ChartSpecLike {
@@ -23,6 +34,13 @@ interface ChartSpecLike {
 interface ChartRendererProps {
   spec: unknown;
   height?: number;
+  /**
+   * Workspace-level regional preferences — drives currency symbol,
+   * locale-aware number formatting, and date-axis timezone. When
+   * omitted, falls back to DEFAULT_WORKSPACE_SETTINGS (GBP / Europe-
+   * London / en-GB) so legacy call sites keep working unchanged.
+   */
+  settings?: WorkspaceSettings;
 }
 
 /**
@@ -41,19 +59,23 @@ interface ChartRendererProps {
  * shouldn't mix kpi with other types, and donut-vs-pie applies to
  * the whole series array.
  */
-export function ChartRenderer({ spec, height = 320 }: ChartRendererProps) {
+export function ChartRenderer({
+  spec,
+  height = 320,
+  settings = DEFAULT_WORKSPACE_SETTINGS,
+}: ChartRendererProps) {
   const chartSpec = (spec as ChartSpecLike) ?? {};
   const firstSeries = chartSpec.series?.[0];
 
   if (firstSeries?.type === "kpi") {
-    return <KpiTile series={firstSeries} height={height} />;
+    return <KpiTile series={firstSeries} height={height} settings={settings} />;
   }
 
   // Apply universal polish to every non-KPI spec: smooth defaults on
   // line/area series + ISO-timestamp formatting on category-axis
   // labels. Donut translation runs after so it operates on a spec
   // that already has the polish baked in.
-  const polished = polishChartSpec(chartSpec);
+  const polished = polishChartSpec(chartSpec, settings);
   const firstType = polished.series?.[0]?.type;
   const echartsOption =
     firstType === "donut" || firstType === "pie"
@@ -89,9 +111,17 @@ export function ChartRenderer({ spec, height = 320 }: ChartRendererProps) {
  * Abbreviation kicks in above 10,000; smaller numbers show full
  * thousand-separated form for precision.
  */
-function KpiTile({ series, height }: { series: SeriesLike; height: number }) {
+function KpiTile({
+  series,
+  height,
+  settings,
+}: {
+  series: SeriesLike;
+  height: number;
+  settings: WorkspaceSettings;
+}) {
   const value = typeof series.data?.[0] === "number" ? (series.data[0] as number) : 0;
-  const formatted = formatKpiValue(value, series.format, series.unit);
+  const formatted = formatKpiValue(value, series.format, series.unit, series.currency, settings);
   const hasDelta = typeof series.delta === "number";
   const deltaPositive = hasDelta && (series.delta as number) > 0;
   const deltaNegative = hasDelta && (series.delta as number) < 0;
@@ -113,8 +143,9 @@ function KpiTile({ series, height }: { series: SeriesLike; height: number }) {
       <div
         className="w-full max-w-full truncate text-[36px] font-semibold tracking-tight text-text-primary font-heading tabular-nums leading-none"
         // title attribute exposes the full unformatted number for
-        // accessibility / user hover-to-verify use cases.
-        title={value.toLocaleString()}
+        // accessibility / user hover-to-verify use cases. Locale-aware
+        // so users in en-US / en-IN etc. see their expected separators.
+        title={value.toLocaleString(settings.agentLocale)}
       >
         {formatted}
       </div>
@@ -171,8 +202,10 @@ function abbreviateNumber(n: number): string {
 
 function formatKpiValue(
   value: number,
-  format?: "number" | "currency" | "percent",
-  unit?: string
+  format: "number" | "currency" | "percent" | undefined,
+  unit: string | undefined,
+  currencyOverride: string | undefined,
+  settings: WorkspaceSettings
 ): string {
   if (format === "percent") {
     // Handle both common conventions defensively:
@@ -187,10 +220,35 @@ function formatKpiValue(
     const display = value > -1 && value < 1 ? value * 100 : value;
     return `${display.toFixed(1)}%`;
   }
-  const abbreviated = abbreviateNumber(value);
   if (format === "currency") {
-    return `£${abbreviated}`;
+    // Resolve currency: per-series override (e.g. connector-reported)
+    // takes precedence, then workspace setting. Use the locale's
+    // currency symbol via Intl, so a USD KPI on an en-GB workspace
+    // shows "US$1.2M" rather than the bare prefix.
+    const currency = currencyOverride ?? settings.currency;
+    const abbreviated = abbreviateNumber(value);
+    let symbol = currency; // safe fallback
+    try {
+      // Render a tiny value purely to extract the currency symbol the
+      // locale would use, then prefix our already-abbreviated number.
+      // Doing it this way keeps the K / M / B abbreviation logic shared
+      // with the non-currency code path.
+      const formatter = new Intl.NumberFormat(settings.agentLocale, {
+        style: "currency",
+        currency,
+        maximumFractionDigits: 0,
+        minimumFractionDigits: 0,
+      });
+      const parts = formatter.formatToParts(0);
+      const sym = parts.find((p) => p.type === "currency")?.value;
+      if (sym) symbol = sym;
+    } catch {
+      // Unknown currency code or unsupported locale — fall through with
+      // the raw ISO code as the symbol.
+    }
+    return `${symbol}${abbreviated}`;
   }
+  const abbreviated = abbreviateNumber(value);
   return unit ? `${abbreviated}${unit}` : abbreviated;
 }
 
@@ -227,7 +285,10 @@ const ISO_DATE_RE =
  * round-trip through JSON.stringify) — that's fine because we run
  * this at render time on every load, not at save time.
  */
-function polishChartSpec(spec: ChartSpecLike): ChartSpecLike {
+function polishChartSpec(
+  spec: ChartSpecLike,
+  settings: WorkspaceSettings
+): ChartSpecLike {
   const out: ChartSpecLike = { ...spec };
 
   // 1. Smooth-line defaults
@@ -241,7 +302,12 @@ function polishChartSpec(spec: ChartSpecLike): ChartSpecLike {
     });
   }
 
-  // 2. ISO-timestamp axis labels
+  // 2. ISO-timestamp axis labels — bind the formatter to the
+  // workspace's locale + timezone so en-US sees "Apr 1" while en-GB
+  // sees "1 Apr", and timestamps render in the customer's chosen zone
+  // rather than the browser's local zone. Returning a closure here
+  // means the rendered axis automatically refreshes if the workspace
+  // changes settings.
   const xAxis = out.xAxis as
     | { type?: string; data?: unknown[]; axisLabel?: Record<string, unknown> }
     | undefined;
@@ -250,11 +316,13 @@ function polishChartSpec(spec: ChartSpecLike): ChartSpecLike {
       (v) => typeof v === "string" && ISO_DATE_RE.test(v)
     );
     if (hasIsoData) {
+      const localeFormatter = (value: unknown) =>
+        formatIsoAxisLabel(value, settings);
       out.xAxis = {
         ...xAxis,
         axisLabel: {
           ...(xAxis.axisLabel ?? {}),
-          formatter: formatIsoAxisLabel,
+          formatter: localeFormatter,
           hideOverlap: true,
         },
       };
@@ -276,7 +344,7 @@ function polishChartSpec(spec: ChartSpecLike): ChartSpecLike {
  * match the strict regex passes through unchanged so non-time
  * category axes (product names, country codes, etc.) aren't touched.
  */
-function formatIsoAxisLabel(value: unknown): string {
+function formatIsoAxisLabel(value: unknown, settings: WorkspaceSettings): string {
   if (typeof value !== "string" || !ISO_DATE_RE.test(value)) {
     return String(value);
   }
@@ -285,10 +353,20 @@ function formatIsoAxisLabel(value: unknown): string {
   // Date-only string → just show "Apr 1"; full timestamp → "Apr 1, 00:00".
   const isDateOnly = !value.includes("T");
   return new Intl.DateTimeFormat(
-    undefined,
+    settings.agentLocale,
     isDateOnly
       ? { month: "short", day: "numeric" }
-      : { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }
+      : {
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+          // Date-only labels don't need a timezone — they're DAY-level
+          // and timezone conversion would shift them by a calendar day
+          // for users east/west of UTC. Timestamp labels get the
+          // customer's timezone applied so 00:00 UTC reads correctly.
+          timeZone: settings.timezone,
+        }
   ).format(d);
 }
 

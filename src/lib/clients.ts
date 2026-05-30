@@ -19,6 +19,7 @@ import {
   deleteClientState,
   deleteConnectorState,
 } from "@/lib/meltano-state";
+import type { WorkspaceSettings } from "@/lib/workspace-settings";
 
 export interface ClientDoc {
   /** Display name. Defaults to "Workspace" for self-serve signup; can be set later. */
@@ -46,6 +47,13 @@ export interface WorkspaceDoc {
   isDefault?: boolean;
   createdAt: Timestamp;
   createdBy?: string;
+  /**
+   * Per-workspace user preferences — regional formatting + agent
+   * persona. Optional because legacy docs predate the feature; readers
+   * MUST merge with DEFAULT_WORKSPACE_SETTINGS via `mergeSettings()`.
+   * See `src/lib/workspace-settings.ts`.
+   */
+  settings?: Partial<WorkspaceSettings>;
 }
 
 export interface WorkspaceContext {

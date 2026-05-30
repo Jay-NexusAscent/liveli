@@ -1,4 +1,7 @@
 import { ChatWindow } from "@/components/chat/chat-window";
+import { fetchWorkspaceSettingsForCurrentUser } from "@/lib/workspace-settings-server";
+
+export const runtime = "nodejs";
 
 /**
  * /chat/[chatId] — resume an existing chat. The ChatWindow loads the
@@ -12,5 +15,6 @@ export default async function ResumeChatPage({
   params: Promise<{ chatId: string }>;
 }) {
   const { chatId } = await params;
-  return <ChatWindow initialChatId={chatId} />;
+  const settings = await fetchWorkspaceSettingsForCurrentUser();
+  return <ChatWindow initialChatId={chatId} settings={settings} />;
 }

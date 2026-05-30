@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import { SettingsDangerZone } from "@/components/settings/danger-zone";
 import { SettingsSection } from "@/components/settings/settings-section";
 import { Field } from "@/components/settings/field";
+import { WorkspaceSettingsForm } from "@/components/settings/workspace-settings-form";
+import { fetchWorkspaceSettingsForCurrentUser } from "@/lib/workspace-settings-server";
 
 export const runtime = "nodejs";
 
@@ -19,6 +21,11 @@ export default async function SettingsPage() {
   const orgName = orgId
     ? (await cc.organizations.getOrganization({ organizationId: orgId })).name
     : null;
+
+  // Server-fetch the current workspace settings so the client form
+  // hydrates with the customer's saved values (not the defaults).
+  // Helper handles the no-org case (returns defaults).
+  const workspaceSettings = await fetchWorkspaceSettingsForCurrentUser();
 
   return (
     <div className="container-page py-8">
@@ -47,6 +54,12 @@ export default async function SettingsPage() {
           </div>
         </div>
       </SettingsSection>
+
+      {/* WorkspaceSettingsForm renders its own "Regional preferences" and
+          "Agent" SettingsSections so a single client form can own one
+          state + one save action across both. Keeps the save UX
+          consolidated while still presenting the visual section break. */}
+      <WorkspaceSettingsForm initial={workspaceSettings} />
 
       <SettingsSection title="Danger zone" variant="danger">
         <SettingsDangerZone

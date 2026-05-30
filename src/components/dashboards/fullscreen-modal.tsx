@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { toPng } from "html-to-image";
 import { CheckIcon, CloseIcon, CopyIcon, PencilIcon } from "@/components/icons";
 import { ChartRenderer } from "@/components/chat/chart-renderer";
+import type { WorkspaceSettings } from "@/lib/workspace-settings";
 
 import type { ColSpan } from "@/lib/dashboards/types";
 
@@ -48,6 +49,12 @@ interface FullscreenModalProps {
    * an Edit affordance because they aren't standalone documents.
    */
   onEdit?: () => void;
+  /**
+   * Workspace regional preferences — passed through to ChartRenderer
+   * so currency / locale / timezone match the rest of the app inside
+   * the fullscreen overlay too.
+   */
+  settings?: WorkspaceSettings;
 }
 
 /**
@@ -73,7 +80,7 @@ interface FullscreenModalProps {
  * Portaled to document.body so the modal isn't constrained by parent
  * layouts (sidebar, padding, overflow).
  */
-export function FullscreenModal({ content, onClose, onEdit }: FullscreenModalProps) {
+export function FullscreenModal({ content, onClose, onEdit, settings }: FullscreenModalProps) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   // Track the last content.id we saw so we can reset copyState when
   // the user navigates to a different chart/dashboard without the
@@ -238,7 +245,7 @@ export function FullscreenModal({ content, onClose, onEdit }: FullscreenModalPro
 
         <div className="flex-1 overflow-auto p-6">
           {content.kind === "chart" ? (
-            <ChartRenderer spec={content.spec} height={window.innerHeight - 200} />
+            <ChartRenderer spec={content.spec} height={window.innerHeight - 200} settings={settings} />
           ) : (
             <div className="grid gap-4 lg:grid-cols-4">
               {[...content.charts]
@@ -253,7 +260,7 @@ export function FullscreenModal({ content, onClose, onEdit }: FullscreenModalPro
                     <div className="mb-2 text-[13px] font-medium text-text-primary">
                       {c.title}
                     </div>
-                    <ChartRenderer spec={c.spec} height={360} />
+                    <ChartRenderer spec={c.spec} height={360} settings={settings} />
                   </div>
                 ))}
             </div>
