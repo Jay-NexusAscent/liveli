@@ -209,11 +209,13 @@ jobs:
           # dir as context (self-contained). Keeping the dbt project
           # at repo root (not inside connectors/dbt-runner/) matters
           # for dev UX — IDE dbt extensions expect that location.
-          if [ "${{ matrix.connector }}" = "dbt-runner" ]; then
+          # dbt-runner + metadata-agent both need repo-root build context
+          # (the former for dbt/, the latter for src/scripts/tsconfig/lockfile).
+          if [ "${{ matrix.connector }}" = "dbt-runner" ] || [ "${{ matrix.connector }}" = "metadata-agent" ]; then
             docker build \
               -t "$IMAGE_URI" \
               -t "$AR_REGION-docker.pkg.dev/$PROJECT_ID/$REPO/${{ matrix.connector }}:latest" \
-              -f connectors/dbt-runner/Dockerfile \
+              -f connectors/${{ matrix.connector }}/Dockerfile \
               .
           else
             docker build \
