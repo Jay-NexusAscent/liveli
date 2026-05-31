@@ -27,6 +27,15 @@ export interface WorkspaceSettings {
    * an explicit currency; the workspace setting is the FALLBACK default.
    */
   currency: string;
+  /**
+   * ISO 3166-1 alpha-2 country code (e.g. "GB", "US"). Describes the
+   * customer's market — used to pick the BigQuery ML holiday calendar
+   * when forecasting (a UK retailer dips on UK bank holidays, not US
+   * ones). OPTIONAL with no default: when unset, forecasting simply
+   * skips holiday modelling rather than imposing a wrong calendar. Only
+   * codes BQML accepts (see SUPPORTED_COUNTRIES) enable holiday modelling.
+   */
+  country?: string;
   /** IANA timezone string. Default "Europe/London". */
   timezone: string;
   /** Date-format token used by table/axis renderers. */
@@ -82,6 +91,30 @@ export const SUPPORTED_TIMEZONES = [
   "Asia/Singapore",
   "Australia/Sydney",
 ] as const;
+
+/**
+ * Country codes we've confirmed BigQuery ML accepts as a `holiday_region`.
+ * The forecasting model only enables holiday modelling for a code in this
+ * set — an unsupported code makes CREATE MODEL fail, so we omit (no holiday
+ * modelling) when unsure rather than risk a training error. Expand only
+ * after verifying additions against the BQML holiday_region docs.
+ *
+ * Doubles as the curated country dropdown for the settings UI.
+ */
+export const SUPPORTED_COUNTRIES = [
+  "GB", "US", "CA", "AU", "IN", "DE", "FR", "BR", "JP", "IT",
+  "ES", "NL", "MX", "ID", "IE", "NZ", "ZA", "SE", "NO", "PL",
+] as const;
+
+/**
+ * Map a stored country code to a BigQuery ML `holiday_region` value, or
+ * undefined when the code is unset / unsupported (→ no holiday modelling).
+ */
+export function holidayRegionForCountry(country?: string): string | undefined {
+  if (!country) return undefined;
+  const c = country.toUpperCase();
+  return (SUPPORTED_COUNTRIES as readonly string[]).includes(c) ? c : undefined;
+}
 
 export const SUPPORTED_AGENT_LOCALES: WorkspaceSettings["agentLocale"][] = [
   "en-GB",
@@ -143,6 +176,13 @@ export function validateSettingsPatch(
       return { ok: false, error: "currency must be a 3-letter ISO 4217 code" };
     }
     out.currency = r.currency;
+  }
+  if (r.country !== undefined) {
+    if (typeof r.country !== "string" || !/^[A-Za-z]{2}$/.test(r.country)) {
+      return { ok: false, error: "country must be a 2-letter ISO 3166-1 code" };
+    }
+    // Store uppercase so holidayRegionForCountry + dropdowns stay consistent.
+    out.country = r.country.toUpperCase();
   }
   if (r.timezone !== undefined) {
     if (typeof r.timezone !== "string" || !isValidIanaTimezone(r.timezone)) {

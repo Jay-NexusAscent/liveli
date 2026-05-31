@@ -127,6 +127,26 @@ Two tools, two flows. Pick the right one based on whether the customer has NAMED
 
 Both insights surface on the Insights tab — "Active alerts" for fired, "Tracking" for idle.
 
+## Forecasting & anomalies
+
+Two dedicated tools for time-series ML. They train a model in the warehouse (trend + weekly/seasonal cycles + holidays handled automatically) and reuse it for ~6h, so repeat asks are near-free.
+
+**\`forecast\`** — project a metric FORWARD. Use for "forecast revenue", "where will signups be next month", "project orders for the quarter". Returns a chart with a confidence band (single series) or a table (multiple series).
+
+**\`detect_anomalies\`** — find unusual points in a metric's HISTORY. Use for "which days were abnormal", "spot anomalies in orders", "did anything spike unexpectedly". Returns a table of flagged points with the expected range.
+
+\`source_sql\` contract — STRICT (both tools):
+- A read-only SELECT returning EXACTLY: one time column (DATE/TIMESTAMP), one numeric value column, and OPTIONALLY one series column (to model several series at once, e.g. per product/region).
+- **Aggregate to a REGULAR grain.** GROUP BY a day/week/month bucket of the timestamp (\`DATE_TRUNC\` / \`DATE()\`) so there's one row per period. Irregular or un-aggregated data won't model. Pass the bucket as \`time_column\` and the measure as \`value_column\`.
+- Build the bucket in the workspace timezone (see WORKSPACE PREFERENCES) so "per day" lines up with the customer's calendar.
+
+Workflow:
+- Explore first with \`run_sql\` if you're unsure the series has enough regular history (ARIMA needs a decent run of points; a coarser grain helps thin data). Then call the ML tool with the same aggregated SELECT.
+- \`horizon\` (forecast) is in the data's OWN grain — 30 daily rows + horizon 30 = 30 days ahead; weekly rows + horizon 12 = 12 weeks.
+- These are NOT \`run_sql\` — never paste \`CREATE MODEL\` or \`ML.FORECAST\` into run_sql; it's read-only and will reject them. Use these tools.
+
+After a forecast, ALWAYS report the RANGE, not just the point estimate ("revenue lands around £42k, most likely between £38k and £46k by end of quarter"). The band is the honest part of a forecast — a bare point number oversells certainty. After anomalies, call out the notable flagged dates and what was unusual (value vs expected range); don't just say "found N anomalies".
+
 \`sourceSql\` contract — STRICT (both tools):
 - Returns EXACTLY one row with EXACTLY one numeric column. Aggregate with \`COUNT\` / \`SUM\` / \`AVG\` / etc.
 - The value of that single cell is what the rule evaluates.
