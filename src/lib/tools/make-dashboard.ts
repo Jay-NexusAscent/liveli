@@ -28,17 +28,33 @@ const SeriesSchema = z.object({
   data: z.array(z.number()).max(10_000).optional(),
   smooth: z.boolean().optional(),
   stack: z.string().optional(),
-  // KPI hints — see make-chart.ts for full doc.
+  // Value-format hints — see make-chart.ts for full doc. `format` /
+  // `unit` format the value axis + tooltip on cartesian charts and the
+  // big number on KPI tiles (set "currency"/"percent"/"number" whenever
+  // values aren't plain counts); `delta` / `deltaLabel` are KPI-only.
   format: z.enum(["number", "currency", "percent"]).optional(),
   unit: z.string().max(8).optional(),
   delta: z.number().optional(),
   deltaLabel: z.string().max(40).optional(),
+  // Per-series currency override (ISO 4217). Optional — falls back to
+  // the workspace currency. Only set when this chart's data is in a
+  // different currency than the workspace default (parity with
+  // make-chart's SeriesSchema).
+  currency: z
+    .string()
+    .regex(/^[A-Z]{3}$/, "currency must be a 3-letter ISO 4217 code")
+    .optional(),
 });
 
 const AxisSchema = z.object({
   type: z.enum(["category", "value", "time", "log"]),
   data: z.array(z.string()).max(10_000).optional(),
-  name: z.string().optional(),
+  name: z
+    .string()
+    .optional()
+    .describe(
+      "Axis title, e.g. \"Date\" or \"Revenue (£)\". Set on BOTH axes for bar/line/area/scatter charts. Skip for KPI/pie/donut."
+    ),
 });
 
 const EChartsOption = z.object({

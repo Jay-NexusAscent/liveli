@@ -22,10 +22,11 @@ export interface GalleryDashboard {
 /**
  * Superset-style dashboard gallery: a searchable, favourite-sortable
  * grid of thumbnail cards the user scans before opening one. Each card
- * live-renders the dashboard's first chart as a preview (cheap for the
- * current handful of dashboards; no snapshot pipeline). Clicking the
- * card opens the full dashboard; the star toggles a favourite, which
- * sorts to the front.
+ * live-renders ALL of the dashboard's charts in a miniature grid so the
+ * thumbnail reflects the whole dashboard, not just its first chart
+ * (cheap for the current handful of dashboards; no snapshot pipeline).
+ * Clicking the card opens the full dashboard; the star toggles a
+ * favourite, which sorts to the front.
  */
 export function DashboardGallery({
   dashboards,
@@ -144,13 +145,20 @@ function DashboardCard({
   onDelete: () => void;
   deleting: boolean;
 }) {
-  const preview = dashboard.charts[0];
+  const charts = dashboard.charts;
+  const count = charts.length;
+  // Mini-grid layout: ≤1 chart fills the tile, ≤4 go two-up, more go
+  // three-up. Cell height is derived from the row count so the whole
+  // grid fits the fixed ~134px preview area (150px tile minus p-2).
+  const cols = count <= 1 ? 1 : count <= 4 ? 2 : 3;
+  const rows = Math.max(1, Math.ceil(count / cols));
+  const cellHeight = Math.max(38, Math.floor((134 - (rows - 1) * 4) / rows));
 
   return (
     <div className="card-elevated group relative flex flex-col overflow-hidden">
-      {/* Live mini-render of the first chart. pointer-events-none so the
-          ECharts canvas doesn't swallow the click meant for opening the
-          dashboard; the whole preview is a button. */}
+      {/* Live mini-render of every chart in a grid. pointer-events-none so
+          the ECharts canvases don't swallow the click meant for opening
+          the dashboard; the whole preview is a button. */}
       <button
         type="button"
         onClick={onOpen}
@@ -158,8 +166,17 @@ function DashboardCard({
         className="block w-full border-b border-border bg-surface/40 text-left transition-colors hover:bg-hover/40"
       >
         <div className="pointer-events-none h-[150px] overflow-hidden p-2">
-          {preview ? (
-            <ChartRenderer spec={preview.spec} height={134} settings={settings} />
+          {count > 0 ? (
+            <div
+              className="grid h-full gap-1"
+              style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+            >
+              {charts.map((c, i) => (
+                <div key={i} className="overflow-hidden rounded-sm">
+                  <ChartRenderer spec={c.spec} height={cellHeight} settings={settings} />
+                </div>
+              ))}
+            </div>
           ) : (
             <div className="flex h-full items-center justify-center text-text-tertiary">
               <DashboardIcon className="text-text-tertiary" />

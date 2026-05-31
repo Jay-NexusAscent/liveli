@@ -14,16 +14,32 @@ const SeriesSchema = z.object({
   data: z.array(z.number()).max(10_000),
   smooth: z.boolean().optional(),
   stack: z.string().optional(),
+  // Value-format hints — see make-chart.ts. `format`/`unit` format the
+  // value axis + tooltip on cartesian charts and the big number on KPI
+  // tiles; `delta`/`deltaLabel` are KPI-only. The spec REPLACES the
+  // existing one, so RE-EMIT these when editing an already-formatted
+  // chart — omitting them drops the formatting.
   format: z.enum(["number", "currency", "percent"]).optional(),
   unit: z.string().max(8).optional(),
   delta: z.number().optional(),
   deltaLabel: z.string().max(40).optional(),
+  // Per-series currency override (ISO 4217). Re-emit when editing a
+  // currency chart that had one, or it's lost on replace.
+  currency: z
+    .string()
+    .regex(/^[A-Z]{3}$/, "currency must be a 3-letter ISO 4217 code")
+    .optional(),
 });
 
 const AxisSchema = z.object({
   type: z.enum(["category", "value", "time", "log"]),
   data: z.array(z.string()).max(10_000).optional(),
-  name: z.string().optional(),
+  name: z
+    .string()
+    .optional()
+    .describe(
+      "Axis title, e.g. \"Date\" or \"Revenue (£)\". Set on BOTH axes for bar/line/area/scatter charts. Skip for KPI/pie/donut."
+    ),
 });
 
 const EChartsOption = z.object({
