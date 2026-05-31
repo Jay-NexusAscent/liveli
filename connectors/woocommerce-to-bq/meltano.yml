@@ -1,0 +1,37 @@
+version: 1
+default_environment: dev
+project_id: liveli-woocommerce-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-woocommerce
+      variant: hotglue
+      # WooCommerce REST API uses a consumer key/secret pair generated in
+      # WP admin (WooCommerce → Settings → Advanced → REST API), NOT OAuth.
+      # Not on PyPI → install from git. Required env:
+      #   TAP_WOOCOMMERCE_CONSUMER_KEY, TAP_WOOCOMMERCE_CONSUMER_SECRET,
+      #   TAP_WOOCOMMERCE_SITE_URL (https://store.example.com)
+      # Optional: TAP_WOOCOMMERCE_START_DATE
+      pip_url: git+https://github.com/hotgluexyz/tap-woocommerce.git
+      settings:
+        - name: consumer_key
+          kind: password
+        - name: consumer_secret
+          kind: password
+        - name: site_url
+        - name: start_date
+      config:
+        start_date: "2022-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true

@@ -1,0 +1,34 @@
+version: 1
+default_environment: dev
+project_id: liveli-freshdesk-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-freshdesk
+      variant: acarter24
+      # Meltano-SDK tap. Simple API-key auth + the account subdomain.
+      # Not on PyPI → install from git. Required env:
+      #   TAP_FRESHDESK_API_KEY, TAP_FRESHDESK_DOMAIN (subdomain slug —
+      #   `yourco` from yourco.freshdesk.com)
+      # Optional: TAP_FRESHDESK_START_DATE
+      pip_url: git+https://github.com/acarter24/tap-freshdesk.git
+      settings:
+        - name: api_key
+          kind: password
+        - name: domain
+        - name: start_date
+      config:
+        start_date: "2022-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true

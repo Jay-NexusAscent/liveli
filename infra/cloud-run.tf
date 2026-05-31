@@ -60,6 +60,18 @@ locals {
     # via buildLiveliOauthEnv() — no Job-spec changes needed for that.
     "ga4-to-bq",
     "quickbooks-to-bq",
+    # Batch D (LIVELI-133): easy-win API-key SaaS + MariaDB. MariaDB runs
+    # through tap-mysql (overwrite + FULL_TABLE, same as the mysql
+    # connector); the rest are upsert SaaS taps.
+    "mariadb-to-bq",
+    "pipedrive-to-bq",
+    "square-to-bq",
+    "woocommerce-to-bq",
+    "notion-to-bq",
+    "freshdesk-to-bq",
+    "chargebee-to-bq",
+    "activecampaign-to-bq",
+    "bigcommerce-to-bq",
     # LIVELI-54: dbt transformation layer. ONE shared Job (per
     # residency region) handles dbt for ALL connector types — models
     # are tagged inside the dbt project, dbt-runner selects which

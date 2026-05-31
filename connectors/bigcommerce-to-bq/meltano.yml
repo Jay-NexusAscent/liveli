@@ -1,0 +1,39 @@
+version: 1
+default_environment: dev
+project_id: liveli-bigcommerce-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-bigcommerce
+      variant: singer-io
+      # BigCommerce Store API: an API account (Settings → API Accounts)
+      # yields a client_id + access_token, scoped to a store_hash (the
+      # `<hash>` in store-<hash>.mybigcommerce.com / shown in the control
+      # panel URL). Not OAuth user-flow. Not on a clean Hub name →
+      # install from git. Required env:
+      #   TAP_BIGCOMMERCE_CLIENT_ID, TAP_BIGCOMMERCE_ACCESS_TOKEN,
+      #   TAP_BIGCOMMERCE_STORE_HASH
+      # Optional: TAP_BIGCOMMERCE_START_DATE
+      pip_url: git+https://github.com/singer-io/tap-bigcommerce.git
+      settings:
+        - name: client_id
+          kind: password
+        - name: access_token
+          kind: password
+        - name: store_hash
+        - name: start_date
+      config:
+        start_date: "2022-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true
