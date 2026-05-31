@@ -40,6 +40,32 @@ import type {
  * coalescing requests (typically by tracking the latest in-flight
  * request id and ignoring stale responses).
  */
+// Shared presentation primitives so every filter control reads as one
+// cohesive "chip" in the toolbar — a bordered pill with a muted label,
+// the value in medium weight, and an accent focus ring. Centralising
+// these means a restyle lands across all four control types at once.
+const CHIP =
+  "group inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface py-1.5 pl-2.5 pr-2 text-[12px] transition-colors hover:border-accent/60 focus-within:border-accent focus-within:ring-1 focus-within:ring-accent/40";
+const CHIP_LABEL = "text-text-tertiary";
+const NATIVE_SELECT =
+  "cursor-pointer appearance-none bg-transparent pr-4 text-[13px] font-medium text-text-primary focus:outline-none";
+
+/** Chevron affixed to native selects (which have appearance-none). */
+function Chevron() {
+  return (
+    <svg
+      className="pointer-events-none absolute right-0 h-3.5 w-3.5 text-text-tertiary"
+      viewBox="0 0 20 20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      aria-hidden="true"
+    >
+      <path d="M6 8l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function FilterBar({
   filters,
   values,
@@ -68,7 +94,7 @@ export function FilterBar({
   };
 
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-2">
+    <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-background/40 px-3 py-2">
       {filters.map((f) => (
         <FilterControl
           key={f.id}
@@ -93,7 +119,7 @@ export function FilterBar({
         <button
           type="button"
           onClick={onReset}
-          className="ml-auto rounded-md px-2 py-1 text-[12px] text-text-tertiary transition-colors hover:bg-hover hover:text-text-primary"
+          className="ml-auto rounded-md px-2.5 py-1 text-[12px] font-medium text-text-tertiary transition-colors hover:bg-hover hover:text-text-primary"
         >
           Reset
         </button>
@@ -199,31 +225,34 @@ function DateRangeControl({
   const currentPreset = value?.mode === "preset" ? value.preset : "";
 
   return (
-    <label className="inline-flex items-center gap-2 text-[12px] text-text-secondary">
-      <span>{def.label}</span>
-      <select
-        className="rounded-md border border-border bg-surface px-2 py-1 text-[13px] text-text-primary focus:border-accent focus:outline-none"
-        value={currentPreset}
-        onChange={(e) => {
-          const preset = e.target.value as DateRangePreset;
-          if (!preset) return;
-          onChange({ mode: "preset", preset });
-        }}
-        aria-label={def.label}
-      >
-        {isCustom && (
-          // Placeholder option — selecting any real preset replaces
-          // the custom range. We render this as the selected option
-          // when value is custom so the user sees what state they're
-          // in rather than a confusing "Last 7 days" that isn't true.
-          <option value="">Custom range</option>
-        )}
-        {DATE_RANGE_PRESET_ORDER.map((p) => (
-          <option key={p} value={p}>
-            {DATE_RANGE_PRESET_LABELS[p]}
-          </option>
-        ))}
-      </select>
+    <label className={CHIP}>
+      <span className={CHIP_LABEL}>{def.label}</span>
+      <span className="relative inline-flex items-center">
+        <select
+          className={NATIVE_SELECT}
+          value={currentPreset}
+          onChange={(e) => {
+            const preset = e.target.value as DateRangePreset;
+            if (!preset) return;
+            onChange({ mode: "preset", preset });
+          }}
+          aria-label={def.label}
+        >
+          {isCustom && (
+            // Placeholder option — selecting any real preset replaces
+            // the custom range. We render this as the selected option
+            // when value is custom so the user sees what state they're
+            // in rather than a confusing "Last 7 days" that isn't true.
+            <option value="">Custom range</option>
+          )}
+          {DATE_RANGE_PRESET_ORDER.map((p) => (
+            <option key={p} value={p}>
+              {DATE_RANGE_PRESET_LABELS[p]}
+            </option>
+          ))}
+        </select>
+        <Chevron />
+      </span>
     </label>
   );
 }
@@ -250,20 +279,23 @@ function GranularityControl({
   onChange: (v: Granularity) => void;
 }) {
   return (
-    <label className="inline-flex items-center gap-2 text-[12px] text-text-secondary">
-      <span>{def.label}</span>
-      <select
-        className="rounded-md border border-border bg-surface px-2 py-1 text-[13px] text-text-primary focus:border-accent focus:outline-none"
-        value={value ?? def.defaultValue}
-        onChange={(e) => onChange(e.target.value as Granularity)}
-        aria-label={def.label}
-      >
-        {GRANULARITY_ORDER.map((g) => (
-          <option key={g} value={g}>
-            {GRANULARITY_LABELS[g]}
-          </option>
-        ))}
-      </select>
+    <label className={CHIP}>
+      <span className={CHIP_LABEL}>{def.label}</span>
+      <span className="relative inline-flex items-center">
+        <select
+          className={NATIVE_SELECT}
+          value={value ?? def.defaultValue}
+          onChange={(e) => onChange(e.target.value as Granularity)}
+          aria-label={def.label}
+        >
+          {GRANULARITY_ORDER.map((g) => (
+            <option key={g} value={g}>
+              {GRANULARITY_LABELS[g]}
+            </option>
+          ))}
+        </select>
+        <Chevron />
+      </span>
     </label>
   );
 }
@@ -283,25 +315,28 @@ function SelectControl({
   onChange: (v: string | null) => void;
 }) {
   return (
-    <label className="inline-flex items-center gap-2 text-[12px] text-text-secondary">
-      <span>{def.label}</span>
-      <select
-        className="rounded-md border border-border bg-surface px-2 py-1 text-[13px] text-text-primary focus:border-accent focus:outline-none"
-        // Convert null ↔ a string sentinel for the native <select> —
-        // option values can't be null in HTML.
-        value={value == null ? ANY_VALUE_SENTINEL : value}
-        onChange={(e) =>
-          onChange(e.target.value === ANY_VALUE_SENTINEL ? null : e.target.value)
-        }
-        aria-label={def.label}
-      >
-        <option value={ANY_VALUE_SENTINEL}>Any</option>
-        {def.options.map((o) => (
-          <option key={o} value={o}>
-            {o}
-          </option>
-        ))}
-      </select>
+    <label className={CHIP}>
+      <span className={CHIP_LABEL}>{def.label}</span>
+      <span className="relative inline-flex items-center">
+        <select
+          className={NATIVE_SELECT}
+          // Convert null ↔ a string sentinel for the native <select> —
+          // option values can't be null in HTML.
+          value={value == null ? ANY_VALUE_SENTINEL : value}
+          onChange={(e) =>
+            onChange(e.target.value === ANY_VALUE_SENTINEL ? null : e.target.value)
+          }
+          aria-label={def.label}
+        >
+          <option value={ANY_VALUE_SENTINEL}>Any</option>
+          {def.options.map((o) => (
+            <option key={o} value={o}>
+              {o}
+            </option>
+          ))}
+        </select>
+        <Chevron />
+      </span>
     </label>
   );
 }
@@ -355,17 +390,20 @@ function MultiSelectControl({
   }
 
   return (
-    <div ref={rootRef} className="relative inline-flex items-center gap-2 text-[12px] text-text-secondary">
-      <span>{def.label}</span>
+    <div ref={rootRef} className="relative inline-flex items-center">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={`${def.label}, currently ${buttonLabel}`}
-        className="rounded-md border border-border bg-surface px-2 py-1 text-[13px] text-text-primary transition-colors hover:border-accent focus:border-accent focus:outline-none"
+        className={`${CHIP} cursor-pointer focus:outline-none`}
       >
-        {buttonLabel}
+        <span className={CHIP_LABEL}>{def.label}</span>
+        <span className="text-[13px] font-medium text-text-primary">{buttonLabel}</span>
+        <span className="relative inline-flex h-3.5 w-3.5 items-center">
+          <Chevron />
+        </span>
       </button>
       {open && (
         <div
