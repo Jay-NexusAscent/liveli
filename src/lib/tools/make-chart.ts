@@ -14,7 +14,10 @@ import type { ToolDefinition } from "./types";
 const SeriesSchema = z.object({
   name: z.string().optional(),
   type: z.enum(["bar", "line", "pie", "donut", "scatter", "area", "kpi"]),
-  data: z.array(z.number()).max(10_000),
+  // null = a gap. Lets two series of different lengths share one x-axis
+  // (e.g. actual vs forecast: pad actual with nulls over the future and
+  // the forecast with nulls over the past). The renderer skips nulls.
+  data: z.array(z.number().nullable()).max(10_000),
   smooth: z.boolean().optional(),
   stack: z.string().optional(),
   /**
@@ -147,7 +150,8 @@ export const makeChartTool: ToolDefinition = {
   description:
     "Render a chart inline in the chat. The result is shown to the user immediately. Use this whenever the answer to a question is better understood visually — comparisons, time series, distributions, rankings. " +
     "Name both axes (`xAxis.name` / `yAxis.name`), and set `series[].format` (\"currency\" / \"percent\" / \"number\") on money/rate/unit charts so the value axis and tooltips render the right symbols — not just on KPI tiles. " +
-    "Per-series `currency` (ISO 4217) is optional: only set it when the source data is in a different currency than the workspace default — e.g. a Stripe connector reporting USD when the workspace currency is GBP. Leave it unset otherwise; the renderer uses the workspace currency by default.",
+    "Per-series `currency` (ISO 4217) is optional: only set it when the source data is in a different currency than the workspace default — e.g. a Stripe connector reporting USD when the workspace currency is GBP. Leave it unset otherwise; the renderer uses the workspace currency by default. " +
+    "To overlay series that cover different ranges (e.g. actual revenue vs a forecast), build ONE shared category x-axis spanning both, then pad each series' `data` with `null` where it has no value — actual gets nulls over the future, the forecast gets nulls over the past.",
   inputSchema: Input,
   handler: async (raw) => {
     const { title, echartsOption } = Input.parse(normalizeChartInput(raw));
