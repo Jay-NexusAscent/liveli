@@ -1,0 +1,44 @@
+version: 1
+default_environment: dev
+project_id: liveli-bigquery-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-bigquery
+      variant: meltanolabs
+      # Reads the CUSTOMER's BigQuery project (not ours). Built on the
+      # Meltano Singer SDK — supports `discover`, so it auto-detects all
+      # datasets + tables. Pure Python, no Docker-in-Docker.
+      #
+      # Config from env at runtime:
+      #   TAP_BIGQUERY_PROJECT_ID       — customer's GCP project
+      #   TAP_BIGQUERY_CREDENTIALS_PATH — SA-key file written by
+      #     entrypoint.sh from the customer-supplied JSON
+      #   TAP_BIGQUERY_FILTER_SCHEMAS   — JSON array of dataset names to
+      #     replicate (blank = ALL datasets). `schemas` == BQ datasets.
+      pip_url: git+https://github.com/MeltanoLabs/tap-bigquery.git
+      config:
+        # Blank → tap discovers every dataset. The connect route always
+        # passes an explicit dataset list via TAP_BIGQUERY_FILTER_SCHEMAS
+        # so a customer with a huge project doesn't accidentally replicate
+        # everything on the first sync.
+        filter_schemas: []
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      # Config from env: TARGET_BIGQUERY_PROJECT/DATASET/LOCATION.
+      #
+      # overwrite — a BigQuery source has no cross-table PK guarantee we
+      # can MERGE on safely, and full-extract overwrite is the simplest
+      # correct behaviour. Same contract as the other warehouse
+      # connectors (redshift/synapse).
+      config:
+        method: batch_job
+        denormalized: true
+        overwrite: true
