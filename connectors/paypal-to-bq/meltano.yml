@@ -1,0 +1,38 @@
+version: 1
+default_environment: dev
+project_id: liveli-paypal-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-paypal
+      variant: yoast
+      # Not on PyPI → install from git. REST-API client-credentials auth.
+      pip_url: git+https://github.com/Yoast/singer-tap-paypal.git
+      # Required env:
+      #   TAP_PAYPAL_CLIENT_ID, TAP_PAYPAL_SECRET, TAP_PAYPAL_START_DATE
+      # Optional:
+      #   TAP_PAYPAL_SANDBOX (true|false — default false → live API)
+      settings:
+        - name: client_id
+          kind: password
+        - name: secret
+          kind: password
+        - name: sandbox
+          kind: boolean
+        - name: start_date
+      config:
+        sandbox: false
+        start_date: "2022-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true

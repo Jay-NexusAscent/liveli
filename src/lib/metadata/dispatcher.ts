@@ -22,6 +22,12 @@ const INITIAL_TEST_TYPES = new Set<string>([
   "redshift",
   "synapse",
   "bigquery",
+  // Batch E (LIVELI-134): warehouse-style DB connectors with rich
+  // column schemas worth enriching. MongoDB is intentionally excluded —
+  // its documents land as a single JSON column, so there's no per-column
+  // schema for the agent to describe.
+  "snowflake",
+  "oracle",
 ]);
 
 type EnrichmentMode = "off" | "dry-run" | "live";
