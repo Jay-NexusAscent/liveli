@@ -20,8 +20,9 @@ const SeriesSchema = z.object({
   // Optional (mirrors make-dashboard.ts): filter-wired charts (sourceSql
   // + dataMapping) may omit baked data and have it populated at save
   // time. A ChartSpec-level superRefine below re-requires it for static
-  // charts.
-  data: z.array(z.number()).max(10_000).optional(),
+  // charts. null entries = gaps, so series of different lengths can
+  // share an x-axis (e.g. actual vs forecast overlay); renderer skips them.
+  data: z.array(z.number().nullable()).max(10_000).optional(),
   smooth: z.boolean().optional(),
   stack: z.string().optional(),
   // Value-format hints — see make-chart.ts. `format`/`unit` format the
@@ -201,7 +202,9 @@ function normalizeInput(raw: unknown): unknown {
 }
 
 /** Mirrors make-dashboard.ts — true if any series lacks usable data. */
-function seriesMissingData(echartsOption: { series: Array<{ data?: number[] }> }): boolean {
+function seriesMissingData(echartsOption: {
+  series: Array<{ data?: Array<number | null> }>;
+}): boolean {
   return echartsOption.series.some((s) => !s.data || s.data.length === 0);
 }
 

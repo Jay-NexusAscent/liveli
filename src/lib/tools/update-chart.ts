@@ -11,7 +11,9 @@ import type { ToolDefinition } from "./types";
 const SeriesSchema = z.object({
   name: z.string().optional(),
   type: z.enum(["bar", "line", "pie", "donut", "scatter", "area", "kpi"]),
-  data: z.array(z.number()).max(10_000),
+  // null = a gap, so series of different lengths can share an x-axis
+  // (e.g. actual vs forecast overlay). The renderer skips nulls.
+  data: z.array(z.number().nullable()).max(10_000),
   smooth: z.boolean().optional(),
   stack: z.string().optional(),
   // Value-format hints — see make-chart.ts. `format`/`unit` format the
