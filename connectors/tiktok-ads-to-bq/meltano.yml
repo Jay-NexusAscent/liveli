@@ -1,0 +1,33 @@
+version: 1
+default_environment: dev
+project_id: liveli-tiktok-ads-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-tiktok
+      variant: gthesheep
+      # TikTok Marketing (Ads) API. Not on PyPI → install from git.
+      pip_url: git+https://github.com/gthesheep/tap-tiktok.git
+      # Required env:
+      #   TAP_TIKTOK_ACCESS_TOKEN, TAP_TIKTOK_ADVERTISER_ID,
+      #   TAP_TIKTOK_START_DATE
+      settings:
+        - name: access_token
+          kind: password
+        - name: advertiser_id
+        - name: start_date
+      config:
+        start_date: "2022-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true

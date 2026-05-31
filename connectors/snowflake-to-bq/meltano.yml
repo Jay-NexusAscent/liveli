@@ -1,0 +1,37 @@
+version: 1
+default_environment: dev
+project_id: liveli-snowflake-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-snowflake
+      variant: meltanolabs
+      pip_url: meltanolabs-tap-snowflake
+      # Connection params come from env at runtime:
+      #   TAP_SNOWFLAKE_ACCOUNT, TAP_SNOWFLAKE_USER,
+      #   TAP_SNOWFLAKE_PASSWORD, TAP_SNOWFLAKE_DATABASE,
+      #   TAP_SNOWFLAKE_WAREHOUSE, TAP_SNOWFLAKE_SCHEMA
+      config:
+        # Restrict discovery to the customer-named schema. Without a
+        # filter the tap discovers INFORMATION_SCHEMA in every database
+        # and target-bigquery crashes on the reserved BQ prefix — same
+        # gotcha as postgres' filter_schemas / mysql's filter_dbs.
+        filter_schemas: []
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      # Config comes from env at runtime:
+      #   TARGET_BIGQUERY_PROJECT, TARGET_BIGQUERY_DATASET,
+      #   TARGET_BIGQUERY_LOCATION
+      # overwrite (not upsert) — raw-DB archetype, same rationale as the
+      # mysql/sqlserver/redshift/synapse connectors.
+      config:
+        method: batch_job
+        denormalized: true
+        overwrite: true

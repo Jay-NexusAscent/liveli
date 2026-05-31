@@ -1,0 +1,35 @@
+version: 1
+default_environment: dev
+project_id: liveli-magento-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-magento
+      variant: hotglue
+      # Adobe Commerce / Magento 2 REST API. Not on PyPI → install from
+      # git (hotglue's GitLab mirror).
+      pip_url: git+https://gitlab.com/hotglue/tap-magento.git
+      # Required env:
+      #   TAP_MAGENTO_STORE_URL    (https://<store>/ base URL)
+      #   TAP_MAGENTO_ACCESS_TOKEN (Integration access token)
+      #   TAP_MAGENTO_START_DATE
+      settings:
+        - name: store_url
+        - name: access_token
+          kind: password
+        - name: start_date
+      config:
+        start_date: "2022-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true
