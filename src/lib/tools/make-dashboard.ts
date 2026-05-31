@@ -25,7 +25,9 @@ const SeriesSchema = z.object({
   // let the make_dashboard handler populate it at save time from the
   // filter defaults. A ChartSpec-level superRefine below re-imposes the
   // requirement for STATIC charts, which have nothing to populate from.
-  data: z.array(z.number()).max(10_000).optional(),
+  // null entries = gaps, so series of different lengths can share an
+  // x-axis (e.g. actual vs forecast overlay). The renderer skips nulls.
+  data: z.array(z.number().nullable()).max(10_000).optional(),
   smooth: z.boolean().optional(),
   stack: z.string().optional(),
   // Value-format hints — see make-chart.ts for full doc. `format` /
@@ -273,7 +275,9 @@ function normalizeDashboardInput(raw: unknown): unknown {
  * (absent or empty array). Drives whether the make_dashboard handler
  * runs the chart's sourceSql at save time to fill in the first paint.
  */
-function seriesMissingData(echartsOption: { series: Array<{ data?: number[] }> }): boolean {
+function seriesMissingData(echartsOption: {
+  series: Array<{ data?: Array<number | null> }>;
+}): boolean {
   return echartsOption.series.some((s) => !s.data || s.data.length === 0);
 }
 

@@ -42,9 +42,12 @@ function subscribeTheme(callback: () => void): () => void {
 }
 
 function getThemeSnapshot(): "light" | "dark" {
-  return document.documentElement.getAttribute("data-theme") === "light"
-    ? "light"
-    : "dark";
+  // Default to light when data-theme is absent/unknown, matching the
+  // toggle, the server snapshot, and layout.tsx's init script. Defaulting
+  // to dark here desynced charts (dark) from the toggle symbol (light).
+  return document.documentElement.getAttribute("data-theme") === "dark"
+    ? "dark"
+    : "light";
 }
 
 // Light is the default theme (see layout.tsx); match it on the server so
