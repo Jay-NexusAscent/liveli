@@ -18,13 +18,19 @@ const SeriesSchema = z.object({
   smooth: z.boolean().optional(),
   stack: z.string().optional(),
   /**
-   * KPI hints — only meaningful when type === "kpi". The renderer
-   * shows data[0] as a single large number with optional unit, plus
-   * an optional delta line below ("+8% vs last month").
-   *   format:     numeric formatting (number / currency-£ / percent)
-   *   unit:       short suffix, e.g. "%", "$"
-   *   delta:      comparison number (positive = up, negative = down)
-   *   deltaLabel: caption for the delta ("vs last month")
+   * Value-format hints. `format` and `unit` apply to EVERY chart type:
+   * on a KPI tile they format the single big number; on a bar / line /
+   * area / scatter chart they format the value-axis ticks AND the
+   * tooltip, so a revenue chart shows "£1.2M" on the axis instead of a
+   * bare "1200000". Set them whenever the values aren't plain counts:
+   *   format="currency" → money (uses the workspace currency unless a
+   *                       per-series `currency` override is given)
+   *   format="percent"  → rates / shares (0.03 and 3 both render "3.0%")
+   *   format="number"   → counts with a `unit` suffix (e.g. "kg", "ms")
+   * Leave `format` UNSET for plain integer axes (years, raw counts) so
+   * they render untouched.
+   *   delta:      KPI ONLY — comparison number (positive up, negative down)
+   *   deltaLabel: KPI ONLY — caption for the delta ("vs last month")
    */
   format: z.enum(["number", "currency", "percent"]).optional(),
   unit: z.string().max(8).optional(),
@@ -51,7 +57,12 @@ const SeriesSchema = z.object({
 const AxisSchema = z.object({
   type: z.enum(["category", "value", "time", "log"]),
   data: z.array(z.string()).max(10_000).optional(),
-  name: z.string().optional(),
+  name: z
+    .string()
+    .optional()
+    .describe(
+      "Axis title, e.g. \"Date\" or \"Revenue (£)\". Set on BOTH axes for bar/line/area/scatter charts — it renders as the axis label. Keep it short (2-4 words). Skip for KPI/pie/donut (no axes)."
+    ),
 });
 
 const EChartsOption = z.object({
@@ -135,6 +146,7 @@ export const makeChartTool: ToolDefinition = {
   name: "make_chart",
   description:
     "Render a chart inline in the chat. The result is shown to the user immediately. Use this whenever the answer to a question is better understood visually — comparisons, time series, distributions, rankings. " +
+    "Name both axes (`xAxis.name` / `yAxis.name`), and set `series[].format` (\"currency\" / \"percent\" / \"number\") on money/rate/unit charts so the value axis and tooltips render the right symbols — not just on KPI tiles. " +
     "Per-series `currency` (ISO 4217) is optional: only set it when the source data is in a different currency than the workspace default — e.g. a Stripe connector reporting USD when the workspace currency is GBP. Leave it unset otherwise; the renderer uses the workspace currency by default.",
   inputSchema: Input,
   handler: async (raw) => {

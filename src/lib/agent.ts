@@ -238,7 +238,7 @@ export function buildWorkspaceSettingsPreamble(
   return [
     `─── WORKSPACE PREFERENCES ───`,
     `Voice: ${LOCALE_LABELS[settings.agentLocale]}. ${PERSONA_DESCRIPTIONS[settings.agentPersona]}`,
-    `Currency: format money values as ${settings.currency} (use the correct symbol/code). Connector-level currency on a chart overrides this default for that chart only.`,
+    `Currency: format money values as ${settings.currency} (use the correct symbol/code). On charts, set \`series[].format: "currency"\` so the value axis and tooltips show the symbol — and \`format: "percent"\` for rate/share charts. Add a per-series \`currency\` only when a chart's data is in a different currency than ${settings.currency}.`,
     `Timezone: assume ${settings.timezone} for "today", "this week", "this month", "this quarter" unless the user specifies otherwise.`,
     `Week starts on ${settings.weekStart === "monday" ? "Monday" : "Sunday"}. Fiscal year starts in month ${settings.fiscalYearStartMonth}.`,
   ].join("\n");
