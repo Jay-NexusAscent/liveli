@@ -16,7 +16,13 @@ const KNOWN_SCHEMA_CONNECTORS = new Set<string>([]);
  * an explicit exclude-list) once dry-run logs confirm the gate is
  * trustworthy across other custom-DB connectors.
  */
-const INITIAL_TEST_TYPES = new Set<string>(["postgres"]);
+const INITIAL_TEST_TYPES = new Set<string>([
+  "postgres",
+  "sqlserver",
+  "redshift",
+  "synapse",
+  "bigquery",
+]);
 
 type EnrichmentMode = "off" | "dry-run" | "live";
 

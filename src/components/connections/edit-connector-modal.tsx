@@ -292,8 +292,18 @@ export function EditConnectorModal({ connector, onClose, onSaved, onDeleted }: P
           </select>
         </Field>
 
-        {connector.type === "postgres" && (
-          <Field label="Schemas (comma-separated)" hint="Default: public.">
+        {(connector.type === "postgres" ||
+          connector.type === "sqlserver" ||
+          connector.type === "redshift" ||
+          connector.type === "synapse") && (
+          <Field
+            label="Schemas (comma-separated)"
+            hint={
+              connector.type === "sqlserver" || connector.type === "synapse"
+                ? "Default: dbo."
+                : "Default: public."
+            }
+          >
             <input
               type="text"
               value={form.schemas}

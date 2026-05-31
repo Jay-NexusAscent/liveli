@@ -19,6 +19,10 @@ locals {
   connector_types = [
     "postgres-to-bq",
     "mysql-to-bq",
+    "sqlserver-to-bq",
+    "redshift-to-bq",
+    "synapse-to-bq",
+    "bigquery-to-bq",
     "stripe-to-bq",
     "shopify-to-bq",
     "hubspot-to-bq",

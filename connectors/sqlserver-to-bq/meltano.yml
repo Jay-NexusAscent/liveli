@@ -1,0 +1,55 @@
+version: 1
+default_environment: dev
+project_id: liveli-sqlserver-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-mssql
+      variant: buzzcutnorman
+      # pymssql appended to the pip_url so the SQLAlchemy dialect's
+      # driver is the pure-Python pymssql wheel (bundles FreeTDS) rather
+      # than pyodbc. pyodbc needs Microsoft's system ODBC driver
+      # installed in the image; pymssql needs nothing extra — the manylinux
+      # wheel is self-contained. Cloud Run Jobs can't run the MS ODBC
+      # installer cleanly, so pymssql is the only sane choice here.
+      pip_url: git+https://github.com/BuzzCutNorman/tap-mssql.git pymssql
+      # Connection params come from env at runtime:
+      #   TAP_MSSQL_HOST, TAP_MSSQL_PORT, TAP_MSSQL_USER,
+      #   TAP_MSSQL_PASSWORD, TAP_MSSQL_DATABASE,
+      #   TAP_MSSQL_FILTER_SCHEMAS (JSON array — scopes discovery to user
+      #   schemas; mirrors tap-postgres' filter_schemas exactly).
+      config:
+        dialect: mssql
+        driver_type: pymssql
+        # Default to the customer's user schema(s) only. Without a filter
+        # the tap discovers sys + INFORMATION_SCHEMA, and target-bigquery
+        # crashes creating `information_schema__*` tables (BQ reserves the
+        # `information_schema` prefix) — same gotcha as postgres/mysql.
+        filter_schemas: []
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      # Config comes from env at runtime:
+      #   TARGET_BIGQUERY_PROJECT, TARGET_BIGQUERY_DATASET,
+      #   TARGET_BIGQUERY_LOCATION
+      # batch_job over storage_write_api for cross-region safety —
+      # storage_write_api hits BrokenPipeError against EU multi-region.
+      #
+      # overwrite (not upsert) — see connectors/postgres-to-bq/meltano.yml
+      # for the full rationale. tl;dr: z3z1ma's upsert mode requires the
+      # tap to emit key_properties for every stream, which the SQL taps
+      # only do for tables with a PRIMARY KEY. Tables without PKs leak
+      # staging tables that never get merged or cleaned up. Overwrite mode
+      # atomically replaces the canonical, doesn't depend on PK detection,
+      # and matches our ephemeral-state-full-extract reality. SQL Server
+      # stays FULL_TABLE under overwrite, same contract as mysql.
+      config:
+        method: batch_job
+        denormalized: true
+        overwrite: true
