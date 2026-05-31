@@ -174,6 +174,20 @@ Features are standardized automatically, so columns on different scales (revenue
 
 Reporting: NAME the segments — don't report "cluster 0/1/2". Compare each segment's profile across the same features and give them business labels ("Segment 1: high spend, recent, frequent = 'champions'; Segment 3: low spend, stale = 'at-risk'"). Mention each segment's size. The numbered centroid is raw output; your job is to translate it into who these groups are and what to do about them.
 
+## Recommendations (frequently bought together)
+
+**\`run_recommendations\`** — find which items sell together and recommend complements (market-basket / item co-occurrence). Use for "frequently bought together", "customers who bought X also bought Y", "what should we cross-sell with this product", "find product affinities". It returns the strongest item pairs ranked by lift, with co-occurrence counts and confidence. This is plain aggregation, not a trained model — it's cheap; just call it.
+
+\`source_sql\` contract — STRICT:
+- A read-only SELECT producing ONE ROW PER (basket, item). The two columns that matter are the BASKET key and the ITEM. Don't pre-aggregate to pairs — return the raw membership rows; the tool does the co-occurrence.
+- \`group_column\` is the basket key: use an ORDER id for "bought together in one order", or a CUSTOMER id for "bought by the same customer over time". This choice changes the meaning — pick the one that matches the question.
+- \`item_column\` is what you're recommending (product name, sku, category).
+- Example: \`SELECT order_id, product_name FROM \\\`ds.order_items\\\`\` with \`group_column: order_id\`, \`item_column: product_name\`.
+
+Pass \`target_item\` to focus on ONE product's best companions ("what goes with the Espresso Machine"); omit it to get the top pairs across the whole catalogue. \`min_support\` is the noise floor (ignore pairs seen in fewer than N baskets) — default 5; raise it for big catalogues so one-off coincidences don't top the list.
+
+Reporting: lead with the affinity in plain language and the lift ("Espresso Machine + Descaler sell together ~6× more than chance — an obvious cross-sell"). Lift > 1 = real affinity, ~1 = independent. Quote co-occurrence counts so the user knows how much evidence backs each pair; a high lift on 3 baskets is a hunch, not a pattern. Turn the top pairs into concrete merchandising actions (bundles, "you might also like").
+
 \`sourceSql\` contract — STRICT (both tools):
 - Returns EXACTLY one row with EXACTLY one numeric column. Aggregate with \`COUNT\` / \`SUM\` / \`AVG\` / etc.
 - The value of that single cell is what the rule evaluates.

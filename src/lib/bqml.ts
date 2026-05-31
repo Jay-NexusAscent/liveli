@@ -992,3 +992,171 @@ export async function runClustering(spec: ClusteringSpec): Promise<ClusteringRes
     assignments,
   };
 }
+
+// ── Recommendations (item co-occurrence / market basket) ───────────
+//
+// Deliberately NOT BigQuery ML MATRIX_FACTORIZATION: that model type is gated
+// behind BigQuery editions/reservations and won't run on on-demand pricing,
+// which the rest of this module assumes. Item-item co-occurrence gives the same
+// "frequently bought together" / "customers who bought X also bought Y" answer
+// with plain aggregation SQL — on-demand, no model to train, and it rides the
+// same dry-run + MAX_BYTES_BILLED guard as everything else here.
+
+/** An unordered item pair and its association strength across baskets. */
+export interface ItemPair {
+  itemA: string;
+  itemB: string;
+  /** Baskets containing both items. */
+  coCount: number;
+  countA: number;
+  countB: number;
+  /** P(B in basket | A in basket). */
+  confidenceAtoB: number;
+  /** P(A in basket | B in basket). */
+  confidenceBtoA: number;
+  /** co-occurrence vs. independence: >1 means bought together more than chance. */
+  lift: number;
+}
+
+/** A single recommendation for a focused target item. */
+export interface TargetRecommendation {
+  item: string;
+  coCount: number;
+  /** P(item | target) — how often target buyers also took this. */
+  confidence: number;
+  lift: number;
+}
+
+export interface RecommendationResult {
+  basketsAnalyzed: number;
+  /** Top item pairs overall. Present when no target_item was supplied. */
+  pairs?: ItemPair[];
+  /** The focused item, when target_item was supplied. */
+  target?: string;
+  /** Items most associated with `target`. Present when target_item was supplied. */
+  recommendations?: TargetRecommendation[];
+}
+
+export interface RecommendationSpec {
+  clientId: string;
+  workspaceId: string;
+  userId?: string;
+  /** Agent-authored SELECT: one row per (basket, item) — e.g. order line items,
+   * or one row per (customer, product) purchase. */
+  sourceSql: string;
+  /** The basket key: an order id (items bought together) or a customer id
+   * (items bought by the same person). Co-occurrence is computed within it. */
+  groupColumn: string;
+  /** The item identifier column to recommend on. */
+  itemColumn: string;
+  /** Focus recommendations on items associated with this one item. */
+  targetItem?: string;
+  /** Ignore pairs seen in fewer than this many baskets (noise floor). Default 5. */
+  minSupport?: number;
+  /** Max rows to return. Default 50. */
+  topN?: number;
+  /** Workspace BQ residency: "EU" | "US". */
+  location: string;
+}
+
+export async function runRecommendations(
+  spec: RecommendationSpec
+): Promise<RecommendationResult> {
+  assertIdentifier(spec.groupColumn, "group_column");
+  assertIdentifier(spec.itemColumn, "item_column");
+  const sourceSql = validateSourceSql(spec.sourceSql);
+  // minSupport/topN are ours to control → safe to inline as integers.
+  const minSupport = Math.max(1, Math.floor(spec.minSupport ?? 5));
+  const topN = Math.max(1, Math.min(1000, Math.floor(spec.topN ?? 50)));
+  const g = spec.groupColumn;
+  const i = spec.itemColumn;
+
+  // DISTINCT (basket, item) so a repeated item in one basket counts once. CAST
+  // to STRING for stable comparison/output regardless of the column's type.
+  const baskets =
+    `b AS (\n` +
+    `  SELECT DISTINCT CAST(\`${g}\` AS STRING) AS g, CAST(\`${i}\` AS STRING) AS i\n` +
+    `  FROM (\n${sourceSql}\n)\n` +
+    `  WHERE \`${g}\` IS NOT NULL AND \`${i}\` IS NOT NULL\n` +
+    `),\n` +
+    `ic AS (SELECT i, COUNT(*) AS cnt FROM b GROUP BY i),\n` +
+    `tot AS (SELECT COUNT(DISTINCT g) AS n FROM b)`;
+
+  const wantTarget = Boolean(spec.targetItem);
+  let sql: string;
+  if (wantTarget) {
+    // target_item is arbitrary user data → bind as @target, never interpolate.
+    sql =
+      `WITH ${baskets},\n` +
+      `tcount AS (SELECT cnt FROM ic WHERE i = @target),\n` +
+      `co AS (\n` +
+      `  SELECT y.i AS item, COUNT(*) AS co\n` +
+      `  FROM b x JOIN b y ON x.g = y.g AND x.i = @target AND y.i != @target\n` +
+      `  GROUP BY item\n` +
+      `)\n` +
+      `SELECT co.item AS item, co.co AS co_count, ic.cnt AS count_item,\n` +
+      `  (SELECT cnt FROM tcount) AS count_target, tot.n AS total_baskets,\n` +
+      `  SAFE_DIVIDE(co.co, (SELECT cnt FROM tcount)) AS confidence,\n` +
+      `  SAFE_DIVIDE(co.co * tot.n, (SELECT cnt FROM tcount) * ic.cnt) AS lift\n` +
+      `FROM co JOIN ic ON co.item = ic.i CROSS JOIN tot\n` +
+      `WHERE co.co >= ${minSupport}\n` +
+      `ORDER BY lift DESC, co_count DESC LIMIT ${topN}`;
+  } else {
+    sql =
+      `WITH ${baskets},\n` +
+      `pairs AS (\n` +
+      `  SELECT x.i AS a, y.i AS b_item, COUNT(*) AS co\n` +
+      `  FROM b x JOIN b y ON x.g = y.g AND x.i < y.i\n` +
+      `  GROUP BY a, b_item\n` +
+      `)\n` +
+      `SELECT p.a AS item_a, p.b_item AS item_b, p.co AS co_count,\n` +
+      `  ca.cnt AS count_a, cb.cnt AS count_b, tot.n AS total_baskets,\n` +
+      `  SAFE_DIVIDE(p.co, ca.cnt) AS conf_a_b,\n` +
+      `  SAFE_DIVIDE(p.co, cb.cnt) AS conf_b_a,\n` +
+      `  SAFE_DIVIDE(p.co * tot.n, ca.cnt * cb.cnt) AS lift\n` +
+      `FROM pairs p JOIN ic ca ON p.a = ca.i JOIN ic cb ON p.b_item = cb.i CROSS JOIN tot\n` +
+      `WHERE p.co >= ${minSupport}\n` +
+      `ORDER BY lift DESC, co_count DESC LIMIT ${topN}`;
+  }
+
+  const startedAt = Date.now();
+  const res = await runQuery(sql, spec.location, {
+    dryRunFirst: true,
+    maxRows: topN,
+    ...(wantTarget ? { params: { target: spec.targetItem } } : {}),
+  });
+
+  logBqmlUsage({
+    eventType: "recommend.run",
+    clientId: spec.clientId,
+    workspaceId: spec.workspaceId,
+    userId: spec.userId,
+    resource: hashParts(sourceSql, g, i, spec.targetItem ?? "", "RECOMMEND"),
+    bytesScanned: res.bytesProcessed,
+    executionMs: Date.now() - startedAt,
+  });
+
+  const basketsAnalyzed = res.rows.length > 0 ? cellNum(res.rows[0]["total_baskets"]) : 0;
+
+  if (wantTarget) {
+    const recommendations: TargetRecommendation[] = res.rows.map((r) => ({
+      item: cellStr(r["item"]),
+      coCount: cellNum(r["co_count"]),
+      confidence: cellNum(r["confidence"]),
+      lift: cellNum(r["lift"]),
+    }));
+    return { basketsAnalyzed, target: spec.targetItem, recommendations };
+  }
+
+  const pairs: ItemPair[] = res.rows.map((r) => ({
+    itemA: cellStr(r["item_a"]),
+    itemB: cellStr(r["item_b"]),
+    coCount: cellNum(r["co_count"]),
+    countA: cellNum(r["count_a"]),
+    countB: cellNum(r["count_b"]),
+    confidenceAtoB: cellNum(r["conf_a_b"]),
+    confidenceBtoA: cellNum(r["conf_b_a"]),
+    lift: cellNum(r["lift"]),
+  }));
+  return { basketsAnalyzed, pairs };
+}
