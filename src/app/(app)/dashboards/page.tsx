@@ -20,6 +20,7 @@ import {
   type PickableChart,
 } from "@/components/dashboards/add-chart-picker";
 import { ChartRenderer } from "@/components/chat/chart-renderer";
+import { ChartFormatPopover } from "@/components/dashboards/chart-format-popover";
 import { EmptyState } from "@/components/ui/empty-state";
 import { defaultFilterValues } from "@/lib/dashboards/filter-defaults";
 import {
@@ -512,6 +513,22 @@ export default function DashboardsPage() {
     if (!trimmed) return;
     void commitCharts(dashboardId, (charts) =>
       charts.map((c) => (c._localId === localId ? { ...c, title: trimmed } : c))
+    );
+  };
+
+  /**
+   * Apply an axis-title / value-format edit (from ChartFormatPopover) to
+   * a dashboard tile. The popover hands back a fresh, fully-edited spec;
+   * we just splice it onto the chart and let commitCharts persist +
+   * optimistically render it.
+   */
+  const updateChartFormat = (
+    dashboardId: string,
+    localId: string,
+    nextSpec: unknown
+  ) => {
+    void commitCharts(dashboardId, (charts) =>
+      charts.map((c) => (c._localId === localId ? { ...c, spec: nextSpec } : c))
     );
   };
 
@@ -1061,6 +1078,9 @@ export default function DashboardsPage() {
                       onResize={(size) =>
                         resizeDashboardChart(selected.id, c._localId, size)
                       }
+                      onFormat={(nextSpec) =>
+                        updateChartFormat(selected.id, c._localId, nextSpec)
+                      }
                     />
                   ))}
                 </div>
@@ -1209,6 +1229,7 @@ function SortableChartTile({
   editing,
   onRename,
   onRemove,
+  onFormat,
 }: {
   id: string;
   title: string;
@@ -1224,6 +1245,9 @@ function SortableChartTile({
   editing?: boolean;
   onRename?: (title: string) => void;
   onRemove?: () => void;
+  // Persist an axis-title / value-format edit. Only meaningful in edit
+  // mode; when absent the format popover isn't rendered.
+  onFormat?: (nextSpec: unknown) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id });
@@ -1261,6 +1285,17 @@ function SortableChartTile({
           </button>
         }
         sizePicker={<SizePicker current={colSpan} onChange={onResize} title={title} />}
+        formatPicker={
+          editing && onFormat && settings ? (
+            <ChartFormatPopover
+              spec={spec}
+              workspaceCurrency={settings.currency}
+              workspaceLocale={settings.agentLocale}
+              onApply={onFormat}
+              ariaLabel={`Edit axes and value format for ${title}`}
+            />
+          ) : undefined
+        }
       />
     </div>
   );
@@ -1357,6 +1392,7 @@ function ChartTile({
   deleting,
   dragHandle,
   sizePicker,
+  formatPicker,
   renderError,
   compact = false,
   settings,
@@ -1382,6 +1418,10 @@ function ChartTile({
   // don't get a resize affordance because there's no per-chart
   // sizing concept on the saved-charts grid.
   sizePicker?: React.ReactNode;
+  // Optional axis-title / value-format editor, rendered in the action
+  // cluster alongside sizePicker. Only present for dashboard tiles in
+  // edit mode.
+  formatPicker?: React.ReactNode;
   // When the most recent filter-driven re-render failed for this
   // chart, the server returns the previous spec unchanged plus an
   // error message. We surface it as a small inline banner so the
@@ -1417,6 +1457,7 @@ function ChartTile({
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {sizePicker}
+          {formatPicker}
           {editing && onRemove && (
             <IconButton
               onClick={onRemove}

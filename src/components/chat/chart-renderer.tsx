@@ -7,8 +7,10 @@ import {
   type WorkspaceSettings,
 } from "@/lib/workspace-settings";
 import {
+  currencySymbolFor,
   formatDateWithToken,
   formatNumberWithToken,
+  formatPercentValue,
 } from "@/lib/workspace-format";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
@@ -414,7 +416,124 @@ function polishChartSpec(
     };
   }
 
+  // 4. Value formatting — currency symbol / percent / unit on the value
+  // axis ticks AND the tooltip, for cartesian charts (bar/line/area/
+  // scatter). Previously only KPI tiles formatted currency, so a "£"
+  // chart showed bare numbers on the axis. We derive the format from
+  // the series (the agent sets series[].format/currency/unit; the inline
+  // editor writes the same fields) and resolve the currency as
+  // series → workspace default. Gated on a format actually being
+  // present so plain numeric axes (years, counts) are left untouched.
+  const valueFormat = resolveValueFormat(out.series);
+  const firstSeriesType = out.series?.[0]?.type;
+  const isPieLike = firstSeriesType === "pie" || firstSeriesType === "donut";
+  if (hasAxes && !isPieLike && hasValueFormat(valueFormat)) {
+    // Axis ticks use compact abbreviation (£1.2M) to stay legible at
+    // tick density; tooltips use full precision (£1,234,567).
+    const axisFmt = makeValueFormatter(valueFormat, settings, { compact: true });
+    const tipFmt = makeValueFormatter(valueFormat, settings, { compact: false });
+
+    // The value axis is whichever axis ISN'T the category axis. Vertical
+    // bar/line → x is category, y is value. Horizontal bar → swapped.
+    const valueAxisKey: "xAxis" | "yAxis" = isCategoryAxis(
+      out.xAxis as AxisLike | undefined
+    )
+      ? "yAxis"
+      : isCategoryAxis(out.yAxis as AxisLike | undefined)
+      ? "xAxis"
+      : "yAxis";
+    const valueAxis = out[valueAxisKey] as AxisLike | undefined;
+    out[valueAxisKey] = {
+      ...(valueAxis ?? {}),
+      axisLabel: {
+        ...((valueAxis?.axisLabel as Record<string, unknown> | undefined) ?? {}),
+        formatter: axisFmt,
+      },
+    };
+
+    // valueFormatter applies to axis-triggered tooltips without us
+    // hand-building tooltip HTML. An explicit spec `formatter` (rare)
+    // still wins — ECharts ignores valueFormatter when formatter is set.
+    out.tooltip = {
+      trigger: "axis",
+      ...((out.tooltip as Record<string, unknown> | undefined) ?? {}),
+      valueFormatter: tipFmt,
+    };
+  }
+
   return out;
+}
+
+interface ValueFormat {
+  format?: "number" | "currency" | "percent";
+  currency?: string;
+  unit?: string;
+}
+
+/**
+ * Pull the value-formatting hints off a chart's series. Prefers the
+ * first series that declares a `format`, falling back to the first
+ * series, so a chart whose KPI-style hints sit on series[0] still
+ * resolves. Chart-level "full value format" edits write these fields
+ * onto every series, so reading series[0] is sufficient there too.
+ */
+function resolveValueFormat(series: SeriesLike[] | undefined): ValueFormat {
+  if (!series || series.length === 0) return {};
+  const s = series.find((x) => x.format) ?? series[0];
+  return { format: s.format, currency: s.currency, unit: s.unit };
+}
+
+function hasValueFormat(f: ValueFormat): boolean {
+  return Boolean(f.format || f.currency || f.unit);
+}
+
+/**
+ * Is this axis the CATEGORY axis (labels) rather than the VALUE axis
+ * (the metric)? ECharts marks category axes with `type: "category"` or
+ * by carrying a `data` array of labels. Used to decide which axis gets
+ * the value formatter.
+ */
+function isCategoryAxis(axis: AxisLike | undefined): boolean {
+  if (!axis) return false;
+  if (axis.type === "category") return true;
+  return Array.isArray(axis.data) && axis.data.length > 0;
+}
+
+/**
+ * Build an ECharts label/value formatter for a resolved ValueFormat.
+ *
+ *   - currency → locale currency symbol + number (per-series currency
+ *     overrides the workspace default)
+ *   - percent  → shares the KPI fraction/percent heuristic
+ *   - number   → token-formatted, optional unit suffix
+ *
+ * `compact` switches axis ticks to K/M/B abbreviation; tooltips pass
+ * `compact: false` for full precision. Non-numeric values pass through
+ * as strings so stray category values don't throw.
+ */
+function makeValueFormatter(
+  fmt: ValueFormat,
+  settings: WorkspaceSettings,
+  opts: { compact: boolean }
+): (value: unknown) => string {
+  const num = (v: number) =>
+    opts.compact
+      ? abbreviateNumber(v, settings)
+      : formatNumberWithToken(v, settings.numberFormat);
+  return (value: unknown): string => {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return value == null ? "" : String(value);
+    }
+    if (fmt.format === "percent") return formatPercentValue(value);
+    if (fmt.format === "currency") {
+      const symbol = currencySymbolFor(
+        fmt.currency ?? settings.currency,
+        settings.agentLocale
+      );
+      return `${symbol}${num(value)}`;
+    }
+    return fmt.unit ? `${num(value)}${fmt.unit}` : num(value);
+  };
 }
 
 interface AxisLike {
