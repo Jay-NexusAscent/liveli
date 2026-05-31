@@ -129,6 +129,16 @@ export function SparkleIcon({ className }: IconProps) {
   );
 }
 
+// Star for favouriting. `filled` swaps the outline for a solid fill so
+// an active favourite reads at a glance without relying on colour alone.
+export function StarIcon({ className, filled = false }: IconProps & { filled?: boolean }) {
+  return (
+    <svg className={className} width="18" height="18" viewBox="0 0 20 20" fill={filled ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10 2.5l2.32 4.7 5.18.75-3.75 3.66.88 5.16L10 14.99l-4.63 2.44.88-5.16L2.5 8.6l5.18-.75L10 2.5Z" />
+    </svg>
+  );
+}
+
 export function InsightIcon({ className }: IconProps) {
   return (
     <svg className={className} width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

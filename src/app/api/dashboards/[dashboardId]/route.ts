@@ -9,6 +9,10 @@ export const runtime = "nodejs";
 const PatchBody = z.object({
   title: z.string().min(1).max(120).optional(),
   description: z.string().max(280).nullable().optional(),
+  // Favourite flag, toggled from the dashboard gallery. Persisted on
+  // the doc (not per-user) — workspace-scoped dashboards in single-user
+  // private testing, so a doc-level flag is the right granularity.
+  favorite: z.boolean().optional(),
   charts: z
     .array(
       z.object({
@@ -71,10 +75,11 @@ export async function PATCH(
   if (
     body.title === undefined &&
     body.description === undefined &&
+    body.favorite === undefined &&
     body.charts === undefined
   ) {
     return Response.json(
-      { error: "Provide title, description, and/or charts." },
+      { error: "Provide title, description, favorite, and/or charts." },
       { status: 400 }
     );
   }
@@ -89,6 +94,7 @@ export async function PATCH(
   const update: Record<string, unknown> = { updatedAt: FieldValue.serverTimestamp() };
   if (body.title !== undefined) update.title = body.title;
   if (body.description !== undefined) update.description = body.description ?? null;
+  if (body.favorite !== undefined) update.favorite = body.favorite;
   if (body.charts !== undefined) {
     update.charts = body.charts.map((c, i) => ({
       order: c.order ?? i,
