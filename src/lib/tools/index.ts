@@ -10,6 +10,7 @@ import { saveInsightTool } from "./save-insight";
 import { proposeInsightsTool } from "./propose-insights";
 import { forecastTool } from "./forecast";
 import { detectAnomaliesTool } from "./detect-anomalies";
+import { classifyTool } from "./classify";
 import type { AgentContext, ToolDefinition, ToolResult } from "./types";
 import type { FunctionDeclaration } from "@google-cloud/vertexai";
 
@@ -27,6 +28,7 @@ export const tools: ToolDefinition[] = [
   proposeInsightsTool,
   forecastTool,
   detectAnomaliesTool,
+  classifyTool,
 ];
 
 const byName = new Map(tools.map((t) => [t.name, t]));
