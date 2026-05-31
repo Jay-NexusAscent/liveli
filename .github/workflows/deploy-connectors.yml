@@ -233,18 +233,24 @@ jobs:
       # Update BOTH residency-suffixed jobs from the same image. The
       # job names are `connector-<type>-eu` (in europe-west1) and
       # `connector-<type>-us` (in us-central1) — see infra/cloud-run.tf.
-      # Each region's job is updated independently; failure in one
-      # doesn't block the other (set -e is on, but we tee through).
+      #
+      # First-deploy race: the Terraform workflow (which CREATES these
+      # jobs) and this workflow both fire on a push to main, in parallel
+      # with no dependency between them. For a brand-new connector type
+      # the job may not exist yet when we reach this step, and
+      # `gcloud run jobs update` requires an existing job — it would 404.
+      # So we poll `jobs describe` for up to ~6 min, giving the Terraform
+      # apply time to create the job, then update. For existing
+      # connectors the describe succeeds on the first try (no wait).
+      # If the job still doesn't exist after the timeout, the update
+      # runs and fails loudly — surfacing a connector dir that was added
+      # without a matching entry in local.connector_types.
       - name: Update Cloud Run Job image (EU residency)
         run: |
-          gcloud run jobs update "connector-${{ matrix.connector }}-eu" \
-            --image "$IMAGE_URI" \
-            --region "europe-west1" \
-            --project "$PROJECT_ID"
+          ./.github/scripts/update-connector-job.sh \
+            "connector-${{ matrix.connector }}-eu" "europe-west1"
 
       - name: Update Cloud Run Job image (US residency)
         run: |
-          gcloud run jobs update "connector-${{ matrix.connector }}-us" \
-            --image "$IMAGE_URI" \
-            --region "us-central1" \
-            --project "$PROJECT_ID"
+          ./.github/scripts/update-connector-job.sh \
+            "connector-${{ matrix.connector }}-us" "us-central1"
