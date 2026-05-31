@@ -26,6 +26,25 @@ const COL_SPAN_CLASSES: Record<ColSpan, string> = {
   large: "lg:col-span-4",
 };
 
+/** True when a spec's first series is a KPI tile (no axes, one number). */
+function isKpiSpec(spec: unknown): boolean {
+  const series = (spec as { series?: Array<{ type?: string }> } | null)?.series;
+  return series?.[0]?.type === "kpi";
+}
+
+/**
+ * Per-tile render height inside the fullscreen grid. KPI tiles are a
+ * single headline number — at 360px they sit in a sea of empty space,
+ * the exact complaint we're fixing. They get a compact height that
+ * matches their visual weight; real charts keep a generous canvas,
+ * with `large` (full-width hero) charts taller still.
+ */
+function chartTileHeight(isKpi: boolean, colSpan?: ColSpan): number {
+  if (isKpi) return 150;
+  if (colSpan === "large") return 440;
+  return 360;
+}
+
 type FullscreenContent =
   | { kind: "chart"; id: string; title: string; spec: unknown }
   | {
@@ -103,6 +122,9 @@ export function FullscreenModal({ content, onClose, onEdit, settings }: Fullscre
   // to produce the PNG. Buttons inside are tagged data-capture-exclude
   // so they don't appear in the screenshot.
   const panelRef = useRef<HTMLDivElement | null>(null);
+  // Ref onto the scrolling body. Copy temporarily un-scrolls it so the
+  // full chart content is captured rather than only the visible slice.
+  const bodyRef = useRef<HTMLDivElement | null>(null);
 
   // Bind Esc + lock body scroll while open. Cleanup removes both.
   useEffect(() => {
@@ -132,11 +154,40 @@ export function FullscreenModal({ content, onClose, onEdit, settings }: Fullscre
       window.setTimeout(() => setCopyState("idle"), 2000);
       return;
     }
+    const panel = panelRef.current;
+    const body = bodyRef.current;
+    // The panel is normally height-constrained to the viewport (it's an
+    // `items-stretch` flex child with `m-4`) and its body scrolls. That
+    // means html-to-image, which captures an element's rendered box,
+    // only sees the visible slice — anything scrolled out of view gets
+    // cropped. Before capturing we drop those constraints so the panel
+    // grows to its full natural content height; we restore them in the
+    // `finally` so the on-screen layout is untouched.
+    const prevPanel = {
+      alignSelf: panel.style.alignSelf,
+      maxHeight: panel.style.maxHeight,
+      height: panel.style.height,
+    };
+    const prevBody = body
+      ? { overflow: body.style.overflow, maxHeight: body.style.maxHeight, height: body.style.height }
+      : null;
+    panel.style.alignSelf = "flex-start";
+    panel.style.maxHeight = "none";
+    panel.style.height = "auto";
+    if (body) {
+      body.style.overflow = "visible";
+      body.style.maxHeight = "none";
+      body.style.height = "auto";
+    }
     try {
       // pixelRatio: 2 for retina-sharp output when pasted into Teams /
       // Outlook (which often display at native DPI).
-      const dataUrl = await toPng(panelRef.current, {
+      const dataUrl = await toPng(panel, {
         pixelRatio: 2,
+        // Pin width/height to the now-expanded box so the capture
+        // covers the full content even on the first paint.
+        width: panel.scrollWidth,
+        height: panel.scrollHeight,
         // Filter the action-buttons cluster out of the capture — we
         // don't want the Copy / Edit / Close buttons in the PNG.
         filter: (node) => {
@@ -146,8 +197,7 @@ export function FullscreenModal({ content, onClose, onEdit, settings }: Fullscre
         // Match the modal's background so anti-aliased edges blend.
         // Reading the actual computed color of the panel keeps light /
         // dark themes correct without hard-coding hex values.
-        backgroundColor:
-          getComputedStyle(panelRef.current).backgroundColor || undefined,
+        backgroundColor: getComputedStyle(panel).backgroundColor || undefined,
       });
       const blob = await (await fetch(dataUrl)).blob();
       await navigator.clipboard.write([
@@ -158,6 +208,15 @@ export function FullscreenModal({ content, onClose, onEdit, settings }: Fullscre
     } catch {
       setCopyState("error");
       window.setTimeout(() => setCopyState("idle"), 2000);
+    } finally {
+      panel.style.alignSelf = prevPanel.alignSelf;
+      panel.style.maxHeight = prevPanel.maxHeight;
+      panel.style.height = prevPanel.height;
+      if (body && prevBody) {
+        body.style.overflow = prevBody.overflow;
+        body.style.maxHeight = prevBody.maxHeight;
+        body.style.height = prevBody.height;
+      }
     }
   };
 
@@ -243,26 +302,33 @@ export function FullscreenModal({ content, onClose, onEdit, settings }: Fullscre
           </div>
         </header>
 
-        <div className="flex-1 overflow-auto p-6">
+        <div ref={bodyRef} className="flex-1 overflow-auto p-6">
           {content.kind === "chart" ? (
             <ChartRenderer spec={content.spec} height={window.innerHeight - 200} settings={settings} />
           ) : (
-            <div className="grid gap-4 lg:grid-cols-4">
+            <div className="grid auto-rows-min items-start gap-4 lg:grid-cols-4">
               {[...content.charts]
                 .sort((a, b) => a.order - b.order)
-                .map((c, i) => (
-                  <div
-                    key={i}
-                    className={`rounded-md border border-border bg-background/40 p-4 ${
-                      COL_SPAN_CLASSES[c.colSpan ?? "medium"]
-                    }`}
-                  >
-                    <div className="mb-2 text-[13px] font-medium text-text-primary">
-                      {c.title}
+                .map((c, i) => {
+                  const kpi = isKpiSpec(c.spec);
+                  return (
+                    <div
+                      key={i}
+                      className={`rounded-md border border-border bg-background/40 p-4 ${
+                        COL_SPAN_CLASSES[c.colSpan ?? "medium"]
+                      }`}
+                    >
+                      <div className="mb-2 text-[13px] font-medium text-text-primary">
+                        {c.title}
+                      </div>
+                      <ChartRenderer
+                        spec={c.spec}
+                        height={chartTileHeight(kpi, c.colSpan)}
+                        settings={settings}
+                      />
                     </div>
-                    <ChartRenderer spec={c.spec} height={360} settings={settings} />
-                  </div>
-                ))}
+                  );
+                })}
             </div>
           )}
         </div>
