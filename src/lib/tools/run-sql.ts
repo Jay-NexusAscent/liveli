@@ -67,6 +67,20 @@ export const runSqlTool: ToolDefinition = {
   inputSchema: Input,
   handler: async (raw, ctx) => {
     const { sql, maxRows = 100 } = Input.parse(raw);
+    // `{{ … }}` is a dashboard FILTER PLACEHOLDER, not SQL. BigQuery parses
+    // a leading `{{` as a braced struct constructor and fails with an
+    // opaque "Invalid braced constructor" error. Catch it here with an
+    // actionable message: run_sql is for exploration with LITERAL values;
+    // placeholders only belong in a chart's `sourceSql` passed to
+    // make_dashboard. The model gets a clear correction signal instead of
+    // a BigQuery syntax error it can't easily map back to its mistake.
+    if (/\{\{/.test(sql)) {
+      throw new Error(
+        "run_sql does not accept {{filter:...}} placeholders — those are only for a chart's sourceSql in make_dashboard. " +
+          "To explore, substitute concrete literal values (e.g. a real date range like TIMESTAMP(\"2026-05-01\")) and run that. " +
+          "Keep the {{...}} version for the chart's sourceSql so the dashboard can re-render it under filter changes."
+      );
+    }
     if (!isReadOnlySql(sql)) {
       throw new Error("Only SELECT and WITH queries are allowed (no DDL/DML, no multi-statement scripts).");
     }
