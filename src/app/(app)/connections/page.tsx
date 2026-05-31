@@ -51,6 +51,16 @@ import { FreshdeskWizard } from "@/components/connections/freshdesk-wizard";
 import { ChargebeeWizard } from "@/components/connections/chargebee-wizard";
 import { ActivecampaignWizard } from "@/components/connections/activecampaign-wizard";
 import { BigcommerceWizard } from "@/components/connections/bigcommerce-wizard";
+import { MongodbWizard } from "@/components/connections/mongodb-wizard";
+import { SnowflakeWizard } from "@/components/connections/snowflake-wizard";
+import { OracleWizard } from "@/components/connections/oracle-wizard";
+import { PaypalWizard } from "@/components/connections/paypal-wizard";
+import { MagentoWizard } from "@/components/connections/magento-wizard";
+import { ZendeskSellWizard } from "@/components/connections/zendesk-sell-wizard";
+import { CloseWizard } from "@/components/connections/close-wizard";
+import { TiktokAdsWizard } from "@/components/connections/tiktok-ads-wizard";
+import { SegmentWizard } from "@/components/connections/segment-wizard";
+import { SageIntacctWizard } from "@/components/connections/sage-intacct-wizard";
 import { EditConnectorModal } from "@/components/connections/edit-connector-modal";
 
 interface ConnectorRecord {
@@ -218,6 +228,17 @@ type ConnectAction =
   | "chargebee"
   | "activecampaign"
   | "bigcommerce"
+  // Batch E — more DB + SaaS connectors (LIVELI-134):
+  | "mongodb"
+  | "snowflake"
+  | "oracle"
+  | "paypal"
+  | "magento"
+  | "zendesk-sell"
+  | "close"
+  | "tiktok-ads"
+  | "segment"
+  | "sage-intacct"
   | null;
 
 type SourceCategory =
@@ -278,10 +299,10 @@ const popularSources: PopularSource[] = [
   { name: "PostgreSQL", desc: "Replicate tables from any Postgres database", category: "Databases", action: "postgres" },
   { name: "MySQL", desc: "Replicate tables from any MySQL database", category: "Databases", action: "mysql" },
   { name: "BigQuery", desc: "Replicate datasets from your BigQuery project", category: "Databases", action: "bigquery" },
-  { name: "MongoDB", desc: "Sync collections from MongoDB or Atlas", category: "Databases", action: null },
-  { name: "Snowflake", desc: "Replicate tables from your Snowflake warehouse", category: "Databases", action: null },
+  { name: "MongoDB", desc: "Sync collections from MongoDB or Atlas", category: "Databases", action: "mongodb" },
+  { name: "Snowflake", desc: "Replicate tables from your Snowflake warehouse", category: "Databases", action: "snowflake" },
   { name: "Amazon Redshift", desc: "Replicate tables from a Redshift cluster", category: "Databases", action: "redshift" },
-  { name: "Oracle Database", desc: "Replicate tables from an Oracle DB", category: "Databases", action: null },
+  { name: "Oracle Database", desc: "Replicate tables from an Oracle DB", category: "Databases", action: "oracle" },
   { name: "Microsoft SQL Server", desc: "Replicate tables from MSSQL / Azure SQL", category: "Databases", action: "sqlserver" },
   { name: "Azure Synapse", desc: "Replicate tables from Azure Synapse Analytics", category: "Databases", action: "synapse" },
   { name: "MariaDB", desc: "Replicate tables from any MariaDB instance", category: "Databases", action: "mariadb" },
@@ -289,7 +310,7 @@ const popularSources: PopularSource[] = [
 
   // Payments
   { name: "Stripe", desc: "Charges, subscriptions, customers, refunds", category: "Payments", action: "stripe" },
-  { name: "PayPal", desc: "Transactions, disputes, payouts", category: "Payments", action: null },
+  { name: "PayPal", desc: "Transactions, disputes, payouts", category: "Payments", action: "paypal" },
   { name: "Chargebee", desc: "Subscription billing + revenue events", category: "Payments", action: "chargebee" },
   { name: "Recurly", desc: "Subscriptions, invoices, accounts", category: "Payments", action: null },
   { name: "Square", desc: "Transactions, items, customers, payouts", category: "Payments", action: "square" },
@@ -298,21 +319,21 @@ const popularSources: PopularSource[] = [
   { name: "Shopify", desc: "Orders, products, customers, inventory", category: "E-commerce", action: "shopify" },
   { name: "WooCommerce", desc: "Orders, products, customers from your WP store", category: "E-commerce", action: "woocommerce" },
   { name: "BigCommerce", desc: "Orders, catalog, customers, fulfilment", category: "E-commerce", action: "bigcommerce" },
-  { name: "Adobe Commerce", desc: "Magento / Adobe Commerce orders + catalog", category: "E-commerce", action: null },
+  { name: "Adobe Commerce", desc: "Magento / Adobe Commerce orders + catalog", category: "E-commerce", action: "magento" },
   { name: "Amazon Seller", desc: "Orders, fulfilment, settlements, fees", category: "E-commerce", action: null },
 
   // CRM
   { name: "HubSpot", desc: "Contacts, deals, companies, engagements", category: "CRM", action: "hubspot" },
   { name: "Salesforce", desc: "Accounts, opportunities, contacts, leads", category: "CRM", action: "salesforce" },
   { name: "Pipedrive", desc: "Pipelines, deals, activities, persons", category: "CRM", action: "pipedrive" },
-  { name: "Zendesk Sell", desc: "Pipeline, contacts, deals", category: "CRM", action: null },
-  { name: "Close", desc: "Leads, opportunities, calls, emails", category: "CRM", action: null },
+  { name: "Zendesk Sell", desc: "Pipeline, contacts, deals", category: "CRM", action: "zendesk-sell" },
+  { name: "Close", desc: "Leads, opportunities, calls, emails", category: "CRM", action: "close" },
 
   // Marketing
   { name: "Google Ads", desc: "Campaign performance and spend", category: "Marketing", action: "google-ads" },
   { name: "Meta Ads", desc: "Facebook + Instagram ad performance", category: "Marketing", action: "facebook-ads" },
   { name: "LinkedIn Ads", desc: "Sponsored content + lead-gen campaigns", category: "Marketing", action: null },
-  { name: "TikTok Ads", desc: "TikTok ad performance + creatives", category: "Marketing", action: null },
+  { name: "TikTok Ads", desc: "TikTok ad performance + creatives", category: "Marketing", action: "tiktok-ads" },
   { name: "Microsoft Ads", desc: "Bing search ads performance + spend", category: "Marketing", action: null },
   { name: "Mailchimp", desc: "Campaigns, lists, audience engagement", category: "Marketing", action: "mailchimp" },
   { name: "Klaviyo", desc: "Email + SMS flows, lists, events", category: "Marketing", action: "klaviyo" },
@@ -322,7 +343,7 @@ const popularSources: PopularSource[] = [
   { name: "Google Analytics 4", desc: "Sessions, events, conversions", category: "Analytics", action: "ga4" },
   { name: "Mixpanel", desc: "Product events + funnels", category: "Analytics", action: "mixpanel" },
   { name: "Amplitude", desc: "Product events + cohorts", category: "Analytics", action: null },
-  { name: "Segment", desc: "Customer events from any Segment source", category: "Analytics", action: null },
+  { name: "Segment", desc: "Customer events from any Segment source", category: "Analytics", action: "segment" },
 
   // Project Management
   { name: "Jira", desc: "Issues, sprints, projects, worklogs", category: "Project Management", action: "jira" },
@@ -338,7 +359,7 @@ const popularSources: PopularSource[] = [
   // Finance
   { name: "QuickBooks", desc: "Invoices, P&L, accounts, customers", category: "Finance", action: "quickbooks" },
   { name: "Xero", desc: "Invoices, contacts, balance sheet, P&L", category: "Finance", action: null },
-  { name: "Sage Intacct", desc: "GL, AR/AP, vendors, customers", category: "Finance", action: null },
+  { name: "Sage Intacct", desc: "GL, AR/AP, vendors, customers", category: "Finance", action: "sage-intacct" },
 
   // Productivity
   { name: "Slack", desc: "Messages, channels, users, files", category: "Productivity", action: "slack" },
@@ -1027,6 +1048,56 @@ function ConnectionsPageInner() {
       />
       <BigcommerceWizard
         open={activeWizard === "bigcommerce"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <MongodbWizard
+        open={activeWizard === "mongodb"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <SnowflakeWizard
+        open={activeWizard === "snowflake"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <OracleWizard
+        open={activeWizard === "oracle"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <PaypalWizard
+        open={activeWizard === "paypal"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <MagentoWizard
+        open={activeWizard === "magento"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <ZendeskSellWizard
+        open={activeWizard === "zendesk-sell"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <CloseWizard
+        open={activeWizard === "close"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <TiktokAdsWizard
+        open={activeWizard === "tiktok-ads"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <SegmentWizard
+        open={activeWizard === "segment"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <SageIntacctWizard
+        open={activeWizard === "sage-intacct"}
         onClose={closeWizard}
         onConnected={onWizardConnected}
       />

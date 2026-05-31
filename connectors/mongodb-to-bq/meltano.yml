@@ -1,0 +1,42 @@
+version: 1
+default_environment: dev
+project_id: liveli-mongodb-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-mongodb
+      variant: meltanolabs
+      pip_url: git+https://github.com/MeltanoLabs/tap-mongodb.git
+      # Connection params come from env at runtime:
+      #   TAP_MONGODB_MONGODB_CONNECTION_STRING  (full mongodb:// or
+      #     mongodb+srv:// URI, including credentials + host + options)
+      #   TAP_MONGODB_DATABASE                   (database to replicate)
+      # Meltano maps the `mongodb_connection_string` setting to the
+      # TAP_MONGODB_MONGODB_CONNECTION_STRING env var (TAP_<NAME>_<SETTING>).
+      config:
+        # Emit each document under a `document` JSON column rather than
+        # one column per top-level field — Mongo is schemaless so a
+        # per-field schema would thrash on every new key. target-bigquery
+        # lands it as a JSON/RECORD column the agent can query.
+        add_record_metadata: true
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      # Config comes from env at runtime:
+      #   TARGET_BIGQUERY_PROJECT, TARGET_BIGQUERY_DATASET,
+      #   TARGET_BIGQUERY_LOCATION
+      # overwrite (not upsert) — raw-DB archetype. tap-mongodb replicates
+      # FULL_TABLE by default and collections have no relational PK the
+      # z3z1ma merge path can key on. Overwrite atomically replaces the
+      # canonical table each run; matches our ephemeral-state full-extract
+      # reality. See connectors/mysql-to-bq/meltano.yml for the long form.
+      config:
+        method: batch_job
+        denormalized: true
+        overwrite: true

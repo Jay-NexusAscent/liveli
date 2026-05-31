@@ -72,6 +72,21 @@ locals {
     "chargebee-to-bq",
     "activecampaign-to-bq",
     "bigcommerce-to-bq",
+    # Batch E (LIVELI-134): more DB + SaaS connectors. The three DB taps
+    # (mongodb/snowflake/oracle) run the raw-DB archetype (overwrite +
+    # FULL_TABLE); the rest are upsert SaaS taps. Oracle uses
+    # pipelinewise-tap-oracle in `thin` mode (no Instant Client — Cloud
+    # Run Jobs can't ship the native client libs).
+    "mongodb-to-bq",
+    "snowflake-to-bq",
+    "oracle-to-bq",
+    "paypal-to-bq",
+    "magento-to-bq",
+    "zendesk-sell-to-bq",
+    "close-to-bq",
+    "tiktok-ads-to-bq",
+    "segment-to-bq",
+    "sage-intacct-to-bq",
     # LIVELI-54: dbt transformation layer. ONE shared Job (per
     # residency region) handles dbt for ALL connector types — models
     # are tagged inside the dbt project, dbt-runner selects which

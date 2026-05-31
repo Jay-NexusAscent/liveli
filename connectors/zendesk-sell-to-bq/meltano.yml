@@ -1,0 +1,33 @@
+version: 1
+default_environment: dev
+project_id: liveli-zendesk-sell-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-zendesk-sell
+      variant: leag
+      # Zendesk Sell (formerly Base CRM). Distinct product from Zendesk
+      # Support (that's the separate zendesk-to-bq connector). Not on
+      # PyPI → install from git.
+      pip_url: git+https://github.com/leag/tap-zendesk-sell.git
+      # Required env:
+      #   TAP_ZENDESK_SELL_ACCESS_TOKEN  (Sell OAuth access token)
+      #   TAP_ZENDESK_SELL_DEVICE_UUID   (any stable UUID identifying
+      #     this sync client — used for the Sync API device handshake)
+      settings:
+        - name: access_token
+          kind: password
+        - name: device_uuid
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true
