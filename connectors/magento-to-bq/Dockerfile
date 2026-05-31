@@ -1,4 +1,8 @@
-FROM meltano/meltano:v3.7.1-python3.11
+# Python 3.10 (not 3.11): hotglue's tap-magento pins python ">=3.6.2,<3.11",
+# so on a 3.11 base `meltano install` fails with "Package 'tap-magento'
+# requires a different Python: 3.11.x not in '<3.11,>=3.6.2'". 3.10 satisfies
+# the constraint.
+FROM meltano/meltano:v3.7.1-python3.10
 WORKDIR /project
 COPY meltano.yml ./
 # Meltano 3.x doesn't bundle the plugin hub registry — fetch the plugin
