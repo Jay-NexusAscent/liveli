@@ -131,6 +131,27 @@ export async function executeTool(
   ctx: AgentContext
 ): Promise<ToolResult> {
   const tool = byName.get(name);
-  if (!tool) throw new Error(`Unknown tool: ${name}`);
+  if (!tool) throw new Error(unknownToolMessage(name));
   return tool.handler(rawInput, ctx);
+}
+
+/**
+ * Build a self-correcting error for a tool name the model invented. The
+ * observed failure was a hallucinated `MakeDashboardFilters` tool —
+ * the model reached for a dedicated "add filters" tool that doesn't
+ * exist, because filters are an ARGUMENT of make_dashboard, not their
+ * own tool. A bare "Unknown tool" gives the model nothing to recover
+ * with; this points it at the real call. We special-case the
+ * dashboard-filter confusion and otherwise list the valid tool names.
+ */
+function unknownToolMessage(name: string): string {
+  const valid = tools.map((t) => t.name).join(", ");
+  if (/dashboard/i.test(name) && /filter/i.test(name)) {
+    return (
+      `Unknown tool: ${name}. There is no separate filter tool — dashboard filters are the ` +
+      `\`filters[]\` argument of make_dashboard (and update_dashboard). Declare the filters there, ` +
+      `then reference them in each chart's sourceSql via {{filter:<id>.<field>}}. Valid tools: ${valid}.`
+    );
+  }
+  return `Unknown tool: ${name}. Valid tools: ${valid}.`;
 }

@@ -1,9 +1,16 @@
 import { z } from "zod";
 import { FieldValue } from "@google-cloud/firestore";
 import { dashboardsIn } from "@/lib/firestore";
+import { safeQuery } from "@/lib/bigquery";
 import type { ToolDefinition } from "./types";
-import { COL_SPAN_VALUES, type FilterDef } from "@/lib/dashboards/types";
+import {
+  COL_SPAN_VALUES,
+  type ChartDataMapping,
+  type FilterDef,
+} from "@/lib/dashboards/types";
 import { narrowFilter } from "@/lib/dashboards/filter-narrow";
+import { substituteFilters } from "@/lib/dashboards/sql-template";
+import { rebuildChartSpec } from "@/lib/dashboards/chart-data";
 
 /**
  * Reuse the same narrow ECharts spec subset as make_chart. Same Gemini
@@ -13,7 +20,12 @@ import { narrowFilter } from "@/lib/dashboards/filter-narrow";
 const SeriesSchema = z.object({
   name: z.string().optional(),
   type: z.enum(["bar", "line", "pie", "donut", "scatter", "area", "kpi"]),
-  data: z.array(z.number()).max(10_000),
+  // Optional here (unlike make_chart, where it's always required): a
+  // filter-wired chart (sourceSql + dataMapping) can omit baked data and
+  // let the make_dashboard handler populate it at save time from the
+  // filter defaults. A ChartSpec-level superRefine below re-imposes the
+  // requirement for STATIC charts, which have nothing to populate from.
+  data: z.array(z.number()).max(10_000).optional(),
   smooth: z.boolean().optional(),
   stack: z.string().optional(),
   // KPI hints — see make-chart.ts for full doc.
@@ -91,6 +103,25 @@ const ChartSpec = z.object({
   sourceSql: z.string().min(1).optional(),
   /** Maps result columns onto chart spec positions. See DataMappingSchema doc. */
   dataMapping: DataMappingSchema.optional(),
+}).superRefine((chart, ctx) => {
+  // `series[].data` is schema-optional so filter-wired charts can defer
+  // it to save-time population (see SeriesSchema). But a STATIC chart —
+  // one without BOTH sourceSql and dataMapping — has no source to
+  // populate from, so every series must carry its own data. Re-impose
+  // that here with a path-pointed, self-correcting message rather than
+  // letting the chart save blank.
+  const filterWired = Boolean(chart.sourceSql && chart.dataMapping);
+  if (filterWired) return;
+  chart.echartsOption.series.forEach((s, i) => {
+    if (!s.data || s.data.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["echartsOption", "series", i, "data"],
+        message:
+          "series.data is required for a static chart. Either include the numeric data, or wire the chart to filters by providing BOTH sourceSql and dataMapping (then data may be omitted and is populated on save).",
+      });
+    }
+  });
 });
 
 // ─── filter input schema (Gemini-flat shape) ─────────────────────────
@@ -221,6 +252,15 @@ function normalizeDashboardInput(raw: unknown): unknown {
   return r;
 }
 
+/**
+ * True if any series in this chart's ECharts option lacks usable data
+ * (absent or empty array). Drives whether the make_dashboard handler
+ * runs the chart's sourceSql at save time to fill in the first paint.
+ */
+function seriesMissingData(echartsOption: { series: Array<{ data?: number[] }> }): boolean {
+  return echartsOption.series.some((s) => !s.data || s.data.length === 0);
+}
+
 export const makeDashboardTool: ToolDefinition = {
   name: "make_dashboard",
   description:
@@ -230,19 +270,57 @@ export const makeDashboardTool: ToolDefinition = {
     const { title, description, charts, filters } = Input.parse(normalizeDashboardInput(raw));
     const narrowedFilters: FilterDef[] = (filters ?? []).map(narrowFilter);
     const docRef = dashboardsIn(ctx.clientId, ctx.workspaceId).doc();
-    const chartSpecs = charts.map((c, i) => ({
-      order: i,
-      title: c.title,
-      spec: c.echartsOption as unknown,
-      // Persist colSpan when the model picked one; the API GET passes
-      // it through to the client. Missing = client treats as "medium".
-      ...(c.colSpan ? { colSpan: c.colSpan } : {}),
-      // Filter-driven re-render fields. Both must be present for the
-      // /render endpoint to re-run the chart — partial config (only
-      // sourceSql, only dataMapping) falls back to static rendering.
-      ...(c.sourceSql ? { sourceSql: c.sourceSql } : {}),
-      ...(c.dataMapping ? { dataMapping: c.dataMapping } : {}),
-    }));
+    const chartSpecs = await Promise.all(
+      charts.map(async (c, i) => {
+        // First paint comes from the STORED static spec — the dashboards
+        // page only calls /render when the user changes a filter, not on
+        // mount. So a filter-wired chart that omitted its baked
+        // `series[].data` would otherwise paint blank. Populate it now by
+        // running the chart's sourceSql under the filter DEFAULTS (empty
+        // values → narrowFilter defaults), then rebuilding the spec with
+        // the results. Best-effort: a failure here leaves the (possibly
+        // dataless) static spec in place and still saves the dashboard —
+        // the chart fills in the moment the user touches a filter.
+        let spec: unknown = c.echartsOption;
+        const filterWired = Boolean(c.sourceSql && c.dataMapping);
+        if (filterWired && seriesMissingData(c.echartsOption)) {
+          try {
+            const substituted = substituteFilters(c.sourceSql!, narrowedFilters, {});
+            const result = await safeQuery(substituted, {
+              maxRows: 1000,
+              context: {
+                clientId: ctx.clientId,
+                workspaceId: ctx.workspaceId,
+                userId: ctx.userId,
+              },
+            });
+            spec = rebuildChartSpec(
+              c.echartsOption,
+              c.dataMapping as ChartDataMapping,
+              result.rows
+            );
+          } catch (err) {
+            console.warn("[make_dashboard] save-time data population failed", {
+              chartTitle: c.title,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+        return {
+          order: i,
+          title: c.title,
+          spec,
+          // Persist colSpan when the model picked one; the API GET passes
+          // it through to the client. Missing = client treats as "medium".
+          ...(c.colSpan ? { colSpan: c.colSpan } : {}),
+          // Filter-driven re-render fields. Both must be present for the
+          // /render endpoint to re-run the chart — partial config (only
+          // sourceSql, only dataMapping) falls back to static rendering.
+          ...(c.sourceSql ? { sourceSql: c.sourceSql } : {}),
+          ...(c.dataMapping ? { dataMapping: c.dataMapping } : {}),
+        };
+      })
+    );
     await docRef.set({
       title,
       description: description ?? null,
