@@ -385,6 +385,33 @@ export default function DashboardsPage() {
     }
   };
 
+  /**
+   * Apply an axis-title / value-format edit to a STANDALONE saved chart
+   * (the saved-charts grid), persisting via the charts PATCH endpoint.
+   * Optimistic with rollback — mirrors commitCharts' approach for the
+   * dashboard-tile path.
+   */
+  const updateSavedChartFormat = async (id: string, nextSpec: unknown) => {
+    let previous: SavedChart[] = [];
+    setCharts((cs) => {
+      previous = cs;
+      return cs.map((c) => (c.id === id ? { ...c, spec: nextSpec } : c));
+    });
+    try {
+      const res = await fetch(`/api/charts/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ spec: nextSpec }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      setCharts(previous);
+      alert(
+        `Couldn't save chart format: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  };
+
   const deleteDashboard = async (id: string, title: string) => {
     if (!confirm(`Delete dashboard "${title}" and all its charts? This can't be undone.`)) return;
     setDeleting((s) => new Set(s).add(id));
@@ -1102,6 +1129,15 @@ export default function DashboardsPage() {
                 title={c.title}
                 spec={c.spec}
                 settings={settings}
+                formatPicker={
+                  <ChartFormatPopover
+                    spec={c.spec}
+                    workspaceCurrency={settings.currency}
+                    workspaceLocale={settings.agentLocale}
+                    onApply={(nextSpec) => updateSavedChartFormat(c.id, nextSpec)}
+                    ariaLabel={`Edit axes and value format for ${c.title}`}
+                  />
+                }
                 onExpand={() =>
                   setFullscreen({
                     kind: "chart",
