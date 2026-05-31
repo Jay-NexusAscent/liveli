@@ -96,8 +96,23 @@ export function alertChannelsIn(clientId: string, workspaceId: string) {
   return workspaceDoc(clientId, workspaceId).collection("alertChannels");
 }
 
+export function users() {
+  return db().collection("users");
+}
+
 export function userDoc(userId: string) {
-  return db().collection("users").doc(userId);
+  return users().doc(userId);
+}
+
+/**
+ * Top-level waitlist collection. Populated when self-serve signup is
+ * capped (LIVELI_SIGNUP_CAP) and the sign-up page swaps to a waitlist
+ * form. Docs are keyed by lowercased email so re-submits are idempotent
+ * rather than creating duplicates. Not tenant-scoped — these are
+ * prospective users who don't have a Client yet.
+ */
+export function waitlist() {
+  return db().collection("waitlist");
 }
 
 // ── DEPRECATED: pre-Client-layer flat layout ────────────────────────

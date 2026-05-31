@@ -5,9 +5,10 @@ import { createPortal } from "react-dom";
 import { toPng } from "html-to-image";
 import { CheckIcon, CloseIcon, CopyIcon, PencilIcon } from "@/components/icons";
 import { ChartRenderer } from "@/components/chat/chart-renderer";
+import { FilterBar } from "@/components/dashboards/filter-bar";
 import type { WorkspaceSettings } from "@/lib/workspace-settings";
 
-import type { ColSpan } from "@/lib/dashboards/types";
+import type { ColSpan, FilterDef, FilterValues } from "@/lib/dashboards/types";
 
 // Mirror of the page's COL_SPAN_CLASSES — written out as full
 // literal strings for Tailwind JIT detection. `lg:` here because
@@ -74,6 +75,18 @@ interface FullscreenModalProps {
    * the fullscreen overlay too.
    */
   settings?: WorkspaceSettings;
+  /**
+   * Dashboard filter wiring — optional so single-chart fullscreen (and
+   * any dashboard without filters) renders unchanged. When `filters`
+   * is non-empty the modal renders a FilterBar above the grid and
+   * drives re-renders through the same handlers the in-page view uses,
+   * so a filter change updates both surfaces from one source of truth.
+   */
+  filters?: FilterDef[];
+  filterValues?: FilterValues;
+  onFilterChange?: (next: FilterValues) => void;
+  onResetFilters?: () => void;
+  isFiltering?: boolean;
 }
 
 /**
@@ -99,7 +112,17 @@ interface FullscreenModalProps {
  * Portaled to document.body so the modal isn't constrained by parent
  * layouts (sidebar, padding, overflow).
  */
-export function FullscreenModal({ content, onClose, onEdit, settings }: FullscreenModalProps) {
+export function FullscreenModal({
+  content,
+  onClose,
+  onEdit,
+  settings,
+  filters,
+  filterValues,
+  onFilterChange,
+  onResetFilters,
+  isFiltering,
+}: FullscreenModalProps) {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "error">("idle");
   // Track the last content.id we saw so we can reset copyState when
   // the user navigates to a different chart/dashboard without the
@@ -306,7 +329,17 @@ export function FullscreenModal({ content, onClose, onEdit, settings }: Fullscre
           {content.kind === "chart" ? (
             <ChartRenderer spec={content.spec} height={window.innerHeight - 200} settings={settings} />
           ) : (
-            <div className="grid auto-rows-min items-start gap-4 lg:grid-cols-4">
+            <>
+              {filters && filters.length > 0 && filterValues && onFilterChange && (
+                <FilterBar
+                  filters={filters}
+                  values={filterValues}
+                  onChange={onFilterChange}
+                  isUpdating={isFiltering}
+                  onReset={onResetFilters}
+                />
+              )}
+              <div className="grid auto-rows-min items-start gap-4 lg:grid-cols-4">
               {[...content.charts]
                 .sort((a, b) => a.order - b.order)
                 .map((c, i) => {
@@ -329,7 +362,8 @@ export function FullscreenModal({ content, onClose, onEdit, settings }: Fullscre
                     </div>
                   );
                 })}
-            </div>
+              </div>
+            </>
           )}
         </div>
       </div>
