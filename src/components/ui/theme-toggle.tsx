@@ -26,13 +26,13 @@ function subscribe(callback: () => void): () => void {
 
 function getSnapshot(): Theme {
   const stored = localStorage.getItem(STORAGE_KEY) as Theme | null;
-  return stored ?? "dark";
+  return stored ?? "light";
 }
 
 function getServerSnapshot(): Theme {
-  // Server has no localStorage and our default theme is dark — match
-  // the dark-mode markup on first paint so hydration is clean.
-  return "dark";
+  // Server has no localStorage and our default theme is light — match
+  // the light-mode markup on first paint so hydration is clean.
+  return "light";
 }
 
 export function ThemeToggle() {
