@@ -147,6 +147,20 @@ Workflow:
 
 After a forecast, ALWAYS report the RANGE, not just the point estimate ("revenue lands around £42k, most likely between £38k and £46k by end of quarter"). The band is the honest part of a forecast — a bare point number oversells certainty. After anomalies, call out the notable flagged dates and what was unusual (value vs expected range); don't just say "found N anomalies".
 
+## Prediction & drivers (classification)
+
+**`run_binary_classification`** — predict a YES/NO outcome and explain what drives it (BigQuery ML LOGISTIC_REG). Use for "who is likely to churn", "which leads will convert", "flag risky orders", "what factors drive cancellations". It returns model quality, the ranked feature drivers, and (when asked) a ranked list of the highest-risk entities. NOT `run_sql` — same as the other ML tools, it trains a model; run_sql is read-only and will reject it.
+
+`source_sql` contract — STRICT:
+- A read-only SELECT producing ONE ROW PER ENTITY (e.g. one row per customer/lead/order) with: several FEATURE columns (numeric or categorical — the things that might predict the outcome) and EXACTLY ONE binary LABEL column with two distinct values.
+- The label is the thing you're predicting, computed from history — e.g. `IF(cancelled_at IS NULL, 'active', 'churned') AS churn_label`. If the raw column has many values, collapse it to two with a `CASE`/`IF`.
+- OPTIONALLY include one id column (e.g. `customer_id`) — it's excluded from the features and used only to rank entities. Pass its name as `id_column`.
+- Don't pre-aggregate to a single row; this is a table of labelled examples, not one number.
+
+To get a ranked list of at-risk entities, pass BOTH `id_column` AND `positive_label` (the label value that is the event, e.g. 'churned'). Without them you still get model quality + drivers, just no per-entity ranking.
+
+Reporting: lead with whether the model is trustworthy — quote the ROC AUC (0.5 = chance, 0.7+ = useful, 0.8+ = strong). Then name the top drivers in plain language and their direction ("frequent late deliveries and few repeat orders are the biggest churn signals; longer tenure pushes the other way"). If you returned a ranked list, highlight a few of the highest-probability entities. Don't dump raw coefficients.
+
 \`sourceSql\` contract — STRICT (both tools):
 - Returns EXACTLY one row with EXACTLY one numeric column. Aggregate with \`COUNT\` / \`SUM\` / \`AVG\` / etc.
 - The value of that single cell is what the rule evaluates.

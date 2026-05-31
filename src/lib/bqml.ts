@@ -190,12 +190,17 @@ interface JobResult {
 async function runQuery(
   sql: string,
   location: string,
-  opts: { dryRunFirst?: boolean; maxRows?: number } = {}
+  opts: { dryRunFirst?: boolean; maxRows?: number; params?: Record<string, unknown> } = {}
 ): Promise<JobResult> {
   const client = await bqReady();
 
   if (opts.dryRunFirst) {
-    const [dry] = await client.createQueryJob({ query: sql, location, dryRun: true });
+    const [dry] = await client.createQueryJob({
+      query: sql,
+      location,
+      dryRun: true,
+      ...(opts.params ? { params: opts.params } : {}),
+    });
     const estimated = Number(dry.metadata.statistics?.totalBytesProcessed ?? 0);
     if (estimated > MAX_BYTES_BILLED) {
       throw new Error(
@@ -208,6 +213,7 @@ async function runQuery(
     query: sql,
     location,
     maximumBytesBilled: String(MAX_BYTES_BILLED),
+    ...(opts.params ? { params: opts.params } : {}),
   });
   const [rows] = await job.getQueryResults({ maxResults: opts.maxRows ?? 5000 });
   const [meta] = await job.getMetadata();
@@ -217,6 +223,23 @@ async function runQuery(
 
 // ── Model lifecycle ────────────────────────────────────────────────
 
+/**
+ * Deterministic model id from the inputs that define the trained model.
+ * The FIRST element is treated as SQL and whitespace-normalized so cosmetic
+ * reformatting of the agent's query doesn't bust the cache; the rest are
+ * compared verbatim. Inputs that only affect *reading* the model (forecast
+ * horizon, scoring threshold, which class is "positive") MUST be excluded —
+ * they don't change the model, and excluding them lets repeat asks reuse it.
+ */
+function hashParts(sqlPart: string, ...rest: string[]): string {
+  const normalized = sqlPart.replace(/\s+/g, " ").trim();
+  const hash = createHash("sha256")
+    .update(JSON.stringify([normalized, ...rest]))
+    .digest("hex")
+    .slice(0, 16);
+  return `m_${hash}`;
+}
+
 function fingerprint(spec: {
   sourceSql: string;
   timeColumn: string;
@@ -225,21 +248,14 @@ function fingerprint(spec: {
   dataFrequency: string;
   holidayRegion?: string;
 }): string {
-  const normalized = spec.sourceSql.replace(/\s+/g, " ").trim();
-  const hash = createHash("sha256")
-    .update(
-      JSON.stringify([
-        normalized,
-        spec.timeColumn,
-        spec.valueColumn,
-        spec.seriesColumn ?? "",
-        spec.dataFrequency,
-        spec.holidayRegion ?? "",
-      ])
-    )
-    .digest("hex")
-    .slice(0, 16);
-  return `m_${hash}`;
+  return hashParts(
+    spec.sourceSql,
+    spec.timeColumn,
+    spec.valueColumn,
+    spec.seriesColumn ?? "",
+    spec.dataFrequency,
+    spec.holidayRegion ?? ""
+  );
 }
 
 async function ensureModelsDataset(datasetId: string, location: string): Promise<void> {
@@ -299,12 +315,25 @@ function translateTrainingError(err: unknown): Error {
   return new Error(`Model training failed: ${msg}`);
 }
 
-/** Train the model if missing or stale; otherwise reuse the cached one. */
-async function ensureModel(
+interface TrainOutcome {
+  trained: boolean;
+  bytesProcessed: number;
+  executionMs: number;
+}
+
+/**
+ * Train the model from the given DDL if it's missing or older than the TTL;
+ * otherwise reuse the cached one. Model-type-agnostic — the caller builds the
+ * `CREATE MODEL` SQL and supplies a translator that turns a raw BigQuery
+ * training error into a customer-readable hint.
+ */
+async function ensureModelDdl(
   datasetId: string,
   modelId: string,
-  spec: Omit<SeriesSpec, "dataFrequency"> & { dataFrequency: string }
-): Promise<{ trained: boolean; bytesProcessed: number; executionMs: number }> {
+  ddl: string,
+  location: string,
+  translateError: (err: unknown) => Error
+): Promise<TrainOutcome> {
   const client = await bqReady();
   const model = client.dataset(datasetId).model(modelId);
   const [exists] = await model.exists();
@@ -316,6 +345,26 @@ async function ensureModel(
     }
   }
 
+  const startedAt = Date.now();
+  let result: JobResult;
+  try {
+    result = await runQuery(ddl, location, { dryRunFirst: true, maxRows: 0 });
+  } catch (err) {
+    throw translateError(err);
+  }
+  return {
+    trained: true,
+    bytesProcessed: result.bytesProcessed,
+    executionMs: Date.now() - startedAt,
+  };
+}
+
+/** Train the ARIMA_PLUS series model if missing or stale; else reuse cached. */
+async function ensureModel(
+  datasetId: string,
+  modelId: string,
+  spec: Omit<SeriesSpec, "dataFrequency"> & { dataFrequency: string }
+): Promise<TrainOutcome> {
   const ddl = buildCreateModelSql({
     datasetId,
     modelId,
@@ -326,19 +375,7 @@ async function ensureModel(
     holidayRegion: spec.holidayRegion,
     sourceSql: spec.sourceSql,
   });
-
-  const startedAt = Date.now();
-  let result: JobResult;
-  try {
-    result = await runQuery(ddl, spec.location, { dryRunFirst: true, maxRows: 0 });
-  } catch (err) {
-    throw translateTrainingError(err);
-  }
-  return {
-    trained: true,
-    bytesProcessed: result.bytesProcessed,
-    executionMs: Date.now() - startedAt,
-  };
+  return ensureModelDdl(datasetId, modelId, ddl, spec.location, translateTrainingError);
 }
 
 // ── Shared preparation ─────────────────────────────────────────────
@@ -501,4 +538,224 @@ export async function runAnomalyDetection(spec: AnomalySpec): Promise<AnomalyRes
     pointsEvaluated: res.rows.length,
     anomalies,
   };
+}
+
+// ── Binary classification (LOGISTIC_REG) ───────────────────────────
+
+export interface ClassificationMetrics {
+  rocAuc: number;
+  accuracy: number;
+  precision: number;
+  recall: number;
+  f1: number;
+  logLoss: number;
+}
+
+/** A feature and its standardized logistic-regression coefficient. */
+export interface FeatureWeight {
+  feature: string;
+  /** Standardized weight — magnitude is comparable across features; sign is
+   * the direction of association with the positive class. */
+  weight: number;
+}
+
+export interface ScoredEntity {
+  id: string;
+  predictedLabel: string;
+  /** P(positive class), or NaN if positive_label matched no class. */
+  probability: number;
+}
+
+export interface ClassificationResult {
+  trained: boolean;
+  modelId: string;
+  metrics: ClassificationMetrics;
+  weights: FeatureWeight[];
+  /** Top entities ranked by P(positive). Present only when both id_column and
+   * positive_label were supplied. */
+  topRisk?: ScoredEntity[];
+}
+
+export interface ClassificationSpec {
+  clientId: string;
+  workspaceId: string;
+  userId?: string;
+  /** Agent-authored SELECT: feature columns + one binary label column
+   * (+ optionally one id column, which is excluded from features). */
+  sourceSql: string;
+  /** Name of the binary label column (exactly two distinct values). */
+  labelColumn: string;
+  /** Optional entity-id column — kept out of features, used to rank scores. */
+  idColumn?: string;
+  /** Which label value is the event of interest (e.g. 'churned', 'true', '1').
+   * Required to rank entities by risk; compared as a string. */
+  positiveLabel?: string;
+  /** How many ranked entities to return when scoring. Default 100. */
+  topN?: number;
+  /** Workspace BQ residency: "EU" | "US". */
+  location: string;
+}
+
+function buildClassifierDdl(args: {
+  datasetId: string;
+  modelId: string;
+  labelColumn: string;
+  idColumn?: string;
+  sourceSql: string;
+}): string {
+  const fq = `\`${gcp.projectId}.${args.datasetId}.${args.modelId}\``;
+  // The id is an identifier for scoring, NOT a predictor — exclude it from the
+  // feature set. Everything else the SELECT returns (besides the label) is a
+  // feature, so the tool stays schema-agnostic.
+  const trainingSelect = args.idColumn
+    ? `SELECT * EXCEPT(\`${args.idColumn}\`) FROM (\n${args.sourceSql}\n)`
+    : args.sourceSql;
+  const options = [
+    "model_type = 'LOGISTIC_REG'",
+    `input_label_cols = ['${args.labelColumn}']`,
+    // Churn/fraud labels are usually imbalanced; class weighting stops the
+    // model from trivially predicting the majority class.
+    "auto_class_weights = TRUE",
+    "data_split_method = 'AUTO_SPLIT'",
+  ].join(",\n  ");
+  return `CREATE OR REPLACE MODEL ${fq}\nOPTIONS(\n  ${options}\n) AS (\n${trainingSelect}\n)`;
+}
+
+function translateClassificationError(err: unknown): Error {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/input_label_cols|label column|not found|unrecognized name/i.test(msg)) {
+    return new Error(
+      "Couldn't find the label column. source_sql must return a binary label column named exactly as label_column, plus the feature columns (and optionally an id column)."
+    );
+  }
+  if (/two|binary|distinct|number of classes|more than/i.test(msg)) {
+    return new Error(
+      "Binary classification needs a label with exactly two classes. Collapse the label to two values first, e.g. CASE WHEN status = 'cancelled' THEN 'churned' ELSE 'active' END AS churn_label."
+    );
+  }
+  return new Error(`Model training failed: ${msg}`);
+}
+
+export async function runClassification(
+  spec: ClassificationSpec
+): Promise<ClassificationResult> {
+  assertIdentifier(spec.labelColumn, "label_column");
+  if (spec.idColumn) assertIdentifier(spec.idColumn, "id_column");
+  const sourceSql = validateSourceSql(spec.sourceSql);
+  const datasetId = modelsDatasetId(spec.clientId, spec.workspaceId);
+  // id_column changes which columns are features, so it's part of model
+  // identity. positive_label and topN only affect scoring (reading the model),
+  // so they're excluded — re-scoring reuses the cached model.
+  const modelId = hashParts(
+    sourceSql,
+    spec.labelColumn,
+    spec.idColumn ?? "",
+    "LOGISTIC_REG"
+  );
+
+  await ensureModelsDataset(datasetId, spec.location);
+  const ddl = buildClassifierDdl({
+    datasetId,
+    modelId,
+    labelColumn: spec.labelColumn,
+    idColumn: spec.idColumn,
+    sourceSql,
+  });
+  const train = await ensureModelDdl(
+    datasetId,
+    modelId,
+    ddl,
+    spec.location,
+    translateClassificationError
+  );
+  if (train.trained) {
+    logBqmlUsage({
+      eventType: "model.train",
+      clientId: spec.clientId,
+      workspaceId: spec.workspaceId,
+      userId: spec.userId,
+      resource: modelId,
+      bytesScanned: train.bytesProcessed,
+      executionMs: train.executionMs,
+    });
+  }
+
+  const fq = `\`${gcp.projectId}.${datasetId}.${modelId}\``;
+  const evalSql = `SELECT * FROM ML.EVALUATE(MODEL ${fq})`;
+  // Standardized weights so magnitude ranks feature influence regardless of
+  // each feature's native scale. Categorical features surface their weight via
+  // category_weights (NULL `weight`); v1 reports the numeric/standardized set.
+  const weightsSql =
+    `SELECT processed_input AS feature, weight ` +
+    `FROM ML.WEIGHTS(MODEL ${fq}, STRUCT(TRUE AS standardize)) ` +
+    `WHERE weight IS NOT NULL ORDER BY ABS(weight) DESC LIMIT 25`;
+
+  const wantScore = Boolean(spec.idColumn && spec.positiveLabel);
+
+  const startedAt = Date.now();
+  const jobs: Promise<JobResult>[] = [
+    runQuery(evalSql, spec.location, { maxRows: 1 }),
+    runQuery(weightsSql, spec.location, { maxRows: 25 }),
+  ];
+  if (wantScore) {
+    const lbl = spec.labelColumn;
+    const topN = spec.topN ?? 100;
+    // positive_label is arbitrary user data → bind as a query parameter, never
+    // interpolate. predicted_<label>_probs is an ARRAY<STRUCT<label, prob>>;
+    // pull the row for the positive class.
+    const scoreSql =
+      `SELECT \`${spec.idColumn}\` AS id, ` +
+      `CAST(predicted_${lbl} AS STRING) AS predicted_label, ` +
+      `(SELECT p.prob FROM UNNEST(predicted_${lbl}_probs) AS p ` +
+      `WHERE CAST(p.label AS STRING) = @pos) AS probability ` +
+      `FROM ML.PREDICT(MODEL ${fq}, (\n${sourceSql}\n)) ` +
+      `ORDER BY probability DESC LIMIT ${topN}`;
+    jobs.push(
+      runQuery(scoreSql, spec.location, {
+        maxRows: topN,
+        params: { pos: spec.positiveLabel },
+      })
+    );
+  }
+
+  const results = await Promise.all(jobs);
+  const [evalRes, weightsRes] = results;
+  const scoreRes = wantScore ? results[2] : undefined;
+
+  const bytes =
+    evalRes.bytesProcessed +
+    weightsRes.bytesProcessed +
+    (scoreRes?.bytesProcessed ?? 0);
+  logBqmlUsage({
+    eventType: "classify.run",
+    clientId: spec.clientId,
+    workspaceId: spec.workspaceId,
+    userId: spec.userId,
+    resource: modelId,
+    bytesScanned: bytes,
+    executionMs: Date.now() - startedAt,
+  });
+
+  const m: Record<string, unknown> = evalRes.rows[0] ?? {};
+  const metrics: ClassificationMetrics = {
+    rocAuc: cellNum(m["roc_auc"]),
+    accuracy: cellNum(m["accuracy"]),
+    precision: cellNum(m["precision"]),
+    recall: cellNum(m["recall"]),
+    f1: cellNum(m["f1_score"]),
+    logLoss: cellNum(m["log_loss"]),
+  };
+
+  const weights: FeatureWeight[] = weightsRes.rows.map((r) => ({
+    feature: cellStr(r["feature"]),
+    weight: cellNum(r["weight"]),
+  }));
+
+  const topRisk: ScoredEntity[] | undefined = scoreRes?.rows.map((r) => ({
+    id: cellStr(r["id"]),
+    predictedLabel: cellStr(r["predicted_label"]),
+    probability: cellNum(r["probability"]),
+  }));
+
+  return { trained: train.trained, modelId, metrics, weights, topRisk };
 }
