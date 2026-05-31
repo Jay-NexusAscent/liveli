@@ -1,0 +1,46 @@
+version: 1
+default_environment: dev
+project_id: liveli-mariadb-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-mysql
+      variant: meltanolabs
+      # MariaDB speaks the MySQL wire protocol, so the MeltanoLabs
+      # tap-mysql connects to a MariaDB instance unchanged — the Hub
+      # entry is literally labelled "MySQL/MariaDB". Same tap + env-var
+      # prefix (TAP_MYSQL_*) as the mysql connector; only the connector
+      # `type` differs so the catalogue tile + Cloud Run Job are distinct.
+      pip_url: meltanolabs-tap-mysql
+      # Connection params come from env at runtime:
+      #   TAP_MYSQL_HOST, TAP_MYSQL_PORT, TAP_MYSQL_USER,
+      #   TAP_MYSQL_PASSWORD, TAP_MYSQL_DATABASE,
+      #   TAP_MYSQL_FILTER_DBS (JSON array — restricts which databases
+      #   are replicated; same gotcha as postgres' filter_schemas).
+      config:
+        ssl: false
+        # Default to the customer-named database only. Without a filter
+        # the tap discovers every schema including mysql/sys/perf_schema
+        # and target-bigquery crashes on reserved BQ prefixes.
+        filter_dbs: []
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      # Config comes from env at runtime:
+      #   TARGET_BIGQUERY_PROJECT, TARGET_BIGQUERY_DATASET,
+      #   TARGET_BIGQUERY_LOCATION
+      # overwrite + FULL_TABLE — same contract as the mysql connector.
+      # See connectors/mysql-to-bq/meltano.yml for the full rationale
+      # (z3z1ma upsert needs PK-derived key_properties the tap only emits
+      # for tables WITH a primary key; overwrite is PK-independent and
+      # matches our ephemeral-state full-extract model).
+      config:
+        method: batch_job
+        denormalized: true
+        overwrite: true

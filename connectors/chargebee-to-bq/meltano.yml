@@ -1,0 +1,40 @@
+version: 1
+default_environment: dev
+project_id: liveli-chargebee-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-chargebee
+      variant: hotglue
+      # API-key auth + the Chargebee site name. Not on PyPI → install
+      # from git. Required env:
+      #   TAP_CHARGEBEE_API_KEY, TAP_CHARGEBEE_SITE (the `<site>` in
+      #   <site>.chargebee.com)
+      # Optional: TAP_CHARGEBEE_START_DATE, TAP_CHARGEBEE_PRODUCT_CATALOG
+      #
+      # GOTCHA: product_catalog MUST match the Chargebee account's plan
+      # version ("1.0" vs "2.0") or streams break. Default to "2.0" (the
+      # current Chargebee default); the wizard lets the customer override.
+      pip_url: git+https://github.com/hotgluexyz/tap-chargebee.git
+      settings:
+        - name: api_key
+          kind: password
+        - name: site
+        - name: product_catalog
+        - name: start_date
+      config:
+        product_catalog: "2.0"
+        start_date: "2022-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true

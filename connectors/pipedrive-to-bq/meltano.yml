@@ -1,0 +1,38 @@
+version: 1
+default_environment: dev
+project_id: liveli-pipedrive-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-pipedrive
+      variant: singer-io
+      pip_url: tap-pipedrive
+      # Hub-registered, but we declare `settings:` explicitly so Meltano
+      # maps the TAP_PIPEDRIVE_* env vars to config keys regardless of
+      # what the locked plugin definition advertises. Required env:
+      #   TAP_PIPEDRIVE_API_TOKEN  (Pipedrive personal API token)
+      # Optional:
+      #   TAP_PIPEDRIVE_START_DATE (defaults below)
+      settings:
+        - name: api_token
+          kind: password
+        - name: start_date
+      config:
+        start_date: "2022-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      # upsert — SaaS taps run INCREMENTAL by default (start_date +
+      # bookmarks) and emit key_properties from the source `id`, so MERGE
+      # is safe and preserves history. overwrite + INCREMENTAL is the
+      # LIVELI-111 data-loss trap; never use overwrite for a SaaS tap.
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true

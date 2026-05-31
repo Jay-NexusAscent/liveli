@@ -1,0 +1,37 @@
+version: 1
+default_environment: dev
+project_id: liveli-notion-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-notion
+      variant: renesteeman
+      # Internal-integration token auth (starts `secret_` or `ntn_`),
+      # created at notion.so/my-integrations. NOT OAuth. Not on PyPI →
+      # install from git. Required env:
+      #   TAP_NOTION_AUTH_TOKEN
+      # Optional: TAP_NOTION_START_DATE
+      #
+      # GOTCHA (surfaced in the wizard hint): the customer must SHARE each
+      # page/database with the integration in Notion, or the tap returns
+      # nothing — Notion integrations see only explicitly-shared content.
+      pip_url: git+https://github.com/renesteeman/meltano-tap-notion.git
+      settings:
+        - name: auth_token
+          kind: password
+        - name: start_date
+      config:
+        start_date: "2022-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true

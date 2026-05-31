@@ -1,0 +1,35 @@
+version: 1
+default_environment: dev
+project_id: liveli-activecampaign-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-activecampaign
+      variant: singer-io
+      # API-token auth. The account's API URL is per-account and shown in
+      # ActiveCampaign under Settings → Developer (looks like
+      # https://<account>.api-us1.com). Not on PyPI under a clean Hub
+      # name → install from git. Required env:
+      #   TAP_ACTIVECAMPAIGN_API_TOKEN, TAP_ACTIVECAMPAIGN_API_URL
+      # Optional: TAP_ACTIVECAMPAIGN_START_DATE
+      pip_url: git+https://github.com/singer-io/tap-activecampaign.git
+      settings:
+        - name: api_token
+          kind: password
+        - name: api_url
+        - name: start_date
+      config:
+        start_date: "2022-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true

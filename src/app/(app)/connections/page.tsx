@@ -42,6 +42,15 @@ import { JiraWizard } from "@/components/connections/jira-wizard";
 import { ZendeskWizard } from "@/components/connections/zendesk-wizard";
 import { Ga4Wizard } from "@/components/connections/ga4-wizard";
 import { QuickbooksWizard } from "@/components/connections/quickbooks-wizard";
+import { MariadbWizard } from "@/components/connections/mariadb-wizard";
+import { PipedriveWizard } from "@/components/connections/pipedrive-wizard";
+import { SquareWizard } from "@/components/connections/square-wizard";
+import { WoocommerceWizard } from "@/components/connections/woocommerce-wizard";
+import { NotionWizard } from "@/components/connections/notion-wizard";
+import { FreshdeskWizard } from "@/components/connections/freshdesk-wizard";
+import { ChargebeeWizard } from "@/components/connections/chargebee-wizard";
+import { ActivecampaignWizard } from "@/components/connections/activecampaign-wizard";
+import { BigcommerceWizard } from "@/components/connections/bigcommerce-wizard";
 import { EditConnectorModal } from "@/components/connections/edit-connector-modal";
 
 interface ConnectorRecord {
@@ -199,6 +208,16 @@ type ConnectAction =
   // Batch C — OAuth refresh-token SaaS connectors (LIVELI-132):
   | "ga4"
   | "quickbooks"
+  // Batch D — easy-win API-key SaaS + MariaDB (LIVELI-133):
+  | "mariadb"
+  | "pipedrive"
+  | "square"
+  | "woocommerce"
+  | "notion"
+  | "freshdesk"
+  | "chargebee"
+  | "activecampaign"
+  | "bigcommerce"
   | null;
 
 type SourceCategory =
@@ -265,27 +284,27 @@ const popularSources: PopularSource[] = [
   { name: "Oracle Database", desc: "Replicate tables from an Oracle DB", category: "Databases", action: null },
   { name: "Microsoft SQL Server", desc: "Replicate tables from MSSQL / Azure SQL", category: "Databases", action: "sqlserver" },
   { name: "Azure Synapse", desc: "Replicate tables from Azure Synapse Analytics", category: "Databases", action: "synapse" },
-  { name: "MariaDB", desc: "Replicate tables from any MariaDB instance", category: "Databases", action: null },
+  { name: "MariaDB", desc: "Replicate tables from any MariaDB instance", category: "Databases", action: "mariadb" },
   { name: "DuckDB", desc: "Replicate from a DuckDB file or motherduck", category: "Databases", action: null },
 
   // Payments
   { name: "Stripe", desc: "Charges, subscriptions, customers, refunds", category: "Payments", action: "stripe" },
   { name: "PayPal", desc: "Transactions, disputes, payouts", category: "Payments", action: null },
-  { name: "Chargebee", desc: "Subscription billing + revenue events", category: "Payments", action: null },
+  { name: "Chargebee", desc: "Subscription billing + revenue events", category: "Payments", action: "chargebee" },
   { name: "Recurly", desc: "Subscriptions, invoices, accounts", category: "Payments", action: null },
-  { name: "Square", desc: "Transactions, items, customers, payouts", category: "Payments", action: null },
+  { name: "Square", desc: "Transactions, items, customers, payouts", category: "Payments", action: "square" },
 
   // E-commerce
   { name: "Shopify", desc: "Orders, products, customers, inventory", category: "E-commerce", action: "shopify" },
-  { name: "WooCommerce", desc: "Orders, products, customers from your WP store", category: "E-commerce", action: null },
-  { name: "BigCommerce", desc: "Orders, catalog, customers, fulfilment", category: "E-commerce", action: null },
+  { name: "WooCommerce", desc: "Orders, products, customers from your WP store", category: "E-commerce", action: "woocommerce" },
+  { name: "BigCommerce", desc: "Orders, catalog, customers, fulfilment", category: "E-commerce", action: "bigcommerce" },
   { name: "Adobe Commerce", desc: "Magento / Adobe Commerce orders + catalog", category: "E-commerce", action: null },
   { name: "Amazon Seller", desc: "Orders, fulfilment, settlements, fees", category: "E-commerce", action: null },
 
   // CRM
   { name: "HubSpot", desc: "Contacts, deals, companies, engagements", category: "CRM", action: "hubspot" },
   { name: "Salesforce", desc: "Accounts, opportunities, contacts, leads", category: "CRM", action: "salesforce" },
-  { name: "Pipedrive", desc: "Pipelines, deals, activities, persons", category: "CRM", action: null },
+  { name: "Pipedrive", desc: "Pipelines, deals, activities, persons", category: "CRM", action: "pipedrive" },
   { name: "Zendesk Sell", desc: "Pipeline, contacts, deals", category: "CRM", action: null },
   { name: "Close", desc: "Leads, opportunities, calls, emails", category: "CRM", action: null },
 
@@ -297,7 +316,7 @@ const popularSources: PopularSource[] = [
   { name: "Microsoft Ads", desc: "Bing search ads performance + spend", category: "Marketing", action: null },
   { name: "Mailchimp", desc: "Campaigns, lists, audience engagement", category: "Marketing", action: "mailchimp" },
   { name: "Klaviyo", desc: "Email + SMS flows, lists, events", category: "Marketing", action: "klaviyo" },
-  { name: "ActiveCampaign", desc: "Automations, deals, contacts", category: "Marketing", action: null },
+  { name: "ActiveCampaign", desc: "Automations, deals, contacts", category: "Marketing", action: "activecampaign" },
 
   // Analytics
   { name: "Google Analytics 4", desc: "Sessions, events, conversions", category: "Analytics", action: "ga4" },
@@ -309,12 +328,12 @@ const popularSources: PopularSource[] = [
   { name: "Jira", desc: "Issues, sprints, projects, worklogs", category: "Project Management", action: "jira" },
   { name: "Asana", desc: "Tasks, projects, teams, time tracking", category: "Project Management", action: null },
   { name: "Linear", desc: "Issues, cycles, projects, teams", category: "Project Management", action: "linear" },
-  { name: "Notion", desc: "Databases, pages, blocks", category: "Project Management", action: null },
+  { name: "Notion", desc: "Databases, pages, blocks", category: "Project Management", action: "notion" },
 
   // Support
   { name: "Intercom", desc: "Conversations, contacts, tags, segments", category: "Support", action: "intercom" },
   { name: "Zendesk Support", desc: "Tickets, users, organizations, SLAs", category: "Support", action: "zendesk" },
-  { name: "Freshdesk", desc: "Tickets, agents, conversations", category: "Support", action: null },
+  { name: "Freshdesk", desc: "Tickets, agents, conversations", category: "Support", action: "freshdesk" },
 
   // Finance
   { name: "QuickBooks", desc: "Invoices, P&L, accounts, customers", category: "Finance", action: "quickbooks" },
@@ -963,6 +982,51 @@ function ConnectionsPageInner() {
       />
       <QuickbooksWizard
         open={activeWizard === "quickbooks"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <MariadbWizard
+        open={activeWizard === "mariadb"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <PipedriveWizard
+        open={activeWizard === "pipedrive"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <SquareWizard
+        open={activeWizard === "square"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <WoocommerceWizard
+        open={activeWizard === "woocommerce"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <NotionWizard
+        open={activeWizard === "notion"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <FreshdeskWizard
+        open={activeWizard === "freshdesk"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <ChargebeeWizard
+        open={activeWizard === "chargebee"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <ActivecampaignWizard
+        open={activeWizard === "activecampaign"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <BigcommerceWizard
+        open={activeWizard === "bigcommerce"}
         onClose={closeWizard}
         onConnected={onWizardConnected}
       />

@@ -387,6 +387,108 @@ const TAP_ENV_BUILDERS: Record<string, EnvBuilder> = {
     TAP_QUICKBOOKS_REALMID: creds.realmId,
     TAP_QUICKBOOKS_IS_SANDBOX: creds.is_sandbox ?? "false",
   }),
+
+  // ── Batch D (LIVELI-133): API-key SaaS + MariaDB ──────────────────
+
+  mariadb: (creds) => {
+    // MariaDB is MySQL-wire-compatible → runs through tap-mysql (env
+    // prefix TAP_MYSQL_*), same overwrite + FULL_TABLE contract as the
+    // mysql connector. Same reserved-prefix gotcha: filter_dbs scopes
+    // replication so the tap doesn't discover information_schema/sys.
+    const dbs = (creds.filter_dbs ?? creds.database ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return {
+      TAP_MYSQL_HOST: creds.host,
+      TAP_MYSQL_PORT: creds.port,
+      TAP_MYSQL_USER: creds.user,
+      TAP_MYSQL_PASSWORD: creds.password,
+      TAP_MYSQL_DATABASE: creds.database,
+      TAP_MYSQL_SSL: creds.ssl ?? "false",
+      TAP_MYSQL_FILTER_DBS: JSON.stringify(dbs),
+    };
+  },
+
+  pipedrive: (creds) => {
+    const env: Record<string, string> = {
+      TAP_PIPEDRIVE_API_TOKEN: creds.api_token,
+    };
+    if (creds.start_date) env.TAP_PIPEDRIVE_START_DATE = creds.start_date;
+    return env;
+  },
+
+  square: (creds) => {
+    const env: Record<string, string> = {
+      TAP_SQUARE_ACCESS_TOKEN: creds.access_token,
+      TAP_SQUARE_SANDBOX: creds.sandbox ?? "false",
+    };
+    if (creds.start_date) env.TAP_SQUARE_START_DATE = creds.start_date;
+    return env;
+  },
+
+  woocommerce: (creds) => {
+    const env: Record<string, string> = {
+      TAP_WOOCOMMERCE_CONSUMER_KEY: creds.consumer_key,
+      TAP_WOOCOMMERCE_CONSUMER_SECRET: creds.consumer_secret,
+      TAP_WOOCOMMERCE_SITE_URL: creds.site_url,
+    };
+    if (creds.start_date) env.TAP_WOOCOMMERCE_START_DATE = creds.start_date;
+    return env;
+  },
+
+  notion: (creds) => {
+    const env: Record<string, string> = {
+      TAP_NOTION_AUTH_TOKEN: creds.auth_token,
+    };
+    if (creds.start_date) env.TAP_NOTION_START_DATE = creds.start_date;
+    return env;
+  },
+
+  freshdesk: (creds) => {
+    // `domain` is the bare subdomain slug (the `<co>` in
+    // <co>.freshdesk.com), enforced at the connect route.
+    const env: Record<string, string> = {
+      TAP_FRESHDESK_API_KEY: creds.api_key,
+      TAP_FRESHDESK_DOMAIN: creds.domain,
+    };
+    if (creds.start_date) env.TAP_FRESHDESK_START_DATE = creds.start_date;
+    return env;
+  },
+
+  chargebee: (creds) => {
+    // `site` is the bare site name (the `<site>` in <site>.chargebee.com).
+    // product_catalog MUST match the account's plan version ("1.0" vs
+    // "2.0") or streams break — captured in the wizard, default "2.0".
+    const env: Record<string, string> = {
+      TAP_CHARGEBEE_API_KEY: creds.api_key,
+      TAP_CHARGEBEE_SITE: creds.site,
+      TAP_CHARGEBEE_PRODUCT_CATALOG: creds.product_catalog ?? "2.0",
+    };
+    if (creds.start_date) env.TAP_CHARGEBEE_START_DATE = creds.start_date;
+    return env;
+  },
+
+  activecampaign: (creds) => {
+    // `api_url` is the per-account API host (https://<account>.api-us1.com),
+    // shown under Settings → Developer.
+    const env: Record<string, string> = {
+      TAP_ACTIVECAMPAIGN_API_TOKEN: creds.api_token,
+      TAP_ACTIVECAMPAIGN_API_URL: creds.api_url,
+    };
+    if (creds.start_date) env.TAP_ACTIVECAMPAIGN_START_DATE = creds.start_date;
+    return env;
+  },
+
+  bigcommerce: (creds) => {
+    const env: Record<string, string> = {
+      TAP_BIGCOMMERCE_CLIENT_ID: creds.client_id,
+      TAP_BIGCOMMERCE_ACCESS_TOKEN: creds.access_token,
+      TAP_BIGCOMMERCE_STORE_HASH: creds.store_hash,
+    };
+    if (creds.start_date) env.TAP_BIGCOMMERCE_START_DATE = creds.start_date;
+    return env;
+  },
 };
 
 /**
