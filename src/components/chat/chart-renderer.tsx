@@ -350,7 +350,67 @@ function polishChartSpec(
     }
   }
 
+  // 3. Axis-title presentation. The agent now sets `xAxis.name` /
+  // `yAxis.name`; place and weight them like a BI tool would — x-title
+  // centred under the axis, y-title centred up the side — and make sure
+  // the grid leaves room so neither the title nor the value labels get
+  // clipped. `containLabel` reserves space for the tick labels; we add
+  // explicit margins on top so the axis NAMES (which containLabel does
+  // NOT account for) have somewhere to sit.
+  const hasAxes = Boolean(out.xAxis || out.yAxis);
+  if (hasAxes) {
+    out.xAxis = styleAxisName(out.xAxis as AxisLike | undefined, "x");
+    out.yAxis = styleAxisName(out.yAxis as AxisLike | undefined, "y");
+    out.grid = {
+      left: 16,
+      right: 24,
+      top: 24,
+      bottom: 16,
+      containLabel: true,
+      ...((out.grid as Record<string, unknown> | undefined) ?? {}),
+    };
+  }
+
   return out;
+}
+
+interface AxisLike {
+  name?: string;
+  nameLocation?: string;
+  nameGap?: number;
+  nameTextStyle?: Record<string, unknown>;
+  [k: string]: unknown;
+}
+
+/**
+ * Apply BI-grade title styling to an axis when it carries a `name`.
+ *
+ * - X-axis title sits centred below the axis (`nameLocation: middle`)
+ *   with enough `nameGap` to clear the tick labels.
+ * - Y-axis title sits centred along the axis; ECharts rotates it
+ *   vertically automatically. A larger gap clears multi-digit value
+ *   labels.
+ *
+ * Colour is intentionally left to the active ECharts theme so light /
+ * dark both stay legible — we only set placement and weight. Axes
+ * without a name pass through untouched (KPI/pie already strip axes
+ * elsewhere; bar/line without a title just render as before).
+ */
+function styleAxisName(
+  axis: AxisLike | undefined,
+  which: "x" | "y"
+): AxisLike | undefined {
+  if (!axis || !axis.name) return axis;
+  return {
+    ...axis,
+    nameLocation: axis.nameLocation ?? "middle",
+    nameGap: axis.nameGap ?? (which === "x" ? 32 : 52),
+    nameTextStyle: {
+      fontWeight: 600,
+      fontSize: 12,
+      ...(axis.nameTextStyle ?? {}),
+    },
+  };
 }
 
 /**
