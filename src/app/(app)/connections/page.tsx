@@ -21,6 +21,10 @@ import { ActionButton } from "@/components/ui/action-button";
 import { cn } from "@/lib/utils";
 import { PostgresWizard } from "@/components/connections/postgres-wizard";
 import { MysqlWizard } from "@/components/connections/mysql-wizard";
+import { SqlserverWizard } from "@/components/connections/sqlserver-wizard";
+import { RedshiftWizard } from "@/components/connections/redshift-wizard";
+import { SynapseWizard } from "@/components/connections/synapse-wizard";
+import { BigqueryWizard } from "@/components/connections/bigquery-wizard";
 import { StripeWizard } from "@/components/connections/stripe-wizard";
 import { ShopifyWizard } from "@/components/connections/shopify-wizard";
 import { HubspotWizard } from "@/components/connections/hubspot-wizard";
@@ -171,6 +175,10 @@ const SYNC_FREQUENCY_LABELS: Record<NonNullable<ConnectorRecord["syncFrequency"]
 type ConnectAction =
   | "postgres"
   | "mysql"
+  | "sqlserver"
+  | "redshift"
+  | "synapse"
+  | "bigquery"
   | "stripe"
   | "shopify"
   | "hubspot"
@@ -250,12 +258,13 @@ const popularSources: PopularSource[] = [
   // Databases
   { name: "PostgreSQL", desc: "Replicate tables from any Postgres database", category: "Databases", action: "postgres" },
   { name: "MySQL", desc: "Replicate tables from any MySQL database", category: "Databases", action: "mysql" },
-  { name: "BigQuery", desc: "Replicate datasets from your BigQuery project", category: "Databases", action: null },
+  { name: "BigQuery", desc: "Replicate datasets from your BigQuery project", category: "Databases", action: "bigquery" },
   { name: "MongoDB", desc: "Sync collections from MongoDB or Atlas", category: "Databases", action: null },
   { name: "Snowflake", desc: "Replicate tables from your Snowflake warehouse", category: "Databases", action: null },
-  { name: "Amazon Redshift", desc: "Replicate tables from a Redshift cluster", category: "Databases", action: null },
+  { name: "Amazon Redshift", desc: "Replicate tables from a Redshift cluster", category: "Databases", action: "redshift" },
   { name: "Oracle Database", desc: "Replicate tables from an Oracle DB", category: "Databases", action: null },
-  { name: "Microsoft SQL Server", desc: "Replicate tables from MSSQL / Azure SQL", category: "Databases", action: null },
+  { name: "Microsoft SQL Server", desc: "Replicate tables from MSSQL / Azure SQL", category: "Databases", action: "sqlserver" },
+  { name: "Azure Synapse", desc: "Replicate tables from Azure Synapse Analytics", category: "Databases", action: "synapse" },
   { name: "MariaDB", desc: "Replicate tables from any MariaDB instance", category: "Databases", action: null },
   { name: "DuckDB", desc: "Replicate from a DuckDB file or motherduck", category: "Databases", action: null },
 
@@ -849,6 +858,26 @@ function ConnectionsPageInner() {
       />
       <MysqlWizard
         open={activeWizard === "mysql"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <SqlserverWizard
+        open={activeWizard === "sqlserver"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <RedshiftWizard
+        open={activeWizard === "redshift"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <SynapseWizard
+        open={activeWizard === "synapse"}
+        onClose={closeWizard}
+        onConnected={onWizardConnected}
+      />
+      <BigqueryWizard
+        open={activeWizard === "bigquery"}
         onClose={closeWizard}
         onConnected={onWizardConnected}
       />

@@ -1,0 +1,50 @@
+version: 1
+default_environment: dev
+project_id: liveli-redshift-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-postgres
+      variant: meltanolabs
+      # Amazon Redshift speaks the PostgreSQL wire protocol, so the
+      # MeltanoLabs tap-postgres connects to a Redshift cluster
+      # unchanged — community-confirmed. No dedicated tap-redshift
+      # needed (the singer-io variant is unmaintained). Connection
+      # params come from env at runtime:
+      #   TAP_POSTGRES_HOST, TAP_POSTGRES_PORT (5439 default for
+      #   Redshift), TAP_POSTGRES_USER, TAP_POSTGRES_PASSWORD,
+      #   TAP_POSTGRES_DATABASE, TAP_POSTGRES_FILTER_SCHEMAS.
+      pip_url: meltanolabs-tap-postgres
+      config:
+        # Redshift refuses non-SSL by default; require (not prefer)
+        # avoids the noisy non-SSL first-handshake. Same rationale as
+        # the postgres connector.
+        ssl: true
+        ssl_mode: require
+        # User schema only — without this the tap discovers pg_catalog +
+        # information_schema and target-bigquery crashes on the
+        # BQ-reserved `information_schema` prefix. Overridden per-run via
+        # TAP_POSTGRES_FILTER_SCHEMAS.
+        filter_schemas: ["public"]
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      # Config from env: TARGET_BIGQUERY_PROJECT/DATASET/LOCATION.
+      #
+      # overwrite (NOT upsert) — deliberately unlike the postgres
+      # connector. Redshift primary keys are INFORMATIONAL ONLY (the
+      # engine does not enforce or guarantee uniqueness), so a MERGE on
+      # PK can silently corrupt under duplicate keys. Overwrite mode
+      # atomically replaces each canonical table, doesn't depend on PK
+      # detection, and matches our ephemeral-state full-extract model.
+      # Same contract as the mysql + sqlserver connectors.
+      config:
+        method: batch_job
+        denormalized: true
+        overwrite: true

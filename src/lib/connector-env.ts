@@ -148,6 +148,86 @@ const TAP_ENV_BUILDERS: Record<string, EnvBuilder> = {
     };
   },
 
+  sqlserver: (creds) => {
+    // tap-mssql (buzzcutnorman) — same reserved-prefix gotcha as
+    // postgres: without filter_schemas the tap discovers sys +
+    // INFORMATION_SCHEMA and target-bigquery dies on the BQ-reserved
+    // `information_schema` prefix. `schemas` is the comma-separated
+    // user input (defaults to MSSQL's `dbo` at the connect route).
+    const schemas = (creds.schemas ?? "dbo")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return {
+      TAP_MSSQL_HOST: creds.host,
+      TAP_MSSQL_PORT: creds.port,
+      TAP_MSSQL_USER: creds.user,
+      TAP_MSSQL_PASSWORD: creds.password,
+      TAP_MSSQL_DATABASE: creds.database,
+      TAP_MSSQL_FILTER_SCHEMAS: JSON.stringify(schemas),
+    };
+  },
+
+  redshift: (creds) => {
+    // Amazon Redshift is Postgres-wire-compatible, so it runs through
+    // tap-postgres (env prefix TAP_POSTGRES_*). Treated like mysql, NOT
+    // like the postgres connector: no replicationConfig/excludedStreams
+    // (Redshift PKs are informational only — the loader runs overwrite +
+    // FULL_TABLE). `schemas` defaults to `public` at the connect route.
+    const schemas = (creds.schemas ?? "public")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return {
+      TAP_POSTGRES_HOST: creds.host,
+      TAP_POSTGRES_PORT: creds.port,
+      TAP_POSTGRES_USER: creds.user,
+      TAP_POSTGRES_PASSWORD: creds.password,
+      TAP_POSTGRES_DATABASE: creds.database,
+      TAP_POSTGRES_FILTER_SCHEMAS: JSON.stringify(schemas),
+    };
+  },
+
+  synapse: (creds) => {
+    // Azure Synapse Analytics speaks TDS / SQL Server, so it runs
+    // through the same tap-mssql as the sqlserver connector (env prefix
+    // TAP_MSSQL_*). `schemas` defaults to `dbo` at the connect route.
+    const schemas = (creds.schemas ?? "dbo")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return {
+      TAP_MSSQL_HOST: creds.host,
+      TAP_MSSQL_PORT: creds.port,
+      TAP_MSSQL_USER: creds.user,
+      TAP_MSSQL_PASSWORD: creds.password,
+      TAP_MSSQL_DATABASE: creds.database,
+      TAP_MSSQL_FILTER_SCHEMAS: JSON.stringify(schemas),
+    };
+  },
+
+  bigquery: (creds) => {
+    // Reads the CUSTOMER's BigQuery (not ours). The tap only accepts a
+    // credentials FILE PATH, so entrypoint.sh writes the SA-key JSON to
+    // disk and sets TAP_BIGQUERY_CREDENTIALS_PATH itself — here we just
+    // pass the raw JSON through. `datasets` (comma-separated) maps to
+    // filter_schemas; blank means all datasets.
+    const datasets = (creds.datasets ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const env: Record<string, string> = {
+      TAP_BIGQUERY_PROJECT_ID: creds.project_id,
+      TAP_BIGQUERY_CREDENTIALS_JSON: creds.credentials_json,
+    };
+    // Only set the filter when the customer scoped to specific datasets;
+    // otherwise leave it unset so the tap discovers all of them.
+    if (datasets.length > 0) {
+      env.TAP_BIGQUERY_FILTER_SCHEMAS = JSON.stringify(datasets);
+    }
+    return env;
+  },
+
   stripe: (creds) => {
     const env: Record<string, string> = {
       TAP_STRIPE_CLIENT_SECRET: creds.api_key,

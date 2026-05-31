@@ -1,0 +1,39 @@
+version: 1
+default_environment: dev
+project_id: liveli-synapse-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-mssql
+      variant: buzzcutnorman
+      # Azure Synapse Analytics (dedicated SQL pools) speaks the TDS /
+      # SQL Server protocol, so the same buzzcutnorman tap-mssql we use
+      # for SQL Server connects unchanged. pymssql (pure-Python wheel,
+      # bundles FreeTDS) avoids needing Microsoft's ODBC driver in the
+      # image — Cloud Run Jobs can't run the ODBC installer cleanly.
+      # Connection params come from env at runtime:
+      #   TAP_MSSQL_HOST, TAP_MSSQL_PORT, TAP_MSSQL_USER,
+      #   TAP_MSSQL_PASSWORD, TAP_MSSQL_DATABASE, TAP_MSSQL_FILTER_SCHEMAS.
+      pip_url: git+https://github.com/BuzzCutNorman/tap-mssql.git pymssql
+      config:
+        dialect: mssql
+        driver_type: pymssql
+        # Default to the user schema(s) only. Without a filter the tap
+        # discovers sys + INFORMATION_SCHEMA and target-bigquery crashes
+        # on the BQ-reserved `information_schema` prefix.
+        filter_schemas: []
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      # overwrite + FULL_TABLE, same contract as sqlserver/mysql. See
+      # connectors/sqlserver-to-bq/meltano.yml for the full rationale.
+      config:
+        method: batch_job
+        denormalized: true
+        overwrite: true
