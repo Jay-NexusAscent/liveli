@@ -303,7 +303,7 @@ function translateTrainingError(err: unknown): Error {
 async function ensureModel(
   datasetId: string,
   modelId: string,
-  spec: SeriesSpec & { dataFrequency: string }
+  spec: Omit<SeriesSpec, "dataFrequency"> & { dataFrequency: string }
 ): Promise<{ trained: boolean; bytesProcessed: number; executionMs: number }> {
   const client = await bqReady();
   const model = client.dataset(datasetId).model(modelId);
@@ -383,7 +383,7 @@ export async function runForecast(spec: ForecastSpec): Promise<ForecastResult> {
     throw new Error(`horizon must be between 1 and ${MAX_HORIZON}.`);
   }
   const { datasetId, modelId, sourceSql, dataFrequency } = prepare(spec);
-  const preparedSpec: SeriesSpec & { dataFrequency: string } = {
+  const preparedSpec: Omit<SeriesSpec, "dataFrequency"> & { dataFrequency: string } = {
     ...spec,
     sourceSql,
     dataFrequency,
@@ -447,7 +447,7 @@ export async function runForecast(spec: ForecastSpec): Promise<ForecastResult> {
 
 export async function runAnomalyDetection(spec: AnomalySpec): Promise<AnomalyResult> {
   const { datasetId, modelId, sourceSql, dataFrequency } = prepare(spec);
-  const preparedSpec: SeriesSpec & { dataFrequency: string } = {
+  const preparedSpec: Omit<SeriesSpec, "dataFrequency"> & { dataFrequency: string } = {
     ...spec,
     sourceSql,
     dataFrequency,
