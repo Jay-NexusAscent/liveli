@@ -85,6 +85,22 @@ export interface BuildTapEnvOptions {
    * exclusions so the tap doesn't emit those streams at all.
    */
   excludedStreams?: string[];
+  /**
+   * Per-stream loader-mode routing (snowflake). z3z1ma target-bigquery
+   * accepts fnmatch pattern lists on its `upsert` and `overwrite` config
+   * keys; streams matching neither append (the default). Lets one sync
+   * MERGE the PK'd tables, overwrite the no-bookmark tables, and append
+   * the rest. Emitted as LIVELI_UPSERT_STREAMS / LIVELI_OVERWRITE_STREAMS;
+   * entrypoint.sh writes them into the loader config.
+   */
+  upsertStreams?: string[];
+  overwriteStreams?: string[];
+  /**
+   * Dotted `<SCHEMA>.<TABLE>` discovery scope for taps that lack a
+   * filter_schemas setting (snowflake). Emitted as the tap's `tables`
+   * setting env var.
+   */
+  tables?: string[];
 }
 
 type EnvBuilder = (
@@ -503,15 +519,12 @@ const TAP_ENV_BUILDERS: Record<string, EnvBuilder> = {
     TAP_MONGODB_DATABASE: creds.database,
   }),
 
-  snowflake: (creds) => {
-    // tap-snowflake (meltanolabs). `warehouse` is required for the tap
-    // to run queries; `schema` is optional. filter_schemas scopes
-    // discovery so INFORMATION_SCHEMA doesn't crash target-bigquery on
-    // the BQ-reserved prefix.
-    const schemas = (creds.schema ?? "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
+  snowflake: (creds, options) => {
+    // tap-snowflake (meltanolabs). `warehouse` is required for the tap to
+    // run queries. NOTE: this variant has NO `filter_schemas` setting —
+    // discovery is scoped via the `tables` setting (dotted SCHEMA.TABLE
+    // list), which we populate from connect-time introspection. The tap
+    // auto-excludes INFORMATION_SCHEMA.
     const env: Record<string, string> = {
       TAP_SNOWFLAKE_ACCOUNT: creds.account,
       TAP_SNOWFLAKE_USER: creds.user,
@@ -519,17 +532,36 @@ const TAP_ENV_BUILDERS: Record<string, EnvBuilder> = {
       TAP_SNOWFLAKE_DATABASE: creds.database,
       TAP_SNOWFLAKE_WAREHOUSE: creds.warehouse,
     };
-    if (schemas.length > 0) {
-      env.TAP_SNOWFLAKE_SCHEMA = schemas[0];
-      env.TAP_SNOWFLAKE_FILTER_SCHEMAS = JSON.stringify(schemas);
+    // Scope discovery to exactly the introspected tables.
+    if (options?.tables && options.tables.length > 0) {
+      env.TAP_SNOWFLAKE_TABLES = JSON.stringify(options.tables);
+    }
+    // Per-stream tap replication metadata (INCREMENTAL/FULL_TABLE + key).
+    if (options?.replicationConfig) {
+      env.LIVELI_REPLICATION_CONFIG = JSON.stringify(options.replicationConfig);
+    }
+    // Per-stream loader-mode routing. PK'd tables MERGE (upsert); no-PK,
+    // no-bookmark tables atomically replace (overwrite); everything else
+    // appends (z3z1ma default). entrypoint.sh writes these into the
+    // loader config as fnmatch pattern lists.
+    if (options?.upsertStreams && options.upsertStreams.length > 0) {
+      env.LIVELI_UPSERT_STREAMS = JSON.stringify(options.upsertStreams);
+    }
+    if (options?.overwriteStreams && options.overwriteStreams.length > 0) {
+      env.LIVELI_OVERWRITE_STREAMS = JSON.stringify(options.overwriteStreams);
     }
     return env;
   },
 
-  oracle: (creds) => {
+  oracle: (creds, options) => {
     // pipelinewise-tap-oracle in `thin` mode (set in meltano.yml — no
     // Instant Client). filter_schemas scopes discovery; Oracle exposes
     // SYS/SYSTEM/etc. that we never want to replicate.
+    //
+    // NOTE: this tap reads filter_schemas as a COMMA-SEPARATED STRING
+    // (`.split(',')`), NOT a JSON array like meltanolabs tap-postgres.
+    // Passing JSON.stringify here would feed the tap a literal "[...]"
+    // string and break discovery.
     const schemas = (creds.schemas ?? "")
       .split(",")
       .map((s) => s.trim())
@@ -542,7 +574,17 @@ const TAP_ENV_BUILDERS: Record<string, EnvBuilder> = {
       TAP_ORACLE_SERVICE_NAME: creds.service_name,
     };
     if (schemas.length > 0) {
-      env.TAP_ORACLE_FILTER_SCHEMAS = JSON.stringify(schemas);
+      env.TAP_ORACLE_FILTER_SCHEMAS = schemas.join(",");
+    }
+    // Per-stream replication metadata + no-PK exclusions from connect-time
+    // introspection (lib/oracle-introspection.ts). Same mechanism as
+    // postgres: entrypoint.sh merges these into meltano.yml. Loader runs
+    // upsert: true, so excluded (no-PK) streams must be filtered out.
+    if (options?.replicationConfig) {
+      env.LIVELI_REPLICATION_CONFIG = JSON.stringify(options.replicationConfig);
+    }
+    if (options?.excludedStreams && options.excludedStreams.length > 0) {
+      env.LIVELI_EXCLUDED_STREAMS = JSON.stringify(options.excludedStreams);
     }
     return env;
   },

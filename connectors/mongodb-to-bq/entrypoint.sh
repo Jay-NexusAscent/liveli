@@ -22,8 +22,10 @@ export MELTANO_STATE_BACKEND_URI="${MELTANO_STATE_BACKEND_URI:-gs://liveli-melta
 STATE_ID="${CLIENT_ID:-$WORKSPACE_ID}/${LIVELI_WORKSPACE_ID:-default}/${CONNECTOR_ID}"
 
 # ── Per-stream replication overrides — intentionally absent ───────
-# overwrite + FULL_TABLE, raw-DB contract. DO NOT re-enable
-# LIVELI_REPLICATION_CONFIG without flipping the loader to upsert first.
+# tap-mongodb runs INCREMENTAL (keyed on the synthetic object_id) and
+# the loader runs in APPEND mode (see meltano.yml) — no per-stream
+# metadata injection needed. Mongo has no relational column schema to
+# introspect, so there's no LIVELI_REPLICATION_CONFIG for this tap.
 
 echo "→ state backend: $MELTANO_STATE_BACKEND_URI"
 echo "→ state id: $STATE_ID"

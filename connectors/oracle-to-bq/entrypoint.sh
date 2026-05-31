@@ -24,8 +24,53 @@ export MELTANO_STATE_BACKEND_URI="${MELTANO_STATE_BACKEND_URI:-gs://liveli-melta
 
 STATE_ID="${CLIENT_ID:-$WORKSPACE_ID}/${LIVELI_WORKSPACE_ID:-default}/${CONNECTOR_ID}"
 
-# ── Per-stream replication overrides — intentionally absent ───────
-# overwrite + FULL_TABLE, raw-DB contract.
+# ── Per-stream replication overrides + exclusion list ─────────────
+# Auto-generated at connect time by lib/oracle-introspection.ts, same
+# contract as the postgres connector:
+#
+#   LIVELI_REPLICATION_CONFIG — JSON map of stream `<OWNER>-<TABLE>` →
+#     { replication-method, replication-key }. Merged into the extractor
+#     `metadata:` block.
+#   LIVELI_EXCLUDED_STREAMS — JSON array of streams with no single-column
+#     PK (incompatible with the loader's upsert MERGE). Written into the
+#     `select:` filter as `!<stream>.*`.
+#
+# Loader runs `upsert: true` (see meltano.yml); tap-oracle emits
+# key_properties from enforced PKs so MERGE preserves history.
+if [ -n "${LIVELI_REPLICATION_CONFIG:-}" ] || [ -n "${LIVELI_EXCLUDED_STREAMS:-}" ]; then
+  echo "→ merging replication config + exclusions into meltano.yml"
+  python3 <<'PY'
+import json, os, yaml
+
+with open("/project/meltano.yml") as f:
+    cfg = yaml.safe_load(f)
+
+extractor = cfg["plugins"]["extractors"][0]
+
+overrides = json.loads(os.environ.get("LIVELI_REPLICATION_CONFIG", "{}"))
+if overrides:
+    existing = extractor.get("metadata", {}) or {}
+    existing.update(overrides)
+    extractor["metadata"] = existing
+
+excluded = json.loads(os.environ.get("LIVELI_EXCLUDED_STREAMS", "[]"))
+if excluded:
+    select = ["*.*"]
+    for stream in excluded:
+        select.append(f"!{stream}.*")
+    extractor["select"] = select
+
+with open("/project/meltano.yml", "w") as f:
+    yaml.safe_dump(cfg, f, sort_keys=False)
+
+for stream, conf in overrides.items():
+    method = conf.get("replication-method", "?")
+    key = conf.get("replication-key", "")
+    print(f"   {stream}: {method}{(' by ' + key) if key else ''}")
+for stream in excluded:
+    print(f"   {stream}: EXCLUDED (no single-column PK — incompatible with upsert MERGE)")
+PY
+fi
 
 echo "→ state backend: $MELTANO_STATE_BACKEND_URI"
 echo "→ state id: $STATE_ID"
