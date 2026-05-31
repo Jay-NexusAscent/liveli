@@ -585,6 +585,29 @@ export default function DashboardsPage() {
 
   const isEmpty = !loading && charts.length === 0 && dashboards.length === 0;
 
+  // When a dashboard is fullscreened we keep only its id in `fullscreen`
+  // state and rebuild the modal's content from the live `dashboards`
+  // array on every render. That's what lets a filter change — which
+  // mutates `dashboards` via runRender — flow into the modal instead of
+  // showing the frozen snapshot captured at open time. Chart-kind
+  // fullscreens are self-contained and pass through unchanged.
+  const fullscreenDashboard =
+    fullscreen?.kind === "dashboard"
+      ? dashboards.find((d) => d.id === fullscreen.id)
+      : undefined;
+  const liveFullscreen: FullscreenContent | null =
+    fullscreen?.kind === "dashboard"
+      ? fullscreenDashboard
+        ? {
+            kind: "dashboard",
+            id: fullscreenDashboard.id,
+            title: fullscreenDashboard.title,
+            description: fullscreenDashboard.description,
+            charts: stripLocalIds(fullscreenDashboard.charts),
+          }
+        : fullscreen
+      : fullscreen;
+
   return (
     <div className="container-page py-8">
       <header className="mb-8 flex items-start justify-between gap-4">
@@ -793,10 +816,30 @@ export default function DashboardsPage() {
       )}
 
       <FullscreenModal
-        content={fullscreen}
+        content={liveFullscreen}
         onClose={() => setFullscreen(null)}
-        onEdit={getFullscreenEditHandler(fullscreen, charts, openEditInChat)}
+        onEdit={getFullscreenEditHandler(liveFullscreen, charts, openEditInChat)}
         settings={settings}
+        filters={fullscreenDashboard?.filters}
+        filterValues={
+          fullscreenDashboard
+            ? filterValuesByDashboard[fullscreenDashboard.id] ??
+              defaultFilterValues(fullscreenDashboard.filters ?? [])
+            : undefined
+        }
+        onFilterChange={
+          fullscreenDashboard
+            ? (v) => handleFilterChange(fullscreenDashboard.id, v)
+            : undefined
+        }
+        onResetFilters={
+          fullscreenDashboard?.filters
+            ? () => resetFilters(fullscreenDashboard.id, fullscreenDashboard.filters!)
+            : undefined
+        }
+        isFiltering={
+          fullscreenDashboard ? renderingByDashboard.has(fullscreenDashboard.id) : undefined
+        }
       />
     </div>
   );
