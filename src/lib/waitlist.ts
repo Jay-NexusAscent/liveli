@@ -1,5 +1,6 @@
+import { clerkClient } from "@clerk/nextjs/server";
 import { FieldValue } from "@google-cloud/firestore";
-import { dbReady, users, waitlist } from "@/lib/firestore";
+import { dbReady, waitlist } from "@/lib/firestore";
 
 /**
  * Self-serve signup cap. When the number of provisioned accounts reaches
@@ -23,22 +24,24 @@ export const SIGNUP_CAP = (() => {
 /**
  * Whether self-serve registration is currently open.
  *
- * Counts the `users` collection — one doc is mirrored per provisioned
- * account by the Clerk webhook (only for allowlisted users, so the count
- * reflects real accounts, not purged sign-up attempts). Registration is
- * open while that count is below the cap.
+ * Counts users straight from Clerk — the authoritative source of "how
+ * many accounts exist". We deliberately do NOT count the Firestore
+ * `users` mirror: that doc is only written by the user.created webhook,
+ * so accounts created before the webhook existed (or any missed event)
+ * under-count and the gate never trips. Clerk's own count has no such
+ * gap. Registration is open while the total is below the cap.
  *
- * Fail-open: if the count query throws (transient auth/network), we
- * return `true` so an infra hiccup never traps every visitor on the
- * waitlist. The cap is a soft throttle, not a security boundary — the
- * email allowlist + Clerk remain the hard gates.
+ * Fail-open: if the count call throws (transient Clerk error), we return
+ * `true` so an outage never traps every visitor on the waitlist. The cap
+ * is a soft throttle, not a security boundary — the email allowlist +
+ * Clerk remain the hard gates.
  */
 export async function registrationOpen(): Promise<boolean> {
   if (SIGNUP_CAP === 0) return true;
   try {
-    await dbReady();
-    const snap = await users().count().get();
-    return snap.data().count < SIGNUP_CAP;
+    const cc = await clerkClient();
+    const total = await cc.users.getCount();
+    return total < SIGNUP_CAP;
   } catch (err) {
     console.error("[waitlist] registrationOpen count failed — failing open", {
       err: err instanceof Error ? err.message : String(err),
