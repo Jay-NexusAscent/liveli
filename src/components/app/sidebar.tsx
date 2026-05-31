@@ -11,6 +11,7 @@ import {
   DashboardIcon,
   HamburgerIcon,
   CloseIcon,
+  HeadsetIcon,
   HistoryIcon,
   InsightIcon,
   PlusIcon,
@@ -19,23 +20,33 @@ import {
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { cn } from "@/lib/utils";
 
-/**
- * Sidebar nav, split into two groups separated by a subtle uppercase
- * label. The split is conceptual, not arbitrary:
- *
- *   Workspace — the four surfaces the user works IN day-to-day.
- *     Chat / History / Insights / Dashboards.
- *
- *   Account  — administrative surfaces touched occasionally.
- *     Connections / Settings.
- *
- * Reduces cognitive load — six flat items become two tight groups —
- * and matches the pattern used by Linear / Vercel / most app shells.
- */
-const navGroups: Array<{
+type NavItem = {
   label: string;
-  items: Array<{ label: string; href: string; icon: typeof ChatIcon }>;
-}> = [
+  href: string;
+  icon: typeof ChatIcon;
+  // External (e.g. mailto:) — renders as a plain <a>, never gets an
+  // active state, and is excluded from allNavItems prefix matching.
+  external?: boolean;
+};
+type NavGroup = { label: string; items: NavItem[] };
+
+/**
+ * Sidebar nav, split into labelled groups. The split is conceptual,
+ * not arbitrary:
+ *
+ *   Workspace — the surfaces the user works IN day-to-day. Pinned to
+ *     the top.  Chat / History / Insights / Dashboards.
+ *
+ *   Account / Help — administrative + support surfaces touched
+ *     occasionally. Anchored to the BOTTOM of the nav (via mt-auto),
+ *     sitting just above the account footer so all the "about your
+ *     account" chrome lives together at the bottom edge.
+ *
+ * Reduces cognitive load and matches the pattern used by Linear /
+ * Vercel / most app shells, where day-to-day nav sits up top and
+ * account/help collect at the bottom.
+ */
+const topGroups: NavGroup[] = [
   {
     label: "Workspace",
     items: [
@@ -45,6 +56,9 @@ const navGroups: Array<{
       { label: "Dashboards", href: "/dashboards", icon: DashboardIcon },
     ],
   },
+];
+
+const bottomGroups: NavGroup[] = [
   {
     label: "Account",
     items: [
@@ -52,11 +66,25 @@ const navGroups: Array<{
       { label: "Settings", href: "/settings", icon: SettingsIcon },
     ],
   },
+  {
+    label: "Help",
+    items: [
+      {
+        label: "Support",
+        href: "mailto:support@liveli.ai",
+        icon: HeadsetIcon,
+        external: true,
+      },
+    ],
+  },
 ];
 
-// Flat list used for active-state longest-prefix matching, derived
-// once at module load so the per-render path doesn't re-flatten.
-const allNavItems = navGroups.flatMap((g) => g.items);
+// Flat list used for active-state longest-prefix matching and the
+// mobile page title, derived once at module load. Excludes external
+// items (a mailto: has no pathname to match against).
+const allNavItems = [...topGroups, ...bottomGroups]
+  .flatMap((g) => g.items)
+  .filter((item) => !item.external);
 
 /**
  * Polls /api/insights/unseen-count for the red bubble next to the
@@ -115,6 +143,82 @@ function UnseenBadge({ count }: { count: number }) {
   );
 }
 
+function NavGroupBlock({
+  group,
+  pathname,
+  unseenInsights,
+  onNavigate,
+  className,
+}: {
+  group: NavGroup;
+  pathname: string;
+  unseenInsights: number;
+  onNavigate?: () => void;
+  className?: string;
+}) {
+  return (
+    <div className={className}>
+      <div className="px-3 pb-2 text-[11px] font-medium uppercase tracking-[0.1em] text-text-tertiary">
+        {group.label}
+      </div>
+      <ul className="flex flex-col gap-0.5">
+        {group.items.map((item) => {
+          // Active when the path matches this nav item AND no other
+          // nav item is a longer prefix of the path. Without the
+          // longest-match check, `/chat/history` would mark both
+          // "Chat" (/chat) and "History" (/chat/history) as active.
+          // External items (mailto:) are never active.
+          const isActive =
+            !item.external &&
+            pathname.startsWith(item.href) &&
+            !allNavItems.some(
+              (other) =>
+                other.href !== item.href &&
+                other.href.length > item.href.length &&
+                pathname.startsWith(other.href)
+            );
+
+          const linkClass = cn(
+            "flex items-center gap-3 rounded-lg px-3 py-2 text-[14px] font-medium transition-all duration-200",
+            isActive
+              ? "bg-accent-muted text-accent shadow-[0_0_12px_var(--accent-glow)]"
+              : "text-text-secondary hover:bg-hover hover:text-text-primary"
+          );
+
+          const inner = (
+            <>
+              <item.icon
+                className={cn(
+                  "shrink-0",
+                  isActive ? "text-accent" : "text-text-tertiary"
+                )}
+              />
+              <span className="flex-1">{item.label}</span>
+              {item.href === "/insights" && (
+                <UnseenBadge count={unseenInsights} />
+              )}
+            </>
+          );
+
+          return (
+            <li key={item.href}>
+              {item.external ? (
+                <a href={item.href} className={linkClass}>
+                  {inner}
+                </a>
+              ) : (
+                <Link href={item.href} onClick={onNavigate} className={linkClass}>
+                  {inner}
+                </Link>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const unseenInsights = useInsightsUnseenCount();
@@ -134,59 +238,32 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
         </span>
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-3">
-        {navGroups.map((group, gi) => (
-          <div key={group.label} className={cn(gi > 0 && "mt-6")}>
-            <div className="px-3 pb-2 text-[11px] font-medium uppercase tracking-[0.1em] text-text-tertiary">
-              {group.label}
-            </div>
-            <ul className="flex flex-col gap-0.5">
-              {group.items.map((item) => {
-                // Active when the path matches this nav item AND no
-                // other nav item is a longer prefix of the path.
-                // Without the longest-match check, `/chat/history`
-                // would mark both "Chat" (/chat) and "History"
-                // (/chat/history) as active. Match runs across the
-                // flat allNavItems so cross-group prefixes (e.g.
-                // Workspace.Chat vs Workspace.History) resolve
-                // correctly.
-                const isActive =
-                  pathname.startsWith(item.href) &&
-                  !allNavItems.some(
-                    (other) =>
-                      other.href !== item.href &&
-                      other.href.length > item.href.length &&
-                      pathname.startsWith(other.href)
-                  );
-                return (
-                  <li key={item.href}>
-                    <Link
-                      href={item.href}
-                      onClick={onNavigate}
-                      className={cn(
-                        "flex items-center gap-3 rounded-lg px-3 py-2 text-[14px] font-medium transition-all duration-200",
-                        isActive
-                          ? "bg-accent-muted text-accent shadow-[0_0_12px_var(--accent-glow)]"
-                          : "text-text-secondary hover:bg-hover hover:text-text-primary"
-                      )}
-                    >
-                      <item.icon
-                        className={cn(
-                          "shrink-0",
-                          isActive ? "text-accent" : "text-text-tertiary"
-                        )}
-                      />
-                      <span className="flex-1">{item.label}</span>
-                      {item.href === "/insights" && (
-                        <UnseenBadge count={unseenInsights} />
-                      )}
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
+      <nav className="flex flex-1 flex-col overflow-y-auto px-3">
+        {topGroups.map((group, gi) => (
+          <NavGroupBlock
+            key={group.label}
+            group={group}
+            pathname={pathname}
+            unseenInsights={unseenInsights}
+            onNavigate={onNavigate}
+            className={cn(gi > 0 && "mt-6")}
+          />
         ))}
+
+        {/* mt-auto pushes Account + Help to the bottom of the nav,
+            so they rest just above the account footer. */}
+        <div className="mt-auto pt-6">
+          {bottomGroups.map((group, gi) => (
+            <NavGroupBlock
+              key={group.label}
+              group={group}
+              pathname={pathname}
+              unseenInsights={unseenInsights}
+              onNavigate={onNavigate}
+              className={cn(gi > 0 && "mt-6")}
+            />
+          ))}
+        </div>
       </nav>
 
       {/* Unified account footer — org switcher above, user button +
