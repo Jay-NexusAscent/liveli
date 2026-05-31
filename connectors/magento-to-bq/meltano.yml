@@ -9,7 +9,11 @@ environments:
 plugins:
   extractors:
     - name: tap-magento
-      variant: hotglue
+      # Variant MUST be `hotgluexyz` — the only variant Meltano Hub knows
+      # for tap-magento. `hotglue` makes `meltano lock` fail with "variant
+      # 'hotglue' is not known to Meltano". The custom git pip_url below
+      # still overrides the install source.
+      variant: hotgluexyz
       # Adobe Commerce / Magento 2 REST API. Not on PyPI → install from
       # git (hotglue's GitLab mirror).
       pip_url: git+https://gitlab.com/hotglue/tap-magento.git

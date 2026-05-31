@@ -1,4 +1,14 @@
-FROM meltano/meltano:v3.7.1-python3.11
+# Python 3.10 (not 3.11) specifically for Oracle: pipelinewise-tap-oracle's
+# install_requires pins `cx_Oracle==8.3` on Linux (the marker is
+# platform_system!='Darwin'). cx_Oracle 8.3 was the final cx_Oracle release
+# and ships prebuilt manylinux wheels only up to cp310 — on Python 3.11 pip
+# falls back to a source build, which needs the Oracle Instant Client SDK
+# headers we deliberately don't ship, and the build dies ("Failed to build
+# cx_Oracle"). On 3.10 the cp310 wheel installs cleanly with no compile.
+# cx_Oracle is never imported at runtime: we run thin mode
+# (ora_python_driver_type: thin → python-oracledb pure-Python driver); the
+# tap only imports cx_Oracle under ORA_PYTHON_DRIVER_TYPE=cx.
+FROM meltano/meltano:v3.7.1-python3.10
 WORKDIR /project
 COPY meltano.yml ./
 # Meltano 3.x doesn't bundle the plugin hub registry — fetch the plugin
