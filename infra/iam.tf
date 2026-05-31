@@ -1,7 +1,8 @@
-# Three service accounts, one per role:
-#  - liveli-ci       : used by GitHub Actions (broad — manages infra)
-#  - liveli-runtime  : used by Vercel runtime (narrow — data plane only)
-#  - liveli-connector: used by Cloud Run connector jobs (narrow — single workspace)
+# Four service accounts, one per role:
+#  - liveli-ci            : used by GitHub Actions (broad — manages infra)
+#  - liveli-runtime       : used by Vercel runtime (narrow — data plane only)
+#  - liveli-connector     : used by Cloud Run connector jobs (narrow — single workspace)
+#  - liveli-agent-metadata: used by the metadata-enrichment Cloud Run Jobs
 
 resource "google_service_account" "ci" {
   account_id   = "liveli-ci"
@@ -19,6 +20,12 @@ resource "google_service_account" "connector" {
   account_id   = "liveli-connector"
   display_name = "Liveli — Connector jobs (Cloud Run)"
   description  = "Runs Meltano ELT pipelines. Reads connector secrets, writes to workspace BQ datasets, writes to GCS."
+}
+
+resource "google_service_account" "agent_metadata" {
+  account_id   = "liveli-agent-metadata"
+  display_name = "Liveli — Metadata enrichment agent (Cloud Run)"
+  description  = "Runs the metadata-agent Jobs. Reads schema + sample rows and writes table/column/dataset descriptions across customer datasets. Calls Vertex AI (Gemini)."
 }
 
 # ── Roles for the CI account ──────────────────────────────────────
@@ -152,4 +159,53 @@ resource "google_project_iam_member" "connector" {
   project  = var.project_id
   role     = each.value
   member   = "serviceAccount:${google_service_account.connector.email}"
+}
+
+# ── Roles for the metadata-agent account ──────────────────────────
+# The metadata-agent Cloud Run Jobs (metadata-agent-<eu|us>) read a
+# customer dataset's schema + a sample of rows, then write back
+# table/column/dataset descriptions. They run as this SA — NOT as
+# liveli-runtime — so the BQ surface is deliberately narrow.
+#
+# Custom role instead of roles/bigquery.dataEditor: the agent never
+# needs to create/delete tables or write row data. It only needs to
+# read schema + sample data and update *descriptions* (which ride on
+# datasets.update / tables.update). dataEditor would over-grant.
+#
+# WHY PROJECT-LEVEL rather than a per-dataset grant: customer datasets
+# are created by the app at runtime (provisionConnector), not by
+# Terraform — see bigquery.tf. A project-level binding means every
+# dataset a NEW client creates in future is covered automatically,
+# with zero per-provisioning wiring. The agent only ever runs against
+# the dataset it's dispatched for (the dispatcher gates which connector
+# types trigger it), so the broad read surface is never exercised on
+# datasets it shouldn't touch.
+resource "google_project_iam_custom_role" "metadata_agent_bq" {
+  role_id     = "liveliMetadataAgentBq"
+  title       = "Liveli Metadata Agent — BigQuery"
+  description = "Read schema + sample data and write table/column/dataset descriptions. Used by liveli-agent-metadata."
+  permissions = [
+    "bigquery.datasets.get",
+    "bigquery.datasets.update", # write dataset-level description
+    "bigquery.jobs.create",     # sample_rows runs a SELECT
+    "bigquery.tables.get",
+    "bigquery.tables.getData", # read sample rows
+    "bigquery.tables.list",
+    "bigquery.tables.update", # write table + column descriptions
+  ]
+}
+
+locals {
+  agent_metadata_roles = [
+    "roles/aiplatform.user", # Vertex AI Gemini calls
+    "roles/datastore.user",  # Firestore: read connector doc, write run status
+    google_project_iam_custom_role.metadata_agent_bq.id,
+  ]
+}
+
+resource "google_project_iam_member" "agent_metadata" {
+  for_each = toset(local.agent_metadata_roles)
+  project  = var.project_id
+  role     = each.value
+  member   = "serviceAccount:${google_service_account.agent_metadata.email}"
 }

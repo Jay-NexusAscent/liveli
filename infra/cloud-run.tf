@@ -87,6 +87,75 @@ locals {
   ]...)
 }
 
+# ── Metadata-enrichment Jobs ──────────────────────────────────────
+# One per residency region, mirroring the connector jobs. These run
+# the LLM metadata agent (schema → table/column/dataset descriptions)
+# as liveli-agent-metadata, NOT liveli-connector. Source image is
+# built + pushed out-of-band (not by deploy-connectors.yml), so the
+# image field is lifecycle-ignored exactly like the connector jobs.
+#
+# VERTEX_AI_MODEL is pinned to gemini-2.5-flash HERE — on purpose.
+# The app-wide default in src/lib/gcp.ts is `claude-sonnet-4-6`, but
+# this Job talks to Vertex via the legacy @google-cloud/vertexai
+# (Gemini-only) SDK, which can ONLY address `publishers/google`
+# models. A claude-* name there resolves to a guaranteed 404
+# ("Publisher Model not found") on the regional endpoint. Without
+# this env pin the job inherits the Sonnet default and every
+# enrichment run dies on turn 1 before touching BigQuery. Liveli's
+# Vertex stack is Gemini Flash + Pro — never Claude/Sonnet.
+resource "google_cloud_run_v2_job" "metadata_agent" {
+  for_each = local.residency_regions
+
+  name     = "metadata-agent-${each.key}"
+  location = each.value
+  project  = var.project_id
+
+  deletion_protection = false
+
+  template {
+    template {
+      service_account = google_service_account.agent_metadata.email
+      max_retries     = 1
+      timeout         = "900s" # 15 minutes max per run
+
+      containers {
+        # Placeholder — replaced by the out-of-band image push.
+        image = "us-docker.pkg.dev/cloudrun/container/hello"
+
+        env {
+          name  = "GCP_PROJECT_ID"
+          value = var.project_id
+        }
+        # See block comment above: Gemini, never Sonnet.
+        env {
+          name  = "VERTEX_AI_MODEL"
+          value = "gemini-2.5-flash"
+        }
+
+        resources {
+          limits = {
+            cpu    = "1"
+            memory = "2Gi"
+          }
+        }
+      }
+    }
+  }
+
+  labels = merge(local.common_labels, {
+    residency = each.key
+  })
+
+  depends_on = [
+    google_project_service.enabled,
+    google_artifact_registry_repository.connectors,
+  ]
+
+  lifecycle {
+    ignore_changes = [template[0].template[0].containers[0].image]
+  }
+}
+
 resource "google_cloud_run_v2_job" "connector" {
   for_each = local.connector_jobs
 
