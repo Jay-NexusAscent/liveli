@@ -82,7 +82,7 @@ export const viewport: Viewport = {
   ],
 };
 
-const themeScript = `(function(){try{var t=localStorage.getItem('liveli-theme')||'dark';document.documentElement.setAttribute('data-theme',t)}catch(e){document.documentElement.setAttribute('data-theme','dark')}})()`;
+const themeScript = `(function(){try{var t=localStorage.getItem('liveli-theme')||'light';document.documentElement.setAttribute('data-theme',t)}catch(e){document.documentElement.setAttribute('data-theme','light')}})()`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
