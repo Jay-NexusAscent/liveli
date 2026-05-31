@@ -1,6 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { useSyncExternalStore } from "react";
 import {
   DEFAULT_WORKSPACE_SETTINGS,
   type WorkspaceSettings,
@@ -11,6 +12,44 @@ import {
 } from "@/lib/workspace-format";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
+
+/**
+ * Live `data-theme` subscription.
+ *
+ * ECharts bakes its theme (light/dark palette + canvas background) in
+ * at instantiation. If we read `data-theme` only once at mount, a chart
+ * created while the page was dark keeps its dark navy canvas after the
+ * user toggles to light — it never re-instantiates. Subscribing to the
+ * attribute (and the cross-tab `storage` event the toggle dispatches)
+ * makes ChartRenderer re-render on every theme change, which flips the
+ * `theme` prop and prompts echarts-for-react to recreate the instance
+ * with the correct palette.
+ */
+function subscribeTheme(callback: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener("storage", callback);
+  const observer = new MutationObserver(callback);
+  observer.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["data-theme"],
+  });
+  return () => {
+    window.removeEventListener("storage", callback);
+    observer.disconnect();
+  };
+}
+
+function getThemeSnapshot(): "light" | "dark" {
+  return document.documentElement.getAttribute("data-theme") === "light"
+    ? "light"
+    : "dark";
+}
+
+// Light is the default theme (see layout.tsx); match it on the server so
+// SSR markup and first client paint agree.
+function getThemeServerSnapshot(): "light" | "dark" {
+  return "light";
+}
 
 interface SeriesLike {
   type?: string;
@@ -68,6 +107,14 @@ export function ChartRenderer({
   height = 320,
   settings = DEFAULT_WORKSPACE_SETTINGS,
 }: ChartRendererProps) {
+  // Subscribe to live theme changes. Must run before any early return
+  // (rules of hooks). KpiTile is plain React and ignores it.
+  const theme = useSyncExternalStore(
+    subscribeTheme,
+    getThemeSnapshot,
+    getThemeServerSnapshot
+  );
+
   const chartSpec = (spec as ChartSpecLike) ?? {};
   const firstSeries = chartSpec.series?.[0];
 
@@ -86,15 +133,11 @@ export function ChartRenderer({
       ? toPieOption(polished)
       : polished;
 
-  const isLightTheme =
-    typeof document !== "undefined" &&
-    document.documentElement.getAttribute("data-theme") === "light";
-
   return (
     <ReactECharts
       option={echartsOption as object}
       style={{ height, width: "100%" }}
-      theme={isLightTheme ? "default" : "dark"}
+      theme={theme === "light" ? "default" : "dark"}
       opts={{ renderer: "svg" }}
     />
   );
