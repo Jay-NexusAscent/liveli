@@ -9,7 +9,11 @@ environments:
 plugins:
   extractors:
     - name: tap-intacct
-      variant: hotglue
+      # Variant MUST be `hotgluexyz` — the only variant Meltano Hub knows
+      # for tap-intacct. `hotglue` makes `meltano lock` fail with "variant
+      # 'hotglue' is not known to Meltano". The custom git pip_url below
+      # still overrides the install source.
+      variant: hotgluexyz
       # Sage Intacct XML Gateway API. Two credential layers: a sender
       # (app-level, issued by Sage to the integration) and a user
       # (the customer's web-services login). Not on PyPI → install from git.
