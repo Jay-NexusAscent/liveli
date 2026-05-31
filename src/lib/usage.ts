@@ -36,7 +36,10 @@ export type UsageEventType =
   | "connector.delete"
   | "connector.pause"
   | "connector.resume"
-  | "connector.full_refresh";
+  | "connector.full_refresh"
+  | "model.train"
+  | "forecast.run"
+  | "anomaly.detect";
 
 export interface UsageEventBase {
   clientId: string;
@@ -206,6 +209,36 @@ export function logMetadataAgentRun(input: {
       toolCallsUsed: input.toolCallsUsed,
       status: input.status,
     },
+  });
+}
+
+/**
+ * BigQuery ML operations: model training, forecasting, anomaly detection.
+ * All are billed by bytes processed (same on-demand rate as a query), so
+ * the GBP estimate reuses bqQueryCostGbp. NOTE: BQML CREATE MODEL can bill
+ * differently from a plain SELECT in some tiers — treat this as an estimate
+ * and reconcile against the Cloud Billing Export for invoicing, exactly as
+ * the file header describes.
+ */
+export function logBqmlUsage(input: {
+  eventType: "model.train" | "forecast.run" | "anomaly.detect";
+  clientId: string;
+  workspaceId: string;
+  userId?: string;
+  /** Model identifier the op touched. */
+  resource?: string;
+  bytesScanned: number;
+  executionMs: number;
+}): void {
+  logUsageEvent({
+    clientId: input.clientId,
+    workspaceId: input.workspaceId,
+    userId: input.userId,
+    eventType: input.eventType,
+    resource: input.resource,
+    bytesScanned: input.bytesScanned,
+    executionMs: input.executionMs,
+    cost_gbp_estimate: bqQueryCostGbp(input.bytesScanned),
   });
 }
 
