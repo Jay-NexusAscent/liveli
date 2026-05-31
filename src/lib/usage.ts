@@ -41,7 +41,8 @@ export type UsageEventType =
   | "forecast.run"
   | "anomaly.detect"
   | "classify.run"
-  | "cluster.run";
+  | "cluster.run"
+  | "recommend.run";
 
 export interface UsageEventBase {
   clientId: string;
@@ -223,7 +224,7 @@ export function logMetadataAgentRun(input: {
  * the file header describes.
  */
 export function logBqmlUsage(input: {
-  eventType: "model.train" | "forecast.run" | "anomaly.detect" | "classify.run" | "cluster.run";
+  eventType: "model.train" | "forecast.run" | "anomaly.detect" | "classify.run" | "cluster.run" | "recommend.run";
   clientId: string;
   workspaceId: string;
   userId?: string;
