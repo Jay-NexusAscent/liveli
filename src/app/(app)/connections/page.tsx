@@ -367,6 +367,21 @@ const popularSources: PopularSource[] = [
   { name: "Google Sheets", desc: "Sync any spreadsheet as a table", category: "Productivity", action: null },
 ];
 
+// Connectors we've formally end-to-end tested. Every OTHER mapped source
+// (action !== null) is shown with a "Beta" tag — the wizard exists and the
+// sync pipeline is wired, but it hasn't been verified against a live
+// source yet. Promote a connector by adding its action here once tested.
+const TESTED_ACTIONS = new Set<ConnectAction>(["postgres", "ga4"]);
+
+// Ordering rank within a category: mapped+tested (0) → mapped+beta (1) →
+// coming-soon (2). Used as a stable secondary sort so each category lists
+// connectable sources before "Coming soon" stubs (the category grouping
+// itself is preserved by the primary sort on category order).
+function sourceRank(s: PopularSource): number {
+  if (s.action === null) return 2;
+  return TESTED_ACTIONS.has(s.action) ? 0 : 1;
+}
+
 /**
  * Exported wrapper — Next.js requires `useSearchParams()` consumers to
  * sit inside a `<Suspense>` boundary so the SSR / static-export pass
@@ -784,16 +799,27 @@ function ConnectionsPageInner() {
 
         {(() => {
           const q = search.trim().toLowerCase();
-          const filtered = popularSources.filter((s) => {
-            const matchCat =
-              filterCategory === "All" || s.category === filterCategory;
-            const matchSearch =
-              !q ||
-              s.name.toLowerCase().includes(q) ||
-              s.desc.toLowerCase().includes(q) ||
-              s.category.toLowerCase().includes(q);
-            return matchCat && matchSearch;
-          });
+          const filtered = popularSources
+            .filter((s) => {
+              const matchCat =
+                filterCategory === "All" || s.category === filterCategory;
+              const matchSearch =
+                !q ||
+                s.name.toLowerCase().includes(q) ||
+                s.desc.toLowerCase().includes(q) ||
+                s.category.toLowerCase().includes(q);
+              return matchCat && matchSearch;
+            })
+            // Keep categories grouped in their canonical order, but float
+            // mapped (connectable) sources above "Coming soon" stubs within
+            // each category. Array.prototype.sort is stable, so sources of
+            // equal rank keep their original catalogue order.
+            .sort((a, b) => {
+              const catDelta =
+                CATEGORIES.indexOf(a.category) - CATEGORIES.indexOf(b.category);
+              if (catDelta !== 0) return catDelta;
+              return sourceRank(a) - sourceRank(b);
+            });
 
           if (filtered.length === 0) {
             return (
@@ -829,6 +855,8 @@ function ConnectionsPageInner() {
             <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {filtered.map((s) => {
                 const interactive = s.action !== null;
+                // Mapped but not yet formally tested → flag as Beta.
+                const isBeta = interactive && !TESTED_ACTIONS.has(s.action);
                 const hasBrand = hasBrandIcon(s.name);
                 const CategoryIconFallback = CATEGORY_ICON[s.category];
                 return (
@@ -870,9 +898,16 @@ function ConnectionsPageInner() {
                         {s.category}
                       </span>
                     </div>
-                    <h3 className="mb-1 text-[15px] font-semibold text-text-primary font-heading">
-                      {s.name}
-                    </h3>
+                    <div className="mb-1 flex items-center gap-2">
+                      <h3 className="text-[15px] font-semibold text-text-primary font-heading">
+                        {s.name}
+                      </h3>
+                      {isBeta && (
+                        <span className="rounded-full border border-accent/40 bg-accent-subtle px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-accent">
+                          Beta
+                        </span>
+                      )}
+                    </div>
                     <p className="text-[13px] leading-relaxed text-text-secondary">
                       {s.desc}
                     </p>

@@ -4,6 +4,7 @@ import {
   provisionConnector,
 } from "@/lib/connector-provisioning";
 import { requireWorkspaceContext, UnauthorizedError } from "@/lib/clients";
+import { introspectOracleSchema } from "@/lib/oracle-introspection";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -12,8 +13,9 @@ export const maxDuration = 30;
  * Oracle auth = host/port + user/password + service name. The tap runs
  * in `thin` mode (pure-Python driver, no Instant Client — see
  * connectors/oracle-to-bq/meltano.yml). Schemas optional; blank means
- * discover all (minus SYS/SYSTEM). tap-oracle runs FULL_TABLE; loader
- * is overwrite.
+ * the connecting user's own schema. We introspect at connect time
+ * (lib/oracle-introspection.ts) to pick per-table INCREMENTAL/FULL_TABLE
+ * + MERGE keys; the loader runs upsert.
  */
 const Body = z.object({
   name: z.string().min(1).max(120).default("Oracle"),
@@ -53,6 +55,47 @@ export async function POST(req: Request) {
 
   const step = { current: "init" };
   try {
+    // Introspect the source BEFORE touching our own state — doubles as a
+    // creds liveness check. Detects per-table replication strategy and
+    // the no-PK tables that must be excluded under upsert MERGE. No
+    // persistent resources exist yet, so nothing to clean up on failure.
+    step.current = "introspect oracle schema";
+    const schemaList = (body.schemas ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    let replicationConfig;
+    try {
+      replicationConfig = await introspectOracleSchema({
+        host: body.host,
+        port: body.port,
+        serviceName: body.serviceName,
+        user: body.user,
+        password: body.password,
+        schemas: schemaList,
+      });
+    } catch (introspectErr) {
+      const msg =
+        introspectErr instanceof Error
+          ? introspectErr.message
+          : String(introspectErr);
+      return Response.json(
+        { error: "Couldn't connect to the Oracle source", errorMessage: msg },
+        { status: 400 }
+      );
+    }
+
+    if (replicationConfig.detected.length === 0) {
+      return Response.json(
+        {
+          error: `No tables found in schema(s): ${
+            schemaList.join(", ") || body.user.toUpperCase()
+          }. Check the schema/owner name and that your user has SELECT privileges.`,
+        },
+        { status: 400 }
+      );
+    }
+
     step.current = "provisionConnector";
     const { connectorId } = await provisionConnector({
       type: "oracle",
@@ -72,6 +115,9 @@ export async function POST(req: Request) {
         user: body.user,
         serviceName: body.serviceName,
         ...(body.schemas?.trim() ? { schemas: body.schemas.trim() } : {}),
+        // Per-stream replication strategy from connect-time introspection,
+        // re-injected as a meltano.yml metadata block at sync time.
+        replicationConfig,
       },
       syncFrequency: body.syncFrequency,
     });

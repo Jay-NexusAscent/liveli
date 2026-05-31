@@ -31,12 +31,30 @@ plugins:
       # Config comes from env at runtime:
       #   TARGET_BIGQUERY_PROJECT, TARGET_BIGQUERY_DATASET,
       #   TARGET_BIGQUERY_LOCATION
-      # overwrite (not upsert) — raw-DB archetype. tap-mongodb replicates
-      # FULL_TABLE by default and collections have no relational PK the
-      # z3z1ma merge path can key on. Overwrite atomically replaces the
-      # canonical table each run; matches our ephemeral-state full-extract
-      # reality. See connectors/mysql-to-bq/meltano.yml for the long form.
+      # APPEND mode (neither overwrite nor upsert) — the z3z1ma default
+      # when both flags are false: new records are appended to the target
+      # table, nothing is replaced or merged.
+      #
+      # Why NOT overwrite: tap-mongodb replicates INCREMENTAL by default,
+      # keyed on a synthetic `object_id` derived from each document's
+      # ObjectId (MeltanoLabs/tap-mongodb streams.py). overwrite +
+      # INCREMENTAL is the LIVELI-111 data-loss pattern: run 2 emits only
+      # documents after the bookmark, overwrite then replaces the WHOLE
+      # table with just that delta — every older document gone. append +
+      # INCREMENTAL is correct: the bookmark advances, only new documents
+      # flow each run, history accumulates, cost scales with inserts.
+      #
+      # Why NOT upsert: upsert MERGEs on key_properties, which for this
+      # tap is `object_id` (NOT the Mongo `_id` — that lives nested in the
+      # emitted `document` field). object_id is immutable per document, so
+      # incremental never re-emits an updated doc anyway — there's nothing
+      # to merge. We'd pay for MERGE machinery that never dedupes.
+      #
+      # Known limitation: object_id is insert-only, so UPDATES to existing
+      # documents are NOT captured. Catching updates needs the tap's
+      # LOG_BASED mode (MongoDB change streams — requires a replica set +
+      # `changeStream` privilege). Tracked as a follow-up; the default
+      # insert-only incremental is the right cheap baseline for now.
       config:
         method: batch_job
         denormalized: true
-        overwrite: true
