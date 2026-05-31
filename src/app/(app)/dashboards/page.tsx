@@ -9,10 +9,16 @@ import {
   GripIcon,
   PencilIcon,
   SparkleIcon,
+  StarIcon,
   TrashIcon,
 } from "@/components/icons";
 import { FullscreenModal } from "@/components/dashboards/fullscreen-modal";
 import { FilterBar } from "@/components/dashboards/filter-bar";
+import { DashboardGallery } from "@/components/dashboards/dashboard-gallery";
+import {
+  AddChartPicker,
+  type PickableChart,
+} from "@/components/dashboards/add-chart-picker";
 import { ChartRenderer } from "@/components/chat/chart-renderer";
 import { EmptyState } from "@/components/ui/empty-state";
 import { defaultFilterValues } from "@/lib/dashboards/filter-defaults";
@@ -127,6 +133,13 @@ interface SavedDashboard {
   charts: DashboardChart[];
   /** Optional dashboard-wide filters (Phase 2). Empty/missing → no filter bar. */
   filters?: FilterDef[];
+  /**
+   * Favourite flag, toggled from the gallery's star control. Persisted
+   * doc-level on the dashboard (not per-user) — single-user private
+   * testing, so doc granularity is correct. Drives favourites-first
+   * sort + the Favourites filter in the gallery.
+   */
+  favorite?: boolean;
 }
 
 type FullscreenContent =
@@ -226,6 +239,24 @@ export default function DashboardsPage() {
   const [settings, setSettings] = useState<WorkspaceSettings>(
     DEFAULT_WORKSPACE_SETTINGS
   );
+
+  // ─── gallery ↔ detail navigation ──────────────────────────────────
+  //
+  // The dashboards surface is now two views sharing one route:
+  //   • selectedId === null → the Superset-style gallery (search +
+  //     favourites + thumbnail cards).
+  //   • selectedId set       → the full detail view of one dashboard.
+  // Keeping it client-side (not a /dashboards/[id] route) avoids a
+  // round-trip — the dashboards are already in memory — and lets the
+  // back button restore gallery scroll/search state for free.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [galleryQuery, setGalleryQuery] = useState("");
+  const [favouritesOnly, setFavouritesOnly] = useState(false);
+  // Inline edit mode for the open dashboard: turns chart titles into
+  // inputs, reveals the per-chart remove button, and swaps the header
+  // for a rename input + Add-chart picker. Reset whenever we leave the
+  // detail view so re-opening a dashboard always starts read-only.
+  const [editing, setEditing] = useState(false);
 
   // ─── filter state per dashboard ───────────────────────────────────
   //
@@ -360,6 +391,12 @@ export default function DashboardsPage() {
       const res = await fetch(`/api/dashboards/${id}`, { method: "DELETE" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setDashboards((ds) => ds.filter((d) => d.id !== id));
+      // If we just deleted the dashboard open in the detail view, fall
+      // back to the gallery so we're not staring at a missing record.
+      if (selectedId === id) {
+        setSelectedId(null);
+        setEditing(false);
+      }
     } catch (err) {
       alert(`Failed to delete dashboard: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -369,6 +406,152 @@ export default function DashboardsPage() {
         return next;
       });
     }
+  };
+
+  /**
+   * Toggle a dashboard's favourite flag. Optimistic — flips local
+   * state immediately so the star and the gallery's favourites-first
+   * sort update without waiting on the network — then PATCHes
+   * `{ favorite }`. Rolls back on failure.
+   */
+  const toggleFavourite = async (id: string, next: boolean) => {
+    let previous: SavedDashboard[] = [];
+    setDashboards((ds) => {
+      previous = ds;
+      return ds.map((d) => (d.id === id ? { ...d, favorite: next } : d));
+    });
+    try {
+      const res = await fetch(`/api/dashboards/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ favorite: next }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      setDashboards(previous);
+      alert(
+        `Couldn't update favourite: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  };
+
+  /**
+   * Rename a dashboard. Trims, no-ops on empty or unchanged, then
+   * optimistic + PATCH `{ title }` + rollback. Title-only PATCH leaves
+   * the charts array untouched server-side.
+   */
+  const renameDashboard = async (id: string, title: string) => {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    let previous: SavedDashboard[] = [];
+    let changed = false;
+    setDashboards((ds) => {
+      previous = ds;
+      return ds.map((d) => {
+        if (d.id !== id || d.title === trimmed) return d;
+        changed = true;
+        return { ...d, title: trimmed };
+      });
+    });
+    if (!changed) return;
+    try {
+      const res = await fetch(`/api/dashboards/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: trimmed }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      setDashboards(previous);
+      alert(
+        `Couldn't rename dashboard: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  };
+
+  /**
+   * Apply a pure transform to one dashboard's charts array, optimistically
+   * update local state (renumbering `order` from the new index), then
+   * PATCH the whole array (replacement semantics). Rolls back on failure.
+   * Shared by the rename-chart / add-chart / remove-chart edits;
+   * reorder + resize predate this helper and inline the same pattern.
+   */
+  const commitCharts = async (
+    dashboardId: string,
+    mutate: (charts: DashboardChart[]) => DashboardChart[]
+  ) => {
+    let previous: SavedDashboard[] = [];
+    let nextCharts: DashboardChart[] | undefined;
+    setDashboards((ds) => {
+      previous = ds;
+      return ds.map((d) => {
+        if (d.id !== dashboardId) return d;
+        const charts = mutate(d.charts).map((c, i) => ({ ...c, order: i }));
+        nextCharts = charts;
+        return { ...d, charts };
+      });
+    });
+    if (!nextCharts) return;
+    try {
+      const res = await fetch(`/api/dashboards/${dashboardId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ charts: stripLocalIds(nextCharts) }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch (err) {
+      setDashboards(previous);
+      alert(
+        `Couldn't save changes: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  };
+
+  const renameChart = (dashboardId: string, localId: string, title: string) => {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    void commitCharts(dashboardId, (charts) =>
+      charts.map((c) => (c._localId === localId ? { ...c, title: trimmed } : c))
+    );
+  };
+
+  /**
+   * Append a saved chart to a dashboard. The picked chart's spec is
+   * copied in (the dashboard owns its charts inline), so later edits to
+   * the standalone saved chart don't retro-mutate the dashboard tile.
+   * Guards the API's 8-chart ceiling client-side for a friendly message.
+   */
+  const addChartToDashboard = (dashboardId: string, chart: PickableChart) => {
+    const dash = dashboards.find((d) => d.id === dashboardId);
+    if (dash && dash.charts.length >= 8) {
+      alert("A dashboard can hold at most 8 charts — remove one first.");
+      return;
+    }
+    void commitCharts(dashboardId, (charts) => [
+      ...charts,
+      {
+        order: charts.length,
+        title: chart.title,
+        spec: chart.spec,
+        _localId: crypto.randomUUID(),
+      },
+    ]);
+  };
+
+  /**
+   * Remove a chart tile from a dashboard. The PATCH endpoint enforces
+   * `charts.min(1)`, so we block removing the final chart and steer the
+   * user to delete the whole dashboard instead.
+   */
+  const removeChartFromDashboard = (dashboardId: string, localId: string) => {
+    const dash = dashboards.find((d) => d.id === dashboardId);
+    if (dash && dash.charts.length <= 1) {
+      alert("A dashboard needs at least one chart — delete the dashboard instead.");
+      return;
+    }
+    void commitCharts(dashboardId, (charts) =>
+      charts.filter((c) => c._localId !== localId)
+    );
   };
 
   /**
@@ -585,6 +768,21 @@ export default function DashboardsPage() {
 
   const isEmpty = !loading && charts.length === 0 && dashboards.length === 0;
 
+  // The dashboard open in the detail view, or undefined for the gallery.
+  // Derived (not stored) so it always tracks live `dashboards` state —
+  // a rename/favourite/render that mutates the array flows straight in.
+  const selected = selectedId
+    ? dashboards.find((d) => d.id === selectedId)
+    : undefined;
+
+  // Saved charts offered by the Add-chart picker in edit mode, mapped to
+  // the picker's lean shape. Specs are copied into the dashboard on add.
+  const pickableCharts: PickableChart[] = charts.map((c) => ({
+    id: c.id,
+    title: c.title,
+    spec: c.spec,
+  }));
+
   // When a dashboard is fullscreened we keep only its id in `fullscreen`
   // state and rebuild the modal's content from the live `dashboards`
   // array on every render. That's what lets a filter change — which
@@ -637,149 +835,242 @@ export default function DashboardsPage() {
         />
       )}
 
-      {dashboards.length > 0 && (
+      {/*
+        Gallery view — the Superset-style scan surface. Shown whenever
+        no dashboard is open in detail. Maps the rich client dashboards
+        down to the gallery's lean shape (it only needs the first chart
+        for the thumbnail preview).
+      */}
+      {!loading && !selected && dashboards.length > 0 && (
+        <DashboardGallery
+          dashboards={dashboards.map((d) => ({
+            id: d.id,
+            title: d.title,
+            description: d.description,
+            favorite: d.favorite,
+            charts: d.charts.map((c) => ({ title: c.title, spec: c.spec })),
+          }))}
+          settings={settings}
+          query={galleryQuery}
+          onQueryChange={setGalleryQuery}
+          favouritesOnly={favouritesOnly}
+          onFavouritesOnlyChange={setFavouritesOnly}
+          onOpen={(id) => {
+            setSelectedId(id);
+            setEditing(false);
+          }}
+          onToggleFavourite={toggleFavourite}
+          onDelete={deleteDashboard}
+          deleting={deleting}
+        />
+      )}
+
+      {/*
+        Detail view — one dashboard, read-only or in inline edit mode.
+        `editing` swaps the title for a rename input, reveals the
+        Add-chart picker + per-chart rename/remove affordances, and
+        replaces the Edit button with a Done button.
+      */}
+      {selected && (
         <section className="mb-12">
-          <h2 className="mb-4 flex items-center gap-2 text-[13px] font-medium uppercase tracking-wider text-text-tertiary">
-            <SparkleIcon /> Agent-composed dashboards
-          </h2>
-          <div className="space-y-8">
-            {dashboards.map((d) => (
-              <div key={d.id} className="card-elevated p-6">
-                <div className="mb-4 flex items-start justify-between gap-4">
-                  <div>
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedId(null);
+              setEditing(false);
+            }}
+            className="mb-4 inline-flex items-center gap-1.5 text-[13px] text-text-secondary transition-colors hover:text-text-primary"
+          >
+            ← All dashboards
+          </button>
+
+          <div className="card-elevated p-6">
+            <div className="mb-4 flex items-start justify-between gap-4">
+              <div className="min-w-0 flex-1">
+                {editing ? (
+                  <EditableTitle
+                    key={selected.id}
+                    value={selected.title}
+                    onCommit={(t) => renameDashboard(selected.id, t)}
+                    ariaLabel="Dashboard title"
+                    className="w-full rounded-lg border border-border bg-elevated px-3 py-1.5 text-[18px] font-semibold text-text-primary font-heading focus:border-accent focus:outline-none"
+                  />
+                ) : (
+                  <>
                     <h3 className="text-[18px] font-semibold text-text-primary font-heading">
-                      {d.title}
+                      {selected.title}
                     </h3>
-                    {d.description && (
-                      <p className="mt-1 text-[13px] text-text-secondary">{d.description}</p>
+                    {selected.description && (
+                      <p className="mt-1 text-[13px] text-text-secondary">
+                        {selected.description}
+                      </p>
                     )}
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    <IconButton
+                  </>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                {editing ? (
+                  <>
+                    <AddChartPicker
+                      charts={pickableCharts}
+                      onAdd={(c) => addChartToDashboard(selected.id, c)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setEditing(false)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-accent bg-accent-muted px-3 py-1.5 text-[13px] font-medium text-accent transition-colors hover:bg-hover"
+                    >
+                      <CheckIcon /> Done
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {/*
+                      Two distinct edit paths:
+                        • Edit       — inline, direct manipulation (rename,
+                          add/remove charts, reorder, resize). Fast, no LLM.
+                        • Edit with AI — hands the dashboard to the agent in
+                          chat for generative changes ("add a YoY column",
+                          "make this a stacked bar"). Slower, conversational.
+                    */}
+                    <button
+                      type="button"
+                      onClick={() => setEditing(true)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-elevated px-3 py-1.5 text-[13px] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
+                    >
+                      <PencilIcon /> Edit
+                    </button>
+                    <button
+                      type="button"
                       onClick={() =>
                         openEditInChat({
                           kind: "dashboard",
-                          id: d.id,
-                          title: d.title,
-                          description: d.description,
-                          charts: stripLocalIds(d.charts),
+                          id: selected.id,
+                          title: selected.title,
+                          description: selected.description,
+                          charts: stripLocalIds(selected.charts),
                         })
                       }
-                      ariaLabel={`Edit dashboard ${d.title}`}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-elevated px-3 py-1.5 text-[13px] font-medium text-text-secondary transition-colors hover:bg-hover hover:text-text-primary"
+                    >
+                      <SparkleIcon /> Edit with AI
+                    </button>
+                    <IconButton
+                      onClick={() => toggleFavourite(selected.id, !selected.favorite)}
+                      ariaLabel={
+                        selected.favorite
+                          ? `Unfavourite ${selected.title}`
+                          : `Favourite ${selected.title}`
+                      }
                       variant="neutral"
                     >
-                      <PencilIcon />
+                      <StarIcon filled={!!selected.favorite} />
                     </IconButton>
                     <IconButton
                       onClick={() =>
                         setFullscreen({
                           kind: "dashboard",
-                          id: d.id,
-                          title: d.title,
-                          description: d.description,
-                          charts: stripLocalIds(d.charts),
+                          id: selected.id,
+                          title: selected.title,
+                          description: selected.description,
+                          charts: stripLocalIds(selected.charts),
                         })
                       }
-                      ariaLabel={`View dashboard ${d.title} full screen`}
+                      ariaLabel={`View dashboard ${selected.title} full screen`}
                       variant="neutral"
                     >
                       <ExpandIcon />
                     </IconButton>
                     <IconButton
-                      onClick={() => deleteDashboard(d.id, d.title)}
-                      disabled={deleting.has(d.id)}
-                      ariaLabel={`Delete dashboard ${d.title}`}
+                      onClick={() => deleteDashboard(selected.id, selected.title)}
+                      disabled={deleting.has(selected.id)}
+                      ariaLabel={`Delete dashboard ${selected.title}`}
                       variant="danger"
                     >
                       <TrashIcon />
                     </IconButton>
-                  </div>
-                </div>
-                {/*
-                  Dashboard-wide filter bar (LIVELI-122). Only renders
-                  when the agent declared filters on this dashboard;
-                  legacy dashboards without filters show no bar at
-                  all and behave exactly as before.
-                */}
-                {d.filters && d.filters.length > 0 && (
-                  <FilterBar
-                    filters={d.filters}
-                    values={filterValuesByDashboard[d.id] ?? defaultFilterValues(d.filters)}
-                    onChange={(v) => handleFilterChange(d.id, v)}
-                    isUpdating={renderingByDashboard.has(d.id)}
-                    onReset={() => resetFilters(d.id, d.filters!)}
-                  />
+                  </>
                 )}
-                {/*
-                  One DndContext per dashboard so drags are scoped — a
-                  user can't pick a chart out of dashboard A and drop
-                  it into dashboard B (which would be a confusing UX
-                  and would also need a cross-doc API call we don't
-                  have).
-                */}
-                <DndContext
-                  sensors={sensors}
-                  collisionDetection={closestCenter}
-                  onDragEnd={(e: DragEndEvent) => {
-                    if (!e.over || e.active.id === e.over.id) return;
-                    reorderDashboardCharts(
-                      d.id,
-                      String(e.active.id),
-                      String(e.over.id)
-                    );
-                  }}
-                >
-                  <SortableContext
-                    items={d.charts.map((c) => c._localId)}
-                    strategy={rectSortingStrategy}
-                  >
-                    {/*
-                      4-column grid with 180px row units. Each tile
-                      picks (col-span-N, row-span-M) based on its
-                      colSpan:
-                        Extra small — col-span-1 row-span-1 (¼ wide,  half tall)
-                        Small       — col-span-1 row-span-2 (¼ wide,  full tall)
-                        Medium      — col-span-2 row-span-2 (½ wide,  full tall)
-                        Large       — col-span-4 row-span-2 (full,    full tall)
-                      Existing charts without a colSpan field render
-                      at Medium so layouts stay identical to before.
-                    */}
-                    <div className="grid gap-4 md:grid-cols-4 md:auto-rows-[180px]">
-                      {d.charts.map((c, i) => (
-                        <SortableChartTile
-                          key={c._localId}
-                          id={c._localId}
-                          title={c.title}
-                          spec={c.spec}
-                          colSpan={c.colSpan ?? DEFAULT_COL_SPAN}
-                          renderError={c._renderError}
-                          settings={settings}
-                          onExpand={() =>
-                            setFullscreen({
-                              kind: "chart",
-                              // Synthetic id for charts inside a dashboard —
-                              // the chart isn't a standalone saved-chart doc,
-                              // it lives as a subdoc on the dashboard.
-                              id: `${d.id}-${i}`,
-                              title: c.title,
-                              spec: c.spec,
-                            })
-                          }
-                          onResize={(size) =>
-                            resizeDashboardChart(d.id, c._localId, size)
-                          }
-                        />
-                      ))}
-                    </div>
-                  </SortableContext>
-                </DndContext>
               </div>
-            ))}
+            </div>
+            {/*
+              Dashboard-wide filter bar (LIVELI-122). Only renders when
+              the agent declared filters; legacy dashboards without
+              filters show no bar and behave exactly as before.
+            */}
+            {selected.filters && selected.filters.length > 0 && (
+              <FilterBar
+                filters={selected.filters}
+                values={
+                  filterValuesByDashboard[selected.id] ??
+                  defaultFilterValues(selected.filters)
+                }
+                onChange={(v) => handleFilterChange(selected.id, v)}
+                isUpdating={renderingByDashboard.has(selected.id)}
+                onReset={() => resetFilters(selected.id, selected.filters!)}
+              />
+            )}
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={(e: DragEndEvent) => {
+                if (!e.over || e.active.id === e.over.id) return;
+                reorderDashboardCharts(
+                  selected.id,
+                  String(e.active.id),
+                  String(e.over.id)
+                );
+              }}
+            >
+              <SortableContext
+                items={selected.charts.map((c) => c._localId)}
+                strategy={rectSortingStrategy}
+              >
+                {/*
+                  4-column grid with 180px row units. Each tile picks
+                  (col-span-N, row-span-M) from its colSpan; charts
+                  without a colSpan render at Medium so legacy layouts
+                  are unchanged.
+                */}
+                <div className="grid gap-4 md:grid-cols-4 md:auto-rows-[180px]">
+                  {selected.charts.map((c, i) => (
+                    <SortableChartTile
+                      key={c._localId}
+                      id={c._localId}
+                      title={c.title}
+                      spec={c.spec}
+                      colSpan={c.colSpan ?? DEFAULT_COL_SPAN}
+                      renderError={c._renderError}
+                      settings={settings}
+                      editing={editing}
+                      onRename={(t) => renameChart(selected.id, c._localId, t)}
+                      onRemove={() =>
+                        removeChartFromDashboard(selected.id, c._localId)
+                      }
+                      onExpand={() =>
+                        setFullscreen({
+                          kind: "chart",
+                          // Synthetic id for charts inside a dashboard —
+                          // the chart isn't a standalone saved-chart doc,
+                          // it lives as a subdoc on the dashboard.
+                          id: `${selected.id}-${i}`,
+                          title: c.title,
+                          spec: c.spec,
+                        })
+                      }
+                      onResize={(size) =>
+                        resizeDashboardChart(selected.id, c._localId, size)
+                      }
+                    />
+                  ))}
+                </div>
+              </SortableContext>
+            </DndContext>
           </div>
         </section>
       )}
 
-      {charts.length > 0 && (
+      {!loading && !selected && charts.length > 0 && (
         <section>
           <h2 className="mb-4 text-[13px] font-medium uppercase tracking-wider text-text-tertiary">
             Saved charts
@@ -915,6 +1206,9 @@ function SortableChartTile({
   onResize,
   renderError,
   settings,
+  editing,
+  onRename,
+  onRemove,
 }: {
   id: string;
   title: string;
@@ -925,6 +1219,11 @@ function SortableChartTile({
   /** Last /render error for this chart, if any. The displayed spec is the previous render's output. */
   renderError?: string;
   settings?: WorkspaceSettings;
+  // Inline edit mode (detail view). When true the tile's title becomes
+  // a rename input and a remove button appears in the action cluster.
+  editing?: boolean;
+  onRename?: (title: string) => void;
+  onRemove?: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id });
@@ -947,6 +1246,9 @@ function SortableChartTile({
         onExpand={onExpand}
         compact={colSpan === "extra-small"}
         settings={settings}
+        editing={editing}
+        onRename={onRename}
+        onRemove={onRemove}
         dragHandle={
           <button
             type="button"
@@ -1058,6 +1360,9 @@ function ChartTile({
   renderError,
   compact = false,
   settings,
+  editing,
+  onRename,
+  onRemove,
 }: {
   title: string;
   spec: unknown;
@@ -1066,6 +1371,12 @@ function ChartTile({
   onDelete?: () => void;
   deleting?: boolean;
   dragHandle?: React.ReactNode;
+  // Inline edit mode for dashboard tiles: title → rename input, plus a
+  // remove-from-dashboard button. Standalone saved-chart tiles never
+  // pass these, so they're unaffected.
+  editing?: boolean;
+  onRename?: (title: string) => void;
+  onRemove?: () => void;
   // Optional width-picker rendered in the action cluster. Only
   // present for inner-dashboard tiles; standalone saved-chart tiles
   // don't get a resize affordance because there's no per-chart
@@ -1090,12 +1401,31 @@ function ChartTile({
   return (
     <div className="card-elevated flex h-full flex-col overflow-hidden">
       <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-2.5">
-        <div className="flex min-w-0 items-center gap-1">
+        <div className="flex min-w-0 flex-1 items-center gap-1">
           {dragHandle}
-          <div className="truncate text-[13px] font-medium text-text-primary">{title}</div>
+          {editing && onRename ? (
+            <EditableTitle
+              key={title}
+              value={title}
+              onCommit={onRename}
+              ariaLabel={`Rename chart ${title}`}
+              className="w-full min-w-0 rounded-md border border-border bg-elevated px-2 py-1 text-[13px] font-medium text-text-primary focus:border-accent focus:outline-none"
+            />
+          ) : (
+            <div className="truncate text-[13px] font-medium text-text-primary">{title}</div>
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {sizePicker}
+          {editing && onRemove && (
+            <IconButton
+              onClick={onRemove}
+              ariaLabel={`Remove chart ${title} from dashboard`}
+              variant="danger"
+            >
+              <TrashIcon />
+            </IconButton>
+          )}
           {onEdit && (
             <IconButton
               onClick={onEdit}
@@ -1141,6 +1471,51 @@ function ChartTile({
         <ChartRenderer spec={spec} height={compact ? 110 : 260} settings={settings} />
       </div>
     </div>
+  );
+}
+
+/**
+ * Inline-editable text field used for renaming a dashboard or a chart
+ * tile in edit mode.
+ *
+ * Holds its own draft state so typing stays local (no PATCH per
+ * keystroke); commits on blur or Enter, reverts on Escape or when the
+ * draft is blank/unchanged. Callers key this by the entity id/title so
+ * a commit (which changes `value`) remounts it with the fresh value —
+ * the simplest way to keep draft state honest without a sync effect.
+ */
+function EditableTitle({
+  value,
+  onCommit,
+  className,
+  ariaLabel,
+}: {
+  value: string;
+  onCommit: (next: string) => void;
+  className?: string;
+  ariaLabel: string;
+}) {
+  const [draft, setDraft] = useState(value);
+  return (
+    <input
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        const trimmed = draft.trim();
+        if (trimmed && trimmed !== value) onCommit(trimmed);
+        else setDraft(value);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.currentTarget.blur();
+        } else if (e.key === "Escape") {
+          setDraft(value);
+          e.currentTarget.blur();
+        }
+      }}
+      aria-label={ariaLabel}
+      className={className}
+    />
   );
 }
 
