@@ -11,6 +11,7 @@ import { proposeInsightsTool } from "./propose-insights";
 import { forecastTool } from "./forecast";
 import { detectAnomaliesTool } from "./detect-anomalies";
 import { classifyTool } from "./classify";
+import { segmentTool } from "./segment";
 import type { AgentContext, ToolDefinition, ToolResult } from "./types";
 import type { FunctionDeclaration } from "@google-cloud/vertexai";
 
@@ -29,6 +30,7 @@ export const tools: ToolDefinition[] = [
   forecastTool,
   detectAnomaliesTool,
   classifyTool,
+  segmentTool,
 ];
 
 const byName = new Map(tools.map((t) => [t.name, t]));

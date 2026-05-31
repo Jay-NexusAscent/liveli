@@ -759,3 +759,236 @@ export async function runClassification(
 
   return { trained: train.trained, modelId, metrics, weights, topRisk };
 }
+
+// ── Clustering / segmentation (KMEANS) ─────────────────────────────
+
+/** One cluster's centroid profile: its size plus the centroid value of each
+ * feature, so the agent can describe what makes the segment distinct. */
+export interface ClusterProfile {
+  cluster: number;
+  size: number;
+  /** Centroid value per feature. Numeric features → the mean; categorical →
+   * the dominant category label. */
+  features: Record<string, number | string>;
+}
+
+export interface ClusterAssignment {
+  id: string;
+  cluster: number;
+  /** Distance to the assigned centroid — smaller means a tighter fit. */
+  distance: number;
+}
+
+export interface ClusteringResult {
+  trained: boolean;
+  modelId: string;
+  numClusters: number;
+  profiles: ClusterProfile[];
+  /** A capped sample of entity→cluster assignments. Present only when an
+   * id_column was supplied. */
+  assignments?: ClusterAssignment[];
+}
+
+export interface ClusteringSpec {
+  clientId: string;
+  workspaceId: string;
+  userId?: string;
+  /** Agent-authored SELECT: one row per entity, feature columns to cluster on
+   * (+ optionally one id column, excluded from the feature set). */
+  sourceSql: string;
+  /** Optional entity-id column — kept out of features, used to label rows. */
+  idColumn?: string;
+  /** Desired number of segments. Omit to let BigQuery pick automatically. */
+  numClusters?: number;
+  /** How many entity→cluster assignments to sample back. Default 200. */
+  topN?: number;
+  /** Workspace BQ residency: "EU" | "US". */
+  location: string;
+}
+
+function buildClustererDdl(args: {
+  datasetId: string;
+  modelId: string;
+  idColumn?: string;
+  numClusters?: number;
+  sourceSql: string;
+}): string {
+  const fq = `\`${gcp.projectId}.${args.datasetId}.${args.modelId}\``;
+  // The id labels rows for assignment readout, it is NOT a clustering dimension
+  // — exclude it. Everything else the SELECT returns is a feature, so the tool
+  // stays schema-agnostic.
+  const trainingSelect = args.idColumn
+    ? `SELECT * EXCEPT(\`${args.idColumn}\`) FROM (\n${args.sourceSql}\n)`
+    : args.sourceSql;
+  const options = [
+    "model_type = 'KMEANS'",
+    // Features live on wildly different scales (revenue vs. order count);
+    // standardizing stops the largest-magnitude column from dominating distance.
+    "standardize_features = TRUE",
+    // K-means++ seeding beats random init for cluster stability/quality.
+    "kmeans_init_method = 'KMEANS++'",
+    // Only pin k when the caller asked; otherwise BigQuery auto-selects it.
+    args.numClusters ? `num_clusters = ${args.numClusters}` : null,
+  ]
+    .filter(Boolean)
+    .join(",\n  ");
+  return `CREATE OR REPLACE MODEL ${fq}\nOPTIONS(\n  ${options}\n) AS (\n${trainingSelect}\n)`;
+}
+
+function translateClusteringError(err: unknown): Error {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/num_clusters|number of clusters|fewer than|at least \d+ row/i.test(msg)) {
+    return new Error(
+      "Not enough rows to form that many segments. Lower num_clusters, or widen source_sql to return more entities."
+    );
+  }
+  if (/no features|feature columns|only.*label|at least one/i.test(msg)) {
+    return new Error(
+      "Clustering needs at least one feature column besides the id. Make source_sql return the numeric/categorical attributes to segment on."
+    );
+  }
+  return new Error(`Model training failed: ${msg}`);
+}
+
+/** Resolve a centroid feature value: numeric mean, or the dominant category. */
+function centroidValue(row: Record<string, unknown>): number | string {
+  const num = row["numerical_value"];
+  if (num !== null && num !== undefined) return cellNum(num);
+  const cats = row["categorical_value"];
+  if (Array.isArray(cats) && cats.length > 0) {
+    let best: { category: string; value: number } | null = null;
+    for (const c of cats as Record<string, unknown>[]) {
+      const value = cellNum(c["value"]);
+      if (!best || value > best.value) best = { category: cellStr(c["category"]), value };
+    }
+    if (best) return best.category;
+  }
+  return NaN;
+}
+
+export async function runClustering(spec: ClusteringSpec): Promise<ClusteringResult> {
+  if (spec.idColumn) assertIdentifier(spec.idColumn, "id_column");
+  if (spec.numClusters !== undefined && (spec.numClusters < 2 || spec.numClusters > 20)) {
+    throw new Error("num_clusters must be between 2 and 20.");
+  }
+  const sourceSql = validateSourceSql(spec.sourceSql);
+  const datasetId = modelsDatasetId(spec.clientId, spec.workspaceId);
+  // id_column changes which columns are features and num_clusters changes the
+  // trained model, so both are part of model identity. topN only affects how
+  // many assignments we read back, so it's excluded — re-reads reuse the cache.
+  const modelId = hashParts(
+    sourceSql,
+    spec.idColumn ?? "",
+    String(spec.numClusters ?? ""),
+    "KMEANS"
+  );
+
+  await ensureModelsDataset(datasetId, spec.location);
+  const ddl = buildClustererDdl({
+    datasetId,
+    modelId,
+    idColumn: spec.idColumn,
+    numClusters: spec.numClusters,
+    sourceSql,
+  });
+  const train = await ensureModelDdl(
+    datasetId,
+    modelId,
+    ddl,
+    spec.location,
+    translateClusteringError
+  );
+  if (train.trained) {
+    logBqmlUsage({
+      eventType: "model.train",
+      clientId: spec.clientId,
+      workspaceId: spec.workspaceId,
+      userId: spec.userId,
+      resource: modelId,
+      bytesScanned: train.bytesProcessed,
+      executionMs: train.executionMs,
+    });
+  }
+
+  const fq = `\`${gcp.projectId}.${datasetId}.${modelId}\``;
+  const sizesSql =
+    `SELECT CENTROID_ID AS cluster, COUNT(*) AS size ` +
+    `FROM ML.PREDICT(MODEL ${fq}, (\n${sourceSql}\n)) ` +
+    `GROUP BY cluster ORDER BY cluster`;
+  const centroidsSql =
+    `SELECT centroid_id AS cluster, feature, numerical_value, categorical_value ` +
+    `FROM ML.CENTROIDS(MODEL ${fq})`;
+
+  const wantAssign = Boolean(spec.idColumn);
+  const topN = spec.topN ?? 200;
+
+  const startedAt = Date.now();
+  const jobs: Promise<JobResult>[] = [
+    runQuery(sizesSql, spec.location, { maxRows: 50 }),
+    runQuery(centroidsSql, spec.location, { maxRows: 5000 }),
+  ];
+  if (wantAssign) {
+    // nearest_centroids_distance is an ARRAY<STRUCT<centroid_id, distance>>;
+    // the assigned centroid's distance is the smallest one.
+    const assignSql =
+      `SELECT \`${spec.idColumn}\` AS id, CENTROID_ID AS cluster, ` +
+      `(SELECT MIN(d.distance) FROM UNNEST(nearest_centroids_distance) AS d) AS distance ` +
+      `FROM ML.PREDICT(MODEL ${fq}, (\n${sourceSql}\n)) ` +
+      `ORDER BY cluster, distance LIMIT ${topN}`;
+    jobs.push(runQuery(assignSql, spec.location, { maxRows: topN }));
+  }
+
+  const results = await Promise.all(jobs);
+  const [sizesRes, centroidsRes] = results;
+  const assignRes = wantAssign ? results[2] : undefined;
+
+  const bytes =
+    sizesRes.bytesProcessed +
+    centroidsRes.bytesProcessed +
+    (assignRes?.bytesProcessed ?? 0);
+  logBqmlUsage({
+    eventType: "cluster.run",
+    clientId: spec.clientId,
+    workspaceId: spec.workspaceId,
+    userId: spec.userId,
+    resource: modelId,
+    bytesScanned: bytes,
+    executionMs: Date.now() - startedAt,
+  });
+
+  const sizeByCluster = new Map<number, number>();
+  for (const r of sizesRes.rows) {
+    sizeByCluster.set(cellNum(r["cluster"]), cellNum(r["size"]));
+  }
+
+  const featuresByCluster = new Map<number, Record<string, number | string>>();
+  for (const r of centroidsRes.rows) {
+    const cluster = cellNum(r["cluster"]);
+    const feat = cellStr(r["feature"]);
+    const bucket = featuresByCluster.get(cluster) ?? {};
+    bucket[feat] = centroidValue(r);
+    featuresByCluster.set(cluster, bucket);
+  }
+
+  const profiles: ClusterProfile[] = [...featuresByCluster.keys()]
+    .sort((a, b) => a - b)
+    .map((cluster) => ({
+      cluster,
+      size: sizeByCluster.get(cluster) ?? 0,
+      features: featuresByCluster.get(cluster) ?? {},
+    }));
+
+  const assignments: ClusterAssignment[] | undefined = assignRes?.rows.map((r) => ({
+    id: cellStr(r["id"]),
+    cluster: cellNum(r["cluster"]),
+    distance: cellNum(r["distance"]),
+  }));
+
+  return {
+    trained: train.trained,
+    modelId,
+    numClusters: profiles.length,
+    profiles,
+    assignments,
+  };
+}

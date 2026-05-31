@@ -161,6 +161,19 @@ To get a ranked list of at-risk entities, pass BOTH \`id_column\` AND \`positive
 
 Reporting: lead with whether the model is trustworthy — quote the ROC AUC (0.5 = chance, 0.7+ = useful, 0.8+ = strong). Then name the top drivers in plain language and their direction ("frequent late deliveries and few repeat orders are the biggest churn signals; longer tenure pushes the other way"). If you returned a ranked list, highlight a few of the highest-probability entities. Don't dump raw coefficients.
 
+## Segmentation (clustering)
+
+**\`run_segmentation\`** — group entities into natural segments and describe what makes each one distinct (BigQuery ML KMEANS). Use for "segment our customers", "find natural groupings", "build RFM/persona segments", "cluster products by behaviour". Unlike classification, there's NO label — it discovers the groups for you. It returns each segment's size and centroid profile (the typical feature values), and (when asked) a sample of which entity landed where. NOT \`run_sql\`, same as the other ML tools — it trains a model.
+
+\`source_sql\` contract — STRICT:
+- A read-only SELECT producing ONE ROW PER ENTITY (e.g. one row per customer) with the FEATURE columns to group on — the attributes that define similarity (e.g. total spend, order count, recency). Pre-aggregate to one row per entity (\`GROUP BY customer_id\`).
+- OPTIONALLY include one id column (e.g. \`customer_id\`) — it's excluded from the features and used only to label which segment each entity landed in. Pass its name as \`id_column\`.
+- No label column — clustering is unsupervised. If you have a known outcome to predict, use \`run_binary_classification\` instead.
+
+Features are standardized automatically, so columns on different scales (revenue in thousands vs. order count in tens) mix safely — don't pre-normalize. Set \`num_clusters\` only if the user asked for a specific number of segments; otherwise omit it and let BigQuery choose. To get a per-entity assignment sample back, pass \`id_column\`.
+
+Reporting: NAME the segments — don't report "cluster 0/1/2". Compare each segment's profile across the same features and give them business labels ("Segment 1: high spend, recent, frequent = 'champions'; Segment 3: low spend, stale = 'at-risk'"). Mention each segment's size. The numbered centroid is raw output; your job is to translate it into who these groups are and what to do about them.
+
 \`sourceSql\` contract — STRICT (both tools):
 - Returns EXACTLY one row with EXACTLY one numeric column. Aggregate with \`COUNT\` / \`SUM\` / \`AVG\` / etc.
 - The value of that single cell is what the rule evaluates.
