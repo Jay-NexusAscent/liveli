@@ -8,6 +8,8 @@ import { updateChartTool } from "./update-chart";
 import { updateDashboardTool } from "./update-dashboard";
 import { saveInsightTool } from "./save-insight";
 import { proposeInsightsTool } from "./propose-insights";
+import { forecastTool } from "./forecast";
+import { detectAnomaliesTool } from "./detect-anomalies";
 import type { AgentContext, ToolDefinition, ToolResult } from "./types";
 import type { FunctionDeclaration } from "@google-cloud/vertexai";
 
@@ -23,6 +25,8 @@ export const tools: ToolDefinition[] = [
   updateDashboardTool,
   saveInsightTool,
   proposeInsightsTool,
+  forecastTool,
+  detectAnomaliesTool,
 ];
 
 const byName = new Map(tools.map((t) => [t.name, t]));
