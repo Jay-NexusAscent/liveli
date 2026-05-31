@@ -1,0 +1,31 @@
+version: 1
+default_environment: dev
+project_id: liveli-close-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-closeio
+      variant: singer-io
+      # Close CRM (close.com, formerly Close.io). API-key auth.
+      pip_url: git+https://github.com/singer-io/tap-closeio.git
+      # Required env:
+      #   TAP_CLOSEIO_API_KEY, TAP_CLOSEIO_START_DATE
+      settings:
+        - name: api_key
+          kind: password
+        - name: start_date
+      config:
+        start_date: "2022-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true

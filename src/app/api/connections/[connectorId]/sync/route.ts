@@ -52,6 +52,10 @@ export async function POST(
     replicationConfig?: {
       streams: Record<string, unknown>;
       excludedStreams?: string[];
+      // snowflake per-stream loader-mode routing + discovery scope.
+      upsertStreams?: string[];
+      overwriteStreams?: string[];
+      tables?: string[];
       detected?: unknown[];
     };
   };
@@ -109,6 +113,9 @@ export async function POST(
       buildTapEnv(data.type, creds, {
         replicationConfig: data.replicationConfig?.streams,
         excludedStreams: data.replicationConfig?.excludedStreams,
+        upsertStreams: data.replicationConfig?.upsertStreams,
+        overwriteStreams: data.replicationConfig?.overwriteStreams,
+        tables: data.replicationConfig?.tables,
       })
     );
   } catch (err) {

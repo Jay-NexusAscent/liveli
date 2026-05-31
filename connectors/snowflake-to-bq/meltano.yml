@@ -1,0 +1,45 @@
+version: 1
+default_environment: dev
+project_id: liveli-snowflake-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-snowflake
+      variant: meltanolabs
+      pip_url: meltanolabs-tap-snowflake
+      # Connection params come from env at runtime:
+      #   TAP_SNOWFLAKE_ACCOUNT, TAP_SNOWFLAKE_USER,
+      #   TAP_SNOWFLAKE_PASSWORD, TAP_SNOWFLAKE_DATABASE,
+      #   TAP_SNOWFLAKE_WAREHOUSE
+      # Discovery scope comes from the `tables` setting (env
+      # TAP_SNOWFLAKE_TABLES, a JSON array of dotted SCHEMA.TABLE),
+      # populated from connect-time introspection. NOTE: meltanolabs
+      # tap-snowflake has NO `filter_schemas` setting (that belongs to the
+      # transferwise tap) — the `tables` list is the only discovery scope,
+      # and the tap auto-excludes INFORMATION_SCHEMA.
+      config: {}
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      # Config comes from env at runtime:
+      #   TARGET_BIGQUERY_PROJECT, TARGET_BIGQUERY_DATASET,
+      #   TARGET_BIGQUERY_LOCATION
+      # APPEND is the base/default write mode (neither overwrite nor
+      # upsert set globally). Snowflake does NOT enforce primary keys, so
+      # most tables have none — a single global mode is wrong. Instead
+      # entrypoint.sh injects PER-STREAM modes from connect-time
+      # introspection (lib/snowflake-introspection.ts):
+      #   • PK'd tables          → upsert (MERGE on the PK)
+      #   • no-PK + no bookmark  → overwrite (atomic full replace)
+      #   • everything else      → append (this default) with INCREMENTAL
+      # z3z1ma's `upsert`/`overwrite` config keys accept fnmatch pattern
+      # lists, so the three modes coexist in one sync.
+      config:
+        method: batch_job
+        denormalized: true

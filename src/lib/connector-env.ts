@@ -85,6 +85,22 @@ export interface BuildTapEnvOptions {
    * exclusions so the tap doesn't emit those streams at all.
    */
   excludedStreams?: string[];
+  /**
+   * Per-stream loader-mode routing (snowflake). z3z1ma target-bigquery
+   * accepts fnmatch pattern lists on its `upsert` and `overwrite` config
+   * keys; streams matching neither append (the default). Lets one sync
+   * MERGE the PK'd tables, overwrite the no-bookmark tables, and append
+   * the rest. Emitted as LIVELI_UPSERT_STREAMS / LIVELI_OVERWRITE_STREAMS;
+   * entrypoint.sh writes them into the loader config.
+   */
+  upsertStreams?: string[];
+  overwriteStreams?: string[];
+  /**
+   * Dotted `<SCHEMA>.<TABLE>` discovery scope for taps that lack a
+   * filter_schemas setting (snowflake). Emitted as the tap's `tables`
+   * setting env var.
+   */
+  tables?: string[];
 }
 
 type EnvBuilder = (
@@ -487,6 +503,155 @@ const TAP_ENV_BUILDERS: Record<string, EnvBuilder> = {
       TAP_BIGCOMMERCE_STORE_HASH: creds.store_hash,
     };
     if (creds.start_date) env.TAP_BIGCOMMERCE_START_DATE = creds.start_date;
+    return env;
+  },
+
+  // ── Batch E (LIVELI-134): more DB + SaaS connectors ───────────────
+  // DB connectors (mongodb/snowflake/oracle) run the raw-DB archetype:
+  // overwrite + FULL_TABLE, no replicationConfig/excludedStreams (that
+  // machinery is postgres-only). SaaS connectors run upsert.
+
+  mongodb: (creds) => ({
+    // tap-mongodb takes the full connection URI (mongodb:// or
+    // mongodb+srv://) — Meltano flattens the `mongodb_connection_string`
+    // setting to TAP_MONGODB_MONGODB_CONNECTION_STRING.
+    TAP_MONGODB_MONGODB_CONNECTION_STRING: creds.connection_string,
+    TAP_MONGODB_DATABASE: creds.database,
+  }),
+
+  snowflake: (creds, options) => {
+    // tap-snowflake (meltanolabs). `warehouse` is required for the tap to
+    // run queries. NOTE: this variant has NO `filter_schemas` setting —
+    // discovery is scoped via the `tables` setting (dotted SCHEMA.TABLE
+    // list), which we populate from connect-time introspection. The tap
+    // auto-excludes INFORMATION_SCHEMA.
+    const env: Record<string, string> = {
+      TAP_SNOWFLAKE_ACCOUNT: creds.account,
+      TAP_SNOWFLAKE_USER: creds.user,
+      TAP_SNOWFLAKE_PASSWORD: creds.password,
+      TAP_SNOWFLAKE_DATABASE: creds.database,
+      TAP_SNOWFLAKE_WAREHOUSE: creds.warehouse,
+    };
+    // Scope discovery to exactly the introspected tables.
+    if (options?.tables && options.tables.length > 0) {
+      env.TAP_SNOWFLAKE_TABLES = JSON.stringify(options.tables);
+    }
+    // Per-stream tap replication metadata (INCREMENTAL/FULL_TABLE + key).
+    if (options?.replicationConfig) {
+      env.LIVELI_REPLICATION_CONFIG = JSON.stringify(options.replicationConfig);
+    }
+    // Per-stream loader-mode routing. PK'd tables MERGE (upsert); no-PK,
+    // no-bookmark tables atomically replace (overwrite); everything else
+    // appends (z3z1ma default). entrypoint.sh writes these into the
+    // loader config as fnmatch pattern lists.
+    if (options?.upsertStreams && options.upsertStreams.length > 0) {
+      env.LIVELI_UPSERT_STREAMS = JSON.stringify(options.upsertStreams);
+    }
+    if (options?.overwriteStreams && options.overwriteStreams.length > 0) {
+      env.LIVELI_OVERWRITE_STREAMS = JSON.stringify(options.overwriteStreams);
+    }
+    return env;
+  },
+
+  oracle: (creds, options) => {
+    // pipelinewise-tap-oracle in `thin` mode (set in meltano.yml — no
+    // Instant Client). filter_schemas scopes discovery; Oracle exposes
+    // SYS/SYSTEM/etc. that we never want to replicate.
+    //
+    // NOTE: this tap reads filter_schemas as a COMMA-SEPARATED STRING
+    // (`.split(',')`), NOT a JSON array like meltanolabs tap-postgres.
+    // Passing JSON.stringify here would feed the tap a literal "[...]"
+    // string and break discovery.
+    const schemas = (creds.schemas ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const env: Record<string, string> = {
+      TAP_ORACLE_HOST: creds.host,
+      TAP_ORACLE_PORT: creds.port,
+      TAP_ORACLE_USER: creds.user,
+      TAP_ORACLE_PASSWORD: creds.password,
+      TAP_ORACLE_SERVICE_NAME: creds.service_name,
+    };
+    if (schemas.length > 0) {
+      env.TAP_ORACLE_FILTER_SCHEMAS = schemas.join(",");
+    }
+    // Per-stream replication metadata + no-PK exclusions from connect-time
+    // introspection (lib/oracle-introspection.ts). Same mechanism as
+    // postgres: entrypoint.sh merges these into meltano.yml. Loader runs
+    // upsert: true, so excluded (no-PK) streams must be filtered out.
+    if (options?.replicationConfig) {
+      env.LIVELI_REPLICATION_CONFIG = JSON.stringify(options.replicationConfig);
+    }
+    if (options?.excludedStreams && options.excludedStreams.length > 0) {
+      env.LIVELI_EXCLUDED_STREAMS = JSON.stringify(options.excludedStreams);
+    }
+    return env;
+  },
+
+  paypal: (creds) => {
+    const env: Record<string, string> = {
+      TAP_PAYPAL_CLIENT_ID: creds.client_id,
+      TAP_PAYPAL_SECRET: creds.secret,
+      TAP_PAYPAL_SANDBOX: creds.sandbox ?? "false",
+    };
+    if (creds.start_date) env.TAP_PAYPAL_START_DATE = creds.start_date;
+    return env;
+  },
+
+  magento: (creds) => {
+    const env: Record<string, string> = {
+      TAP_MAGENTO_STORE_URL: creds.store_url,
+      TAP_MAGENTO_ACCESS_TOKEN: creds.access_token,
+    };
+    if (creds.start_date) env.TAP_MAGENTO_START_DATE = creds.start_date;
+    return env;
+  },
+
+  "zendesk-sell": (creds) => ({
+    // Zendesk Sell (CRM) — distinct from the zendesk (Support) connector.
+    // device_uuid is a stable client identifier for the Sync API
+    // handshake, generated at the connect route.
+    TAP_ZENDESK_SELL_ACCESS_TOKEN: creds.access_token,
+    TAP_ZENDESK_SELL_DEVICE_UUID: creds.device_uuid,
+  }),
+
+  close: (creds) => {
+    // tap-closeio — env prefix is TAP_CLOSEIO_* (tap's internal name).
+    const env: Record<string, string> = {
+      TAP_CLOSEIO_API_KEY: creds.api_key,
+    };
+    if (creds.start_date) env.TAP_CLOSEIO_START_DATE = creds.start_date;
+    return env;
+  },
+
+  "tiktok-ads": (creds) => {
+    const env: Record<string, string> = {
+      TAP_TIKTOK_ACCESS_TOKEN: creds.access_token,
+      TAP_TIKTOK_ADVERTISER_ID: creds.advertiser_id,
+    };
+    if (creds.start_date) env.TAP_TIKTOK_START_DATE = creds.start_date;
+    return env;
+  },
+
+  segment: (creds) => {
+    const env: Record<string, string> = {
+      TAP_SEGMENT_API_TOKEN: creds.api_token,
+    };
+    if (creds.start_date) env.TAP_SEGMENT_START_DATE = creds.start_date;
+    return env;
+  },
+
+  "sage-intacct": (creds) => {
+    // Two credential layers: sender (app-level) + user (customer login).
+    const env: Record<string, string> = {
+      TAP_INTACCT_COMPANY_ID: creds.company_id,
+      TAP_INTACCT_SENDER_ID: creds.sender_id,
+      TAP_INTACCT_SENDER_PASSWORD: creds.sender_password,
+      TAP_INTACCT_USER_ID: creds.user_id,
+      TAP_INTACCT_USER_PASSWORD: creds.user_password,
+    };
+    if (creds.start_date) env.TAP_INTACCT_START_DATE = creds.start_date;
     return env;
   },
 };

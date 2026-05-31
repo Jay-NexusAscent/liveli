@@ -1,0 +1,57 @@
+version: 1
+default_environment: dev
+project_id: liveli-oracle-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-oracle
+      variant: s7clarke10
+      # pipelinewise fork — the only actively maintained singer Oracle
+      # tap. Not on PyPI → install from git.
+      pip_url: git+https://github.com/s7clarke10/pipelinewise-tap-oracle.git
+      # Connection params come from env at runtime:
+      #   TAP_ORACLE_HOST, TAP_ORACLE_PORT, TAP_ORACLE_USER,
+      #   TAP_ORACLE_PASSWORD, TAP_ORACLE_SERVICE_NAME
+      config:
+        # `thin` mode uses python-oracledb's pure-Python driver — NO
+        # Oracle Instant Client binaries. Cloud Run Jobs can't ship the
+        # native client libs, so thin is mandatory; `thick` would crash
+        # at startup with "DPI-1047: Cannot locate a 64-bit Oracle Client".
+        ora_python_driver_type: thin
+        # pipelinewise-tap-oracle reads filter_schemas as a COMMA-SEPARATED
+        # STRING (config.get('filter_schemas').split(',')) — NOT a JSON
+        # array like meltanolabs tap-postgres. Declare it as a string here
+        # so Meltano forwards TAP_ORACLE_FILTER_SCHEMAS verbatim. Empty
+        # string is falsy → the tap skips the owner filter and discovers
+        # all non-SYS schemas; the env var (set by connector-env.ts) scopes
+        # it to the user's owners when provided.
+        filter_schemas: ""
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      # Config comes from env at runtime:
+      #   TARGET_BIGQUERY_PROJECT, TARGET_BIGQUERY_DATASET,
+      #   TARGET_BIGQUERY_LOCATION
+      # upsert (MERGE on key_properties) — the same incremental-append
+      # model as the postgres connector. Oracle ENFORCES primary keys, so
+      # tap-oracle reliably emits key_properties from ALL_CONSTRAINTS
+      # (constraint_type='P') and the MERGE never silently fails.
+      #
+      # Per-stream replication metadata (INCREMENTAL by an updated_at-style
+      # key / integer PK where available, FULL_TABLE otherwise) is detected
+      # at connect time by lib/oracle-introspection.ts and injected into the
+      # extractor `metadata:` block by entrypoint.sh. Tables WITHOUT a
+      # single-column PK are excluded (no key_properties → MERGE corrupts;
+      # the LIVELI-111 failure mode). NEVER pair this with overwrite —
+      # overwrite + INCREMENTAL replaces the table with just the delta and
+      # wipes history (LIVELI-111).
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true

@@ -1,0 +1,31 @@
+version: 1
+default_environment: dev
+project_id: liveli-segment-to-bq
+
+environments:
+  - name: dev
+  - name: prod
+
+plugins:
+  extractors:
+    - name: tap-segment
+      variant: gthesheep
+      # Segment Config API. Not on PyPI → install from git.
+      pip_url: git+https://github.com/GtheSheep/tap-segment.git
+      # Required env:
+      #   TAP_SEGMENT_API_TOKEN, TAP_SEGMENT_START_DATE
+      settings:
+        - name: api_token
+          kind: password
+        - name: start_date
+      config:
+        start_date: "2022-01-01T00:00:00Z"
+
+  loaders:
+    - name: target-bigquery
+      variant: z3z1ma
+      pip_url: git+https://github.com/z3z1ma/target-bigquery.git
+      config:
+        method: batch_job
+        denormalized: true
+        upsert: true
