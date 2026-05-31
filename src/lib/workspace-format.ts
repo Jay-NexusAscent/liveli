@@ -182,6 +182,44 @@ export function formatCurrencyWithToken(
 }
 
 /**
+ * Resolve the locale-appropriate currency SYMBOL for an ISO 4217 code
+ * (e.g. "GBP" + "en-GB" → "£", "USD" + "en-GB" → "US$"). Extracted via
+ * `Intl.NumberFormat` parts so the symbol shape follows the locale —
+ * the same approach the KPI formatter uses, lifted here so charts can
+ * prefix an already-abbreviated number ("£1.2M") without re-running a
+ * full currency format. Falls back to the raw code when the runtime
+ * can't resolve the pair (unknown code / unsupported locale), so the
+ * caller always gets a printable prefix.
+ */
+export function currencySymbolFor(currency: string, locale: string): string {
+  try {
+    const parts = new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).formatToParts(0);
+    return parts.find((p) => p.type === "currency")?.value ?? currency;
+  } catch {
+    return currency;
+  }
+}
+
+/**
+ * Format a value as a percent string, sharing the KPI tiles' heuristic:
+ * a magnitude below 1 is treated as a FRACTION (0.03 → "3.0%") — what
+ * SUM()/COUNT() aggregates produce — while anything larger is treated
+ * as ALREADY-percent (3 → "3.0%"), covering agents that multiply by
+ * 100 in SQL. One decimal place, matching the KPI value formatting.
+ * Non-finite inputs pass through as the empty string.
+ */
+export function formatPercentValue(value: number): string {
+  if (!Number.isFinite(value)) return "";
+  const display = value > -1 && value < 1 ? value * 100 : value;
+  return `${display.toFixed(1)}%`;
+}
+
+/**
  * Format a date / ISO-string using the workspace's explicit dateFormat
  * token, in the workspace timezone. Timezone-aware so users east/west
  * of UTC see the day boundary their workspace expects.

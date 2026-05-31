@@ -370,3 +370,16 @@ export function ProductivityIcon({ className }: IconProps) {
     </svg>
   );
 }
+
+// Horizontal sliders / adjustments — opens the per-chart axis + value
+// format editor on dashboard tiles. Honors `size` (the format popover
+// renders it at 18).
+export function SlidersIcon({ className, size = 18 }: IconProps) {
+  return (
+    <svg className={className} width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 6h7M14.5 6H17M3 14h2.5M13 14h4" />
+      <circle cx="11.5" cy="6" r="2" />
+      <circle cx="8.5" cy="14" r="2" />
+    </svg>
+  );
+}
