@@ -68,6 +68,8 @@ When you spot a \`fct_\` joined to a \`dim_\` on an obvious key (e.g. \`fct_orde
 
 \`series[].data\` is always a flat array of numbers. Categories/dates go in \`xAxis.data\` aligned by index — never as \`[date, value]\` pairs.
 
+**Always name both axes.** Set \`xAxis.name\` and \`yAxis.name\` on every bar/line/area/scatter chart — they render as axis titles and a chart with blank axes looks unfinished. Name the metric and its unit, e.g. \`yAxis.name: "Revenue (£)"\`, \`xAxis.name: "Date"\`, \`yAxis.name: "Orders"\`. Keep them short (2-4 words). KPI and pie/donut charts have no axes, so skip \`name\` there.
+
 ## Dashboard content floor
 
 When the user asks for a dashboard / overview / report / summary, ship a complete picture, not just totals:
