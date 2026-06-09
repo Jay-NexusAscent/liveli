@@ -467,13 +467,22 @@ function polishChartSpec(
   if (hasAxes) {
     out.xAxis = styleAxisName(out.xAxis as AxisLike | undefined, "x");
     out.yAxis = styleAxisName(out.yAxis as AxisLike | undefined, "y");
+    const xHasName = Boolean((out.xAxis as AxisLike | undefined)?.name);
+    const yHasName = Boolean((out.yAxis as AxisLike | undefined)?.name);
+    const existingGrid = (out.grid as Record<string, unknown> | undefined) ?? {};
+    // `containLabel` reserves room for the tick labels but NOT the axis
+    // NAME (centred title), so the title clips off the canvas edge unless
+    // we widen the margin on that side. Force a name-aware margin that
+    // clears tick labels + the title's nameGap. These win over any
+    // spec-provided grid (which spreads first) — otherwise a chart that
+    // ships its own small `bottom` re-clips "Country" off the bottom.
     out.grid = {
-      left: 16,
       right: 24,
       top: 24,
-      bottom: 16,
+      ...existingGrid,
       containLabel: true,
-      ...((out.grid as Record<string, unknown> | undefined) ?? {}),
+      bottom: xHasName ? 56 : (existingGrid.bottom ?? 16),
+      left: yHasName ? 72 : (existingGrid.left ?? 16),
     };
   }
 
