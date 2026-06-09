@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /**
- * Tool definition consumed by Anthropic's tool_use API. Each tool owns:
+ * Tool definition consumed by Gemini's function-calling API. Each tool owns:
  *  - `name`: the identifier the model calls
  *  - `description`: prose the model uses to choose the tool
  *  - `inputSchema`: a Zod schema → also serialized to JSON Schema for the SDK

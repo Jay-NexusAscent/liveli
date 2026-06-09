@@ -487,7 +487,7 @@ export interface AgentTurnInput {
  * Persists user + assistant messages to Firestore at
  *   clients/{clientId}/workspaces/{workspaceId}/chats/{chatId}/messages
  *
- * Gemini's streaming differs from Anthropic's in two important ways:
+ * Gemini's streaming has two characteristics that shape this handler:
  *  1. No content-block boundaries — chunks contain Parts which can be
  *     text or functionCall. Text streams in deltas; functionCalls
  *     arrive whole (args don't split across chunks).
@@ -589,7 +589,7 @@ export async function* runAgentTurn(
     orgId: input.clientId,
   };
 
-  // ── Model routing (mirrors the Claude path's classifier) ───────
+  // ── Model routing ──────────────────────────────────────────────
   //
   // VERTEX_AI_MODEL_LIGHT acts as the opt-in for "simple → cheap"
   // routing. When set, queries classified as "simple" route to the
@@ -597,7 +597,7 @@ export async function* runAgentTurn(
   // When unset, routing is disabled and the primary handles all
   // traffic — safe default.
   //
-  // Same heuristic as the Claude path (src/lib/agent-claude.ts):
+  // Classification heuristic:
   // edit context → complex, analytics trigger words → complex,
   // long messages (>200 chars) → complex, everything else simple.
   const COMPLEXITY_TRIGGERS = [
@@ -1106,10 +1106,10 @@ export async function* runAgentTurn(
 }
 
 /**
- * Convert a persisted MsgContent (our internal Anthropic-flavored
- * shape) back into a Gemini Part for re-sending in history. We keep
- * the persisted format consistent across model swaps so old chats
- * remain replayable.
+ * Convert a persisted MsgContent (our internal content-block shape)
+ * back into a Gemini Part for re-sending in history. We keep the
+ * persisted format consistent across model swaps so old chats remain
+ * replayable.
  */
 function msgContentToGeminiPart(
   block:

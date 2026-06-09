@@ -1,7 +1,5 @@
 import { z } from "zod";
-import { runAgentTurn as runAgentTurnGemini } from "@/lib/agent";
-import { runAgentTurn as runAgentTurnClaude } from "@/lib/agent-claude";
-import { gcp } from "@/lib/gcp";
+import { runAgentTurn } from "@/lib/agent";
 import { requireWorkspaceContext, UnauthorizedError } from "@/lib/clients";
 import { streamResponse } from "@/lib/streaming";
 
@@ -69,17 +67,6 @@ export async function POST(req: Request) {
       { status: 400 }
     );
   }
-
-  // Dispatch to the Claude (AI SDK) implementation when the configured
-  // model is an Anthropic Claude variant; otherwise fall through to the
-  // legacy Gemini path. Both implementations expose identical generator
-  // signatures, so the only thing that changes here is which one runs.
-  // Easy rollback: set VERTEX_AI_MODEL=gemini-2.5-flash (or any gemini-*
-  // string) and the Gemini path is restored — no code change needed.
-  const modelId = gcp.vertexModel;
-  const runAgentTurn = modelId.startsWith("claude-")
-    ? runAgentTurnClaude
-    : runAgentTurnGemini;
 
   return streamResponse(async (push) => {
     for await (const event of runAgentTurn({
