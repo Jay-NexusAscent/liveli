@@ -25,7 +25,7 @@ import { getVercelOidcToken } from "@vercel/oidc";
  *         credential_source.file
  *      4. Set GOOGLE_APPLICATION_CREDENTIALS to that JSON path
  *
- *    Google Cloud SDKs (BigQuery, Firestore, Vertex AnthropicVertex)
+ *    Google Cloud SDKs (BigQuery, Firestore, Vertex AI)
  *    discover the credentials through ADC and exchange the token at
  *    GCP STS for a short-lived access token impersonating
  *    `liveli-runtime@`. Zero long-lived SA keys.

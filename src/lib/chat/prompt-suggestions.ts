@@ -22,9 +22,9 @@ export const DEFAULT_PROMPT_SUGGESTIONS = [
 const SUGGESTION_COUNT = 4;
 
 /**
- * Gemini Flash ONLY — Liveli's stack is Gemini, never Claude. We pass an
- * explicit model id rather than `gcp.vertexModel` (whose default would
- * route to a Claude model via the AI-SDK path and 404 / mismatch here).
+ * Pin this cheap one-shot to Flash explicitly rather than borrowing
+ * `gcp.vertexModel` (which may be a pricier Pro model selected for the
+ * agent loop). This is a tiny generation — Flash is the right tier.
  */
 const SUGGESTIONS_MODEL = process.env.VERTEX_AI_SUGGESTIONS_MODEL ?? "gemini-2.5-flash";
 

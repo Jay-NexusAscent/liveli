@@ -1,8 +1,8 @@
 /**
  * Cost-estimation rates and FX conversion for internal usage tracking.
  *
- * All rates are published Google Cloud / Anthropic list prices as of
- * 2026-05. Verify before launching paid plans — these are stored here
+ * All rates are published Google Cloud list prices as of 2026-05.
+ * Verify before launching paid plans — these are stored here
  * (not in env) so they're code-reviewable and versioned. If a rate
  * changes, bump it and the change shows up in PR review.
  *
@@ -35,14 +35,14 @@ export function usdToGbp(usd: number): number {
   return usd * USD_TO_GBP;
 }
 
-// ── Vertex AI Claude ───────────────────────────────────────────────
+// ── Vertex AI Gemini pricing ───────────────────────────────────────
 // Per-million-token list pricing on Vertex's global endpoint (no
-// regional premium). Update when Anthropic changes published rates or
-// we switch model defaults.
+// regional premium). Update when Google changes published rates or we
+// switch model defaults.
 //
 // If the agent's default model changes (env var VERTEX_AI_MODEL), the
 // runtime looks up the matching entry below. Unknown models fall back
-// to OPUS_4_7 rates and log a warning.
+// to the gemini-3-flash-preview rate and log a warning.
 
 export interface ModelPricing {
   /** USD per 1M input tokens */
@@ -53,24 +53,17 @@ export interface ModelPricing {
 
 export const VERTEX_MODEL_PRICING: Record<string, ModelPricing> = {
   // Numbers below are published list rates — verify against Vertex /
-  // Anthropic pricing pages before charging customers. They sit here in
+  // Google pricing pages before charging customers. They sit here in
   // code so any change is reviewable, not silently picked up from a
   // Firestore doc that nobody can audit.
 
-  // Gemini (Google) — the current default model family.
+  // Gemini (Google) — Liveli's model family.
   "gemini-3-flash-preview": { inputUsdPerM: 0.30, outputUsdPerM: 2.50 },
   "gemini-3-flash": { inputUsdPerM: 0.30, outputUsdPerM: 2.50 },
   "gemini-2.5-flash": { inputUsdPerM: 0.30, outputUsdPerM: 2.50 },
   "gemini-2.5-flash-lite": { inputUsdPerM: 0.10, outputUsdPerM: 0.40 },
   "gemini-3-pro": { inputUsdPerM: 2.50, outputUsdPerM: 15 },
   "gemini-2.5-pro": { inputUsdPerM: 1.25, outputUsdPerM: 10 },
-
-  // Anthropic Claude (kept in case anyone overrides VERTEX_AI_MODEL).
-  "claude-opus-4-7": { inputUsdPerM: 15, outputUsdPerM: 75 },
-  "claude-opus-4-6": { inputUsdPerM: 15, outputUsdPerM: 75 },
-  "claude-sonnet-4-6": { inputUsdPerM: 3, outputUsdPerM: 15 },
-  "claude-sonnet-4-5@20250929": { inputUsdPerM: 3, outputUsdPerM: 15 },
-  "claude-haiku-4-5@20251001": { inputUsdPerM: 0.25, outputUsdPerM: 1.25 },
 };
 
 export function vertexCostGbp(

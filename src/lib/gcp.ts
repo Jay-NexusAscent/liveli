@@ -41,43 +41,34 @@ export const gcp = {
    */
   vertexRegion: process.env.VERTEX_AI_REGION ?? "europe-west1",
   /**
-   * Default model. Must be available in the workspace's residency region.
+   * Default agent model. Must be available in the workspace's residency
+   * region. Liveli runs on Gemini (Vertex AI) — Gemini 2.5 Flash is the
+   * default workhorse; complex turns can be routed to a Pro model via
+   * VERTEX_AI_MODEL_LIGHT-style config (see below) / per-turn selection.
    *
-   * Default: `claude-sonnet-4-6` (Anthropic Claude Sonnet 4.6 via Vertex AI).
-   * Switched from gemini-2.5-flash in LIVELI-107 because the smaller Flash
-   * model wasn't fit for purpose in agentic loops — mid-flow stopping,
-   * column hallucination, SQL dialect errors, dashboard quality. Claude
-   * Sonnet handles tool use and instruction following dramatically better
-   * out of the box, replacing layers of prompt-rule scaffolding that were
-   * compensating for the small model's limitations.
+   * Override with VERTEX_AI_MODEL to pin a specific Gemini model. The
+   * agent loop lives in src/lib/agent.ts (@google-cloud/vertexai).
    *
-   * Model-name prefix is the dispatch key in /api/chat/route.ts:
-   *   - `claude-*` → AI SDK (@ai-sdk/google-vertex/anthropic) loop in agent-claude.ts
-   *   - `gemini-*` → legacy @google-cloud/vertexai loop in agent.ts
-   *
-   * Easy rollback: set VERTEX_AI_MODEL=gemini-2.5-flash to restore the
-   * legacy path (no code change needed).
-   *
-   * Regional availability: Claude Sonnet 4.6 is served from `eu`, `us`,
+   * Regional availability: the Gemini family is served from `eu`, `us`,
    * and `global` Vertex endpoints. Workspace data-residency choice in
    * vertexRegionForResidency() still drives which endpoint is used.
    */
-  vertexModel: process.env.VERTEX_AI_MODEL ?? "claude-sonnet-4-6",
+  vertexModel: process.env.VERTEX_AI_MODEL ?? "gemini-2.5-flash",
   /**
    * Optional light/cheap model for routing simple queries away from
-   * the primary model. When set, the Claude agent path classifies the
-   * incoming user message; "simple" queries (single-value lookups,
-   * short single-table questions, no edit context, no analytics
-   * trigger words) route to this model; "complex" queries (dashboards,
-   * comparisons, edits) stay on the primary.
+   * the primary model. When set, the agent classifies the incoming user
+   * message; "simple" queries (single-value lookups, short single-table
+   * questions, no edit context, no analytics trigger words) route to
+   * this model; "complex" queries (dashboards, comparisons, edits) stay
+   * on the primary.
    *
-   * Recommended value: `claude-haiku-4-5@20251001` — ~10× cheaper than
-   * Sonnet, plenty capable for simple Q&A. Leaving unset disables
-   * routing entirely (everything uses `vertexModel`), which is the
-   * safe default until baseline cost/quality data exists.
+   * Recommended value: `gemini-2.5-flash-lite` — cheaper than Flash,
+   * plenty capable for simple Q&A. Leaving unset disables routing
+   * entirely (everything uses `vertexModel`), which is the safe default
+   * until baseline cost/quality data exists.
    *
-   * The classification logic in agent-claude.ts is deterministic and
-   * runs in microseconds — no extra LLM call, no added latency.
+   * The classification logic in agent.ts is deterministic and runs in
+   * microseconds — no extra LLM call, no added latency.
    */
   vertexModelLight: process.env.VERTEX_AI_MODEL_LIGHT,
 };
