@@ -1314,17 +1314,23 @@ function SortableChartTile({
         onRename={onRename}
         onRemove={onRemove}
         dragHandle={
-          <button
-            type="button"
-            {...attributes}
-            {...listeners}
-            aria-label={`Drag to reorder ${title}`}
-            className="shrink-0 cursor-grab touch-none rounded-md p-1.5 text-text-tertiary transition-colors hover:bg-hover hover:text-text-primary active:cursor-grabbing"
-          >
-            <GripIcon />
-          </button>
+          editing ? (
+            <button
+              type="button"
+              {...attributes}
+              {...listeners}
+              aria-label={`Drag to reorder ${title}`}
+              className="shrink-0 cursor-grab touch-none rounded-md p-1.5 text-text-tertiary transition-colors hover:bg-hover hover:text-text-primary active:cursor-grabbing"
+            >
+              <GripIcon />
+            </button>
+          ) : undefined
         }
-        sizePicker={<SizePicker current={colSpan} onChange={onResize} title={title} />}
+        sizePicker={
+          editing ? (
+            <SizePicker current={colSpan} onChange={onResize} title={title} />
+          ) : undefined
+        }
         formatPicker={
           editing && onFormat && settings ? (
             <ChartFormatPopover
