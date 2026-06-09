@@ -45,8 +45,8 @@ import type {
 // the value in medium weight, and an accent focus ring. Centralising
 // these means a restyle lands across all four control types at once.
 const CHIP =
-  "group inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface py-1.5 pl-2.5 pr-2 text-[12px] transition-colors hover:border-accent/60 focus-within:border-accent focus-within:ring-1 focus-within:ring-accent/40";
-const CHIP_LABEL = "text-text-tertiary";
+  "group inline-flex items-center gap-1.5 rounded-lg border border-border bg-elevated py-1.5 pl-2.5 pr-2 text-[12px] shadow-sm transition-colors hover:border-accent/60 hover:bg-hover focus-within:border-accent focus-within:ring-1 focus-within:ring-accent/40";
+const CHIP_LABEL = "text-text-secondary";
 const NATIVE_SELECT =
   "cursor-pointer appearance-none bg-transparent pr-4 text-[13px] font-medium text-text-primary focus:outline-none";
 
@@ -94,7 +94,7 @@ export function FilterBar({
   };
 
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-background/40 px-3 py-2">
+    <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface px-3 py-2">
       {filters.map((f) => (
         <FilterControl
           key={f.id}

@@ -60,15 +60,17 @@ When you spot a \`fct_\` joined to a \`dim_\` on an obvious key (e.g. \`fct_orde
 
 ## Charts
 
-- **\`kpi\`** — single number, optional \`delta\` + \`deltaLabel\`. No axes.
+- **\`kpi\`** — single number. ALWAYS give it context: run a comparison query for the previous equivalent period and set \`delta\` (the change — percent for rates, absolute otherwise) + \`deltaLabel\` (e.g. "vs previous 30 days"). A bare KPI with no delta doesn't tell the user whether the number is good. No axes.
 - **\`bar\`** — ranking or category comparison. Use \`stack\` for grouped/stacked.
-- **\`line\` / \`area\`** — time series. Set \`smooth: true\`.
+- **\`line\` / \`area\`** — time series. Leave lines straight by default (\`smooth\` unset): for discrete daily/weekly measurements a smoothed curve invents values between points and hides real movement. Only set \`smooth: true\` for genuinely continuous, dense data.
 - **\`pie\` / \`donut\`** — share-of-total with <8 categories. \`donut\` reads cleaner.
 - **\`scatter\`** — correlation.
 
 \`series[].data\` is always a flat array of numbers. Categories/dates go in \`xAxis.data\` aligned by index — never as \`[date, value]\` pairs.
 
 **Always name both axes.** Set \`xAxis.name\` and \`yAxis.name\` on every bar/line/area/scatter chart — they render as axis titles and a chart with blank axes looks unfinished. Name the metric and its unit, e.g. \`yAxis.name: "Revenue (£)"\`, \`xAxis.name: "Date"\`, \`yAxis.name: "Orders"\`. Keep them short (2-4 words). KPI and pie/donut charts have no axes, so skip \`name\` there.
+
+**Always format the value series.** Set \`series[].format\` on EVERY chart whose values are money or rates — \`"currency"\` for revenue/spend (so the axis and tooltip show £/$ instead of a bare \`70000\`), \`"percent"\` for rates/shares — not just on KPI tiles. This applies to dashboard charts too: a revenue line whose axis reads \`70,000\` while the KPI beside it reads \`£1.03M\` looks inconsistent and unfinished.
 
 ## Dashboard content floor
 
