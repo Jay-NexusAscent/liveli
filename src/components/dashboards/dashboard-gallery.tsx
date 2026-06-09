@@ -2,13 +2,13 @@
 
 import { useMemo } from "react";
 import {
-  DashboardIcon,
   ExpandIcon,
   SearchIcon,
   StarIcon,
   TrashIcon,
 } from "@/components/icons";
-import { ChartRenderer } from "@/components/chat/chart-renderer";
+import { DashboardThumbnail } from "./dashboard-thumbnail";
+import type { ColSpan } from "@/lib/dashboards/types";
 import type { WorkspaceSettings } from "@/lib/workspace-settings";
 
 export interface GalleryDashboard {
@@ -16,7 +16,7 @@ export interface GalleryDashboard {
   title: string;
   description?: string | null;
   favorite?: boolean;
-  charts: Array<{ title: string; spec: unknown }>;
+  charts: Array<{ title: string; spec: unknown; colSpan?: ColSpan }>;
 }
 
 /**
@@ -145,19 +145,10 @@ function DashboardCard({
   onDelete: () => void;
   deleting: boolean;
 }) {
-  const charts = dashboard.charts;
-  const count = charts.length;
-  // Mini-grid layout: ≤1 chart fills the tile, ≤4 go two-up, more go
-  // three-up. Cell height is derived from the row count so the whole
-  // grid fits the fixed ~134px preview area (150px tile minus p-2).
-  const cols = count <= 1 ? 1 : count <= 4 ? 2 : 3;
-  const rows = Math.max(1, Math.ceil(count / cols));
-  const cellHeight = Math.max(38, Math.floor((134 - (rows - 1) * 4) / rows));
-
   return (
     <div className="card-elevated group relative flex flex-col overflow-hidden">
-      {/* Live mini-render of every chart in a grid. pointer-events-none so
-          the ECharts canvases don't swallow the click meant for opening
+      {/* Faithful scaled miniature of the real dashboard. pointer-events-none
+          so the ECharts canvases don't swallow the click meant for opening
           the dashboard; the whole preview is a button. */}
       <button
         type="button"
@@ -165,23 +156,8 @@ function DashboardCard({
         aria-label={`Open dashboard ${dashboard.title}`}
         className="block w-full border-b border-border bg-surface/40 text-left transition-colors hover:bg-hover/40"
       >
-        <div className="pointer-events-none h-[150px] overflow-hidden p-2">
-          {count > 0 ? (
-            <div
-              className="grid h-full gap-1"
-              style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
-            >
-              {charts.map((c, i) => (
-                <div key={i} className="overflow-hidden rounded-sm">
-                  <ChartRenderer spec={c.spec} height={cellHeight} settings={settings} preview />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="flex h-full items-center justify-center text-text-tertiary">
-              <DashboardIcon className="text-text-tertiary" />
-            </div>
-          )}
+        <div className="pointer-events-none p-3">
+          <DashboardThumbnail charts={dashboard.charts} settings={settings} />
         </div>
       </button>
 

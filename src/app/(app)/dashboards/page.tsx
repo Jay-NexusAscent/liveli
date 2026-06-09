@@ -892,7 +892,11 @@ export default function DashboardsPage() {
             title: d.title,
             description: d.description,
             favorite: d.favorite,
-            charts: d.charts.map((c) => ({ title: c.title, spec: c.spec })),
+            charts: d.charts.map((c) => ({
+              title: c.title,
+              spec: c.spec,
+              colSpan: c.colSpan,
+            })),
           }))}
           settings={settings}
           query={galleryQuery}
