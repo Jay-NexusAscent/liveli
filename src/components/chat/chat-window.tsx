@@ -134,6 +134,11 @@ export function ChatWindow({
   const [streaming, setStreaming] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(!!initialChatId);
   const [datasetNames, setDatasetNames] = useState<Record<string, string>>({});
+  // Data-aware example questions for the empty screen. Seeded with the
+  // generic defaults so first paint is instant, then replaced by
+  // schema-tailored questions from /api/chat/suggestions (cached per
+  // workspace). Failure leaves the defaults in place.
+  const [suggestions, setSuggestions] = useState<string[]>(PROMPT_SUGGESTIONS);
   // Edit mode: when set, we render a banner above the chat and pass
   // this through with each /api/chat call so the agent uses update_X
   // tools instead of make_X. Persisted in sessionStorage until the
@@ -164,6 +169,30 @@ export function ChatWindow({
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, streaming]);
+
+  // Load data-aware example questions for the empty screen. Only needed
+  // when starting fresh (no existing chat to open). Non-blocking: the
+  // generic defaults already render; this swaps in tailored questions
+  // when they arrive.
+  useEffect(() => {
+    if (initialChatId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/chat/suggestions");
+        if (!res.ok) return;
+        const json = (await res.json()) as { suggestions?: string[] };
+        if (!cancelled && Array.isArray(json.suggestions) && json.suggestions.length > 0) {
+          setSuggestions(json.suggestions);
+        }
+      } catch {
+        /* keep defaults */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [initialChatId]);
 
   const stopEditing = () => {
     setEditContext(null);
@@ -342,7 +371,7 @@ export function ChatWindow({
               Loading chat history…
             </div>
           ) : messages.length === 0 ? (
-            <EmptyState onPick={sendMessage} />
+            <EmptyState onPick={sendMessage} suggestions={suggestions} />
           ) : (
             <div className="space-y-6">
               {messages.map((m) => (
@@ -408,7 +437,13 @@ export function ChatWindow({
   );
 }
 
-function EmptyState({ onPick }: { onPick: (text: string) => void }) {
+function EmptyState({
+  onPick,
+  suggestions,
+}: {
+  onPick: (text: string) => void;
+  suggestions: string[];
+}) {
   return (
     <div className="flex h-full flex-col items-center justify-center text-center">
       <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-accent-muted text-accent">
@@ -423,7 +458,7 @@ function EmptyState({ onPick }: { onPick: (text: string) => void }) {
       </p>
 
       <div className="mt-8 grid w-full max-w-xl grid-cols-1 gap-3 sm:grid-cols-2">
-        {PROMPT_SUGGESTIONS.map((prompt) => (
+        {suggestions.map((prompt) => (
           <button
             key={prompt}
             type="button"
