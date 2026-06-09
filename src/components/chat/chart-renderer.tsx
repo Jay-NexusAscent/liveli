@@ -418,16 +418,17 @@ function polishChartSpec(
 ): ChartSpecLike {
   const out: ChartSpecLike = { ...spec };
 
-  // 1. Smooth-line defaults
-  if (Array.isArray(out.series)) {
-    out.series = out.series.map((s) => {
-      const isLineish = s.type === "line" || s.type === "area";
-      if (isLineish && (s as { smooth?: unknown }).smooth === undefined) {
-        return { ...s, smooth: true };
-      }
-      return s;
-    });
-  }
+  // 0. Drop the in-chart title. Every surface that renders a chart —
+  // dashboard tiles, chat blocks, the fullscreen modal, gallery
+  // thumbnails — already shows the title in its own header/banner, so
+  // an ECharts `title` just duplicates it and overlaps the plot area.
+  (out as { title?: unknown }).title = undefined;
+
+  // 1. Respect the spec's line smoothing. We used to force `smooth: true`
+  // on every line/area series, but that misrepresents discrete daily/
+  // weekly measurements (a curve invents values between points). Leave
+  // it to the agent / editor — straight by default, smooth only when
+  // explicitly requested.
 
   // 2. ISO-timestamp axis labels — bind the formatter to the
   // workspace's locale + timezone so en-US sees "Apr 1" while en-GB
