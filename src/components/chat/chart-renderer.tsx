@@ -89,6 +89,13 @@ interface ChartRendererProps {
    * London / en-GB) so legacy call sites keep working unchanged.
    */
   settings?: WorkspaceSettings;
+  /**
+   * Thumbnail mode for the dashboards gallery mini-grid. Strips axis
+   * labels, legend, title and tooltips, and shrinks the KPI headline so
+   * 6+ charts read as a clean miniature dashboard rather than a wall of
+   * clipped giant numbers and overlapping tick labels.
+   */
+  preview?: boolean;
 }
 
 /**
@@ -111,6 +118,7 @@ export function ChartRenderer({
   spec,
   height = 320,
   settings = DEFAULT_WORKSPACE_SETTINGS,
+  preview = false,
 }: ChartRendererProps) {
   // Subscribe to live theme changes. Must run before any early return
   // (rules of hooks). KpiTile is plain React and ignores it.
@@ -124,7 +132,9 @@ export function ChartRenderer({
   const firstSeries = chartSpec.series?.[0];
 
   if (firstSeries?.type === "kpi") {
-    return <KpiTile series={firstSeries} height={height} settings={settings} />;
+    return (
+      <KpiTile series={firstSeries} height={height} settings={settings} preview={preview} />
+    );
   }
 
   // Apply universal polish to every non-KPI spec: smooth defaults on
@@ -133,10 +143,11 @@ export function ChartRenderer({
   // that already has the polish baked in.
   const polished = polishChartSpec(chartSpec, settings);
   const firstType = polished.series?.[0]?.type;
-  const echartsOption =
+  const composed =
     firstType === "donut" || firstType === "pie"
       ? toPieOption(polished)
       : polished;
+  const echartsOption = preview ? stripChromeForPreview(composed) : composed;
 
   return (
     <ReactECharts
@@ -146,6 +157,45 @@ export function ChartRenderer({
       opts={{ renderer: "svg" }}
     />
   );
+}
+
+/**
+ * Strip a composed ECharts option down to its data shape for the
+ * dashboards gallery thumbnail: no axis labels/ticks/lines, no legend,
+ * title, tooltip or series labels, and a tight flush grid. The result
+ * is a clean sparkline-ish miniature — readable at ~60px tall where the
+ * full chart's labels would overlap into noise.
+ */
+function stripChromeForPreview(option: Record<string, unknown>): Record<string, unknown> {
+  const stripAxis = (ax: unknown): unknown => {
+    if (!ax || typeof ax !== "object") return ax;
+    if (Array.isArray(ax)) return ax.map(stripAxis);
+    return {
+      ...(ax as Record<string, unknown>),
+      name: undefined,
+      axisLabel: { show: false },
+      axisTick: { show: false },
+      axisLine: { show: false },
+      splitLine: { show: false },
+    };
+  };
+  const series = Array.isArray(option.series)
+    ? (option.series as Record<string, unknown>[]).map((s) => ({
+        ...s,
+        label: { show: false },
+        labelLine: { show: false },
+      }))
+    : option.series;
+  return {
+    ...option,
+    title: undefined,
+    legend: undefined,
+    tooltip: undefined,
+    grid: { left: 4, right: 4, top: 6, bottom: 4, containLabel: false },
+    xAxis: stripAxis(option.xAxis),
+    yAxis: stripAxis(option.yAxis),
+    series,
+  };
 }
 
 /**
@@ -167,10 +217,12 @@ function KpiTile({
   series,
   height,
   settings,
+  preview = false,
 }: {
   series: SeriesLike;
   height: number;
   settings: WorkspaceSettings;
+  preview?: boolean;
 }) {
   const value = typeof series.data?.[0] === "number" ? (series.data[0] as number) : 0;
   const formatted = formatKpiValue(value, series.format, series.unit, series.currency, settings);
@@ -193,7 +245,9 @@ function KpiTile({
       style={{ minHeight: height }}
     >
       <div
-        className="w-full max-w-full truncate text-[36px] font-semibold tracking-tight text-text-primary font-heading tabular-nums leading-none"
+        className={`w-full max-w-full truncate font-semibold tracking-tight text-text-primary font-heading tabular-nums leading-none ${
+          preview ? "text-[15px]" : "text-[36px]"
+        }`}
         // title attribute exposes the full unformatted number for
         // accessibility / user hover-to-verify use cases. Honors the
         // workspace numberFormat token explicitly (the title is for
@@ -204,11 +258,15 @@ function KpiTile({
         {formatted}
       </div>
       {series.name && (
-        <div className="mt-2 max-w-full truncate text-[13px] text-text-secondary">
+        <div
+          className={`max-w-full truncate text-text-secondary ${
+            preview ? "mt-1 text-[10px]" : "mt-2 text-[13px]"
+          }`}
+        >
           {series.name}
         </div>
       )}
-      {hasDelta && deltaFormatted && (
+      {!preview && hasDelta && deltaFormatted && (
         <div
           className={`mt-3 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium tabular-nums ${
             deltaPositive

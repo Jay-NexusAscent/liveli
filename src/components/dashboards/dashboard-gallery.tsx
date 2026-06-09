@@ -173,7 +173,7 @@ function DashboardCard({
             >
               {charts.map((c, i) => (
                 <div key={i} className="overflow-hidden rounded-sm">
-                  <ChartRenderer spec={c.spec} height={cellHeight} settings={settings} />
+                  <ChartRenderer spec={c.spec} height={cellHeight} settings={settings} preview />
                 </div>
               ))}
             </div>
